@@ -7,6 +7,7 @@ The app is intentionally plain: open it, start captions, keep the active audio i
 ## Requirements
 
 - Xcode 26.5 or newer from the local Apple SDK family used for this prototype.
+- iOS 26 or macOS 26. Larmindon is built around Apple's SpeechAnalyzer APIs and does not support older operating systems.
 - Tuist. If it is not already available, install it with the official installer or your preferred tool manager. In this checkout it may be available through `mise`.
 
 ```bash
@@ -30,9 +31,15 @@ xcodebuild -workspace Larmindon.xcworkspace -scheme Larmindon -destination 'plat
 
 Use a simulator name that exists on your machine if `iPhone 17` is not installed.
 
+## Live Transcription Mode
+
+The default transcription source is `Live`. Press **Start Captions** in the app to capture microphone audio and feed it through Apple's on-device SpeechAnalyzer pipeline.
+
+If the simulator or device does not have a compatible speech asset installed for the selected locale, the debug panel will show the Speech asset error. Real-device testing is still the most reliable path for the live source.
+
 ## Fake Transcription Mode
 
-The default transcription source is `Fake`. Press **Start Captions** in the app to stream scripted volatile and finalized caption events every 750 ms. This mode works in Simulator and does not require microphone hardware.
+The `Fake` source streams scripted volatile and finalized caption events every 750 ms. This mode works in Simulator and does not require microphone hardware.
 
 The settings surface includes:
 
@@ -45,9 +52,9 @@ The settings surface includes:
 
 ## Live Speech Path
 
-`LiveSpeechAnalyzerTranscriptionSource` is the intended native on-device path. It uses the modern Speech framework types (`SpeechAnalyzer`, `SpeechTranscriber`, and `SpeechDetector`) behind iOS 26/macOS 26 availability checks.
+`LiveSpeechAnalyzerTranscriptionSource` is the native on-device path. It uses the modern Speech framework types (`SpeechAnalyzer`, `SpeechTranscriber`, and `SpeechDetector`) directly. Larmindon requires iOS 26/macOS 26 because SpeechAnalyzer is the reason this prototype exists.
 
-For this first pass, the live source configures capture and constructs the Speech modules, then returns a clear TODO error before feeding `AnalyzerInput`. The fake source, shared store, route manager, settings, and UI already use the same `TranscriptionSource` abstraction so the real microphone pipeline can be completed without reshaping the app.
+The live source configures capture, runs an `AVAudioEngine` input tap with a 768-frame buffer, feeds `AnalyzerInput` into `SpeechAnalyzer`, uses `SpeechDetector` as the VAD module, and consumes `SpeechTranscriber` results with `.fastResults` and `.volatileResults` reporting.
 
 ## Audio Routing
 
@@ -63,7 +70,7 @@ On macOS, route information is a first-pass read-only placeholder so the shared 
 - Bluetooth HFP route switching.
 - Car audio route display.
 - Voice-processing input behavior.
-- Completing the `AVAudioEngine` to `SpeechAnalyzer` `AnalyzerInput` bridge.
+- Real-device validation of the `AVAudioEngine` to `SpeechAnalyzer` `AnalyzerInput` bridge.
 
 ## Source Control
 

@@ -13,7 +13,7 @@ public struct LarmindonRootView: View {
         #endif
     }()
     @AppStorage("appearancePreference") private var appearancePreferenceRaw = AppearancePreference.system.rawValue
-    @AppStorage("transcriptionSourceKind") private var sourceKindRaw = TranscriptionSourceKind.fake.rawValue
+    @AppStorage("transcriptionSourceKind") private var sourceKindRaw = TranscriptionSourceKind.live.rawValue
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
     @AppStorage("showDebugPanel") private var persistedShowDebugPanel = false
 
@@ -28,9 +28,11 @@ public struct LarmindonRootView: View {
                     lines: session.store.visibleCaptionLines(),
                     fontSize: captionFontSize
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 bottomBar
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(platformBackgroundColor))
             .navigationTitle("Larmindon")
             #if os(iOS)
@@ -67,6 +69,7 @@ public struct LarmindonRootView: View {
             }
             .preferredColorScheme(appearancePreference.colorScheme)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var topBar: some View {

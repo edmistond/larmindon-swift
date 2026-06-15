@@ -12,7 +12,14 @@ let privacyPlist: [String: Plist.Value] = [
     "CFBundleDisplayName": "Larmindon",
     "NSMicrophoneUsageDescription": "Larmindon uses the microphone to generate on-device live captions.",
     "NSSpeechRecognitionUsageDescription": "Larmindon uses Apple Speech APIs to transcribe live microphone audio on device.",
+    "UILaunchScreen": .dictionary([:]),
 ]
+
+let iOSAppTargetSettings: Settings = .settings(
+    base: [
+        "CODE_SIGN_ENTITLEMENTS": "Entitlements/Larmindon.entitlements",
+    ]
+)
 
 let project = Project(
     name: "Larmindon",
@@ -25,7 +32,7 @@ let project = Project(
             destinations: [.iPhone, .iPad, .mac],
             product: .framework,
             bundleId: "com.davidedmiston.larmindon.kit",
-            deploymentTargets: .multiplatform(iOS: "18.0", macOS: "15.0"),
+            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "26.0"),
             infoPlist: .default,
             sources: [
                 "Sources/Core/**",
@@ -45,17 +52,18 @@ let project = Project(
             destinations: [.iPhone, .iPad],
             product: .app,
             bundleId: "com.davidedmiston.larmindon",
-            deploymentTargets: .iOS("18.0"),
+            deploymentTargets: .iOS("26.0"),
             infoPlist: .extendingDefault(with: privacyPlist),
             sources: ["Sources/App/**"],
-            dependencies: [.target(name: "LarmindonKit")]
+            dependencies: [.target(name: "LarmindonKit")],
+            settings: iOSAppTargetSettings
         ),
         .target(
             name: "Larmindon-macOS",
             destinations: [.mac],
             product: .app,
             bundleId: "com.davidedmiston.larmindon",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("26.0"),
             infoPlist: .extendingDefault(with: privacyPlist),
             sources: ["Sources/App/**"],
             dependencies: [.target(name: "LarmindonKit")]
@@ -65,7 +73,7 @@ let project = Project(
             destinations: [.iPhone, .iPad, .mac],
             product: .unitTests,
             bundleId: "com.davidedmiston.larmindon.coretests",
-            deploymentTargets: .multiplatform(iOS: "18.0", macOS: "15.0"),
+            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "26.0"),
             infoPlist: .default,
             sources: ["Tests/CoreTests/**"],
             dependencies: [.target(name: "LarmindonKit")]

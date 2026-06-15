@@ -15,13 +15,13 @@ public final class CaptionSession {
 
     private var activeSource: TranscriptionSource?
     private var resultTask: Task<Void, Never>?
-    private var fakeMeterTask: Task<Void, Never>?
+    private var levelTask: Task<Void, Never>?
     private var vadSensitivity: VADSensitivity
 
     public init(
         store: CaptionStore = CaptionStore(),
         routeManager: AudioRouteManager = AudioRouteManager(),
-        selectedSourceKind: TranscriptionSourceKind = .fake,
+        selectedSourceKind: TranscriptionSourceKind = .live,
         vadSensitivity: VADSensitivity = .medium
     ) {
         self.store = store
@@ -52,13 +52,16 @@ public final class CaptionSession {
                 }
             }
 
+            levelTask = Task { @MainActor [weak self, source] in
+                for await snapshot in source.levelUpdates {
+                    self?.audioLevels = snapshot
+                }
+            }
+
             do {
                 try await routeManager.configureForCapture()
                 try await source.start()
                 speechAnalyzerState = "Running \(source.name)"
-                if sourceKind == .fake {
-                    startFakeMeter()
-                }
             } catch {
                 lastError = error.localizedDescription
                 speechAnalyzerState = "Error"
@@ -67,6 +70,8 @@ public final class CaptionSession {
                 activeSource = nil
                 resultTask?.cancel()
                 resultTask = nil
+                levelTask?.cancel()
+                levelTask = nil
             }
         }
     }
@@ -74,8 +79,8 @@ public final class CaptionSession {
     public func stop() async {
         resultTask?.cancel()
         resultTask = nil
-        fakeMeterTask?.cancel()
-        fakeMeterTask = nil
+        levelTask?.cancel()
+        levelTask = nil
 
         if let activeSource {
             await activeSource.stop()
@@ -114,32 +119,4 @@ public final class CaptionSession {
         }
     }
 
-    private func startFakeMeter() {
-        fakeMeterTask?.cancel()
-        fakeMeterTask = Task { [weak self] in
-            var phase = 0.0
-            var raw = 0.0
-            var processed = 0.0
-
-            while !Task.isCancelled {
-                phase += 0.37
-                let nextRaw = max(0.04, min(1.0, 0.18 + abs(sin(phase)) * 0.74))
-                let speechGateOpen = nextRaw > 0.18
-                let nextProcessed = speechGateOpen ? nextRaw : 0
-
-                raw = AudioLevelMeter.smooth(previous: raw, next: nextRaw)
-                processed = AudioLevelMeter.smooth(previous: processed, next: nextProcessed)
-
-                await MainActor.run {
-                    self?.audioLevels = AudioLevelSnapshot(
-                        rawInputLevel: raw,
-                        processedInputLevel: processed,
-                        vadState: speechGateOpen ? "Speech likely" : "Gated"
-                    )
-                }
-
-                try? await Task.sleep(for: .milliseconds(80))
-            }
-        }
-    }
 }

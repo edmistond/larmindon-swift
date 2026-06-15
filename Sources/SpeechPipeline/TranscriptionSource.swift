@@ -8,6 +8,7 @@ public enum CaptionResult: Equatable, Sendable {
 @MainActor
 public protocol TranscriptionSource: AnyObject {
     var results: AsyncStream<CaptionResult> { get }
+    var levelUpdates: AsyncStream<AudioLevelSnapshot> { get }
     var name: String { get }
 
     func start() async throws

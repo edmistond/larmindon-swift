@@ -3,7 +3,7 @@ import SwiftUI
 public struct PreferencesView: View {
     @AppStorage("captionFontSize") private var captionFontSize = defaultCaptionFontSize
     @AppStorage("appearancePreference") private var appearancePreferenceRaw = AppearancePreference.system.rawValue
-    @AppStorage("transcriptionSourceKind") private var sourceKindRaw = TranscriptionSourceKind.fake.rawValue
+    @AppStorage("transcriptionSourceKind") private var sourceKindRaw = TranscriptionSourceKind.live.rawValue
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
     @AppStorage("voiceProcessingEnabled") private var voiceProcessingEnabled = true
     @AppStorage("showDebugPanel") private var showDebugPanel = false
