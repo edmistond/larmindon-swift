@@ -142,7 +142,10 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !text.isEmpty else { continue }
 
-                    let finalized = result.resultsFinalizationTime.isValid
+                    let finalized = SpeechResultFinalization.isFinalized(
+                        range: result.range,
+                        resultsFinalizationTime: result.resultsFinalizationTime
+                    )
                     if finalized {
                         let key = result.range.stableKey
                         guard finalizedRanges.insert(key).inserted else {
