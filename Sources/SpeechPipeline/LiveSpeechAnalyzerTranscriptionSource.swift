@@ -97,8 +97,6 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         )
 
         let modules: [any SpeechModule] = [detector, transcriber]
-        try await validateAssets(for: modules, locale: locale)
-
         let analyzer = SpeechAnalyzer(modules: modules)
         let analysisFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
             compatibleWith: modules,
@@ -201,15 +199,6 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         }
     }
 
-    private func validateAssets(for modules: [any SpeechModule], locale: Locale) async throws {
-        let status = await AssetInventory.status(forModules: modules)
-        guard status != .unsupported else {
-            throw TranscriptionSourceError.unavailable(
-                "SpeechAnalyzer assets for \(locale.identifier) are unsupported on this device or simulator."
-            )
-        }
-    }
-
     private func prepareTranscriberLocale() async throws -> Locale {
         let requestedLocale = Locale.current.identifier.isEmpty ? Locale(identifier: "en_US") : Locale.current
         var supportedLocale = await SpeechTranscriber.supportedLocale(equivalentTo: requestedLocale)
@@ -229,7 +218,8 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
 
         do {
             let didReserve = try await AssetInventory.reserve(locale: supportedLocale)
-            guard didReserve else {
+            let reservedLocales = await AssetInventory.reservedLocales
+            guard didReserve || reservedLocales.contains(where: { $0.identifier == supportedLocale.identifier }) else {
                 let reservedLocales = await AssetInventory.reservedLocales
                     .map(\.identifier)
                     .sorted()
