@@ -61,6 +61,7 @@ public final class FakeTranscriptionSource: TranscriptionSource {
                     AudioLevelSnapshot(
                         rawInputLevel: raw,
                         processedInputLevel: processed,
+                        speechDetected: speechGateOpen,
                         vadState: speechGateOpen ? "Speech likely" : "Gated"
                     )
                 )

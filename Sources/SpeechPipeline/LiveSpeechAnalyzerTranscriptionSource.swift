@@ -432,7 +432,7 @@ private final class LiveAudioState: @unchecked Sendable {
     private let lock = NSLock()
     private var rawInputLevel = 0.0
     private var processedInputLevel = 0.0
-    private var vadAllowsProcessing = true
+    private var speechDetected = false
     private var vadState = "Listening"
 
     func updateRawLevel(_ rawLevel: Double) -> AudioLevelSnapshot {
@@ -440,12 +440,13 @@ private final class LiveAudioState: @unchecked Sendable {
         defer { lock.unlock() }
 
         rawInputLevel = AudioLevelMeter.smooth(previous: rawInputLevel, next: rawLevel)
-        let nextProcessedLevel = vadAllowsProcessing ? rawInputLevel : 0
+        let nextProcessedLevel = speechDetected ? rawInputLevel : 0
         processedInputLevel = AudioLevelMeter.smooth(previous: processedInputLevel, next: nextProcessedLevel)
 
         return AudioLevelSnapshot(
             rawInputLevel: rawInputLevel,
             processedInputLevel: processedInputLevel,
+            speechDetected: speechDetected,
             vadState: vadState
         )
     }
@@ -454,7 +455,7 @@ private final class LiveAudioState: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        vadAllowsProcessing = speechDetected
+        self.speechDetected = speechDetected
         vadState = label ?? (speechDetected ? "Speech detected" : "No speech")
         let nextProcessedLevel = speechDetected ? rawInputLevel : 0
         processedInputLevel = AudioLevelMeter.smooth(previous: processedInputLevel, next: nextProcessedLevel)
@@ -462,6 +463,7 @@ private final class LiveAudioState: @unchecked Sendable {
         return AudioLevelSnapshot(
             rawInputLevel: rawInputLevel,
             processedInputLevel: processedInputLevel,
+            speechDetected: speechDetected,
             vadState: vadState
         )
     }

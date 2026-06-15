@@ -4,11 +4,18 @@ import Foundation
 public struct AudioLevelSnapshot: Equatable, Sendable {
     public var rawInputLevel: Double
     public var processedInputLevel: Double
+    public var speechDetected: Bool
     public var vadState: String
 
-    public init(rawInputLevel: Double = 0, processedInputLevel: Double = 0, vadState: String = "Unknown") {
+    public init(
+        rawInputLevel: Double = 0,
+        processedInputLevel: Double = 0,
+        speechDetected: Bool = false,
+        vadState: String = "Unknown"
+    ) {
         self.rawInputLevel = rawInputLevel
         self.processedInputLevel = processedInputLevel
+        self.speechDetected = speechDetected
         self.vadState = vadState
     }
 }

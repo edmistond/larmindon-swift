@@ -29,7 +29,11 @@ public struct DebugPanelView: View {
                 Section("Levels") {
                     row("Raw input", session.audioLevels.rawInputLevel.formatted(.number.precision(.fractionLength(2))))
                     row("Processed", session.audioLevels.processedInputLevel.formatted(.number.precision(.fractionLength(2))))
-                    AudioLevelBar(level: session.audioLevels.processedInputLevel)
+                    row("VAD active", session.audioLevels.speechDetected ? "Yes" : "No")
+                    AudioLevelBar(
+                        level: session.audioLevels.rawInputLevel,
+                        isActive: session.audioLevels.speechDetected
+                    )
                 }
 
                 Section("Transcript") {

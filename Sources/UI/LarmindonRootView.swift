@@ -85,7 +85,10 @@ public struct LarmindonRootView: View {
                 inputPicker
             }
 
-            AudioLevelBar(level: session.audioLevels.processedInputLevel)
+            AudioLevelBar(
+                level: session.audioLevels.rawInputLevel,
+                isActive: session.audioLevels.speechDetected
+            )
         }
         .padding(.horizontal)
         .padding(.vertical, 12)
