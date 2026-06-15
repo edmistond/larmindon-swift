@@ -16,7 +16,7 @@ public struct AudioLevelBar: View {
                     .fill(.secondary.opacity(0.18))
 
                 Capsule()
-                    .fill(levelStyle)
+                    .fill(levelGradient)
                     .frame(width: max(6, geometry.size.width * level))
             }
         }
@@ -25,17 +25,11 @@ public struct AudioLevelBar: View {
         .accessibilityValue("\(Int(level * 100)) percent, \(isActive ? "speech detected" : "no speech")")
     }
 
-    private var levelStyle: AnyShapeStyle {
-        if isActive {
-            AnyShapeStyle(
-                LinearGradient(
-                    colors: [.green, .yellow, .orange],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-        } else {
-            AnyShapeStyle(.secondary.opacity(0.55))
-        }
+    private var levelGradient: LinearGradient {
+        LinearGradient(
+            colors: isActive ? [.green, .yellow, .orange] : [Color.secondary.opacity(0.55)],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
 }

@@ -58,11 +58,11 @@ public struct CaptionDisplayView: View {
                 .onAppear {
                     scrollToBottom(proxy)
                 }
-                .onChange(of: scrollSignature) { _, _ in
+                .task(id: scrollSignature) {
                     guard isPinnedToBottom else { return }
                     scrollToBottom(proxy)
                 }
-                .onChange(of: fontSize) { _, _ in
+                .task(id: fontSize) {
                     guard isPinnedToBottom else { return }
                     scrollToBottom(proxy)
                 }

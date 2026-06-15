@@ -133,7 +133,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             capturedAudioContinuation = continuation
         }
 
-        transcriberTask = Task { [continuation, transcriber] in
+        transcriberTask = Task { [audioState, continuation, levelContinuation, transcriber] in
             var finalizedRanges = Set<String>()
 
             do {
@@ -141,6 +141,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
                     let text = String(result.text.characters)
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !text.isEmpty else { continue }
+                    levelContinuation.yield(audioState.updateSpeechActivity())
 
                     let finalized = SpeechResultFinalization.isFinalized(
                         range: result.range,
@@ -429,34 +430,43 @@ private extension VADSensitivity {
 }
 
 private final class LiveAudioState: @unchecked Sendable {
+    private static let speechActivityHoldDuration: TimeInterval = 1.2
+
     private let lock = NSLock()
     private var rawInputLevel = 0.0
     private var processedInputLevel = 0.0
-    private var speechDetected = false
-    private var vadState = "Listening"
+    private var detectorSpeechDetected = false
+    private var speechActivityExpiresAt: Date?
+    private var vadError: String?
 
     func updateRawLevel(_ rawLevel: Double) -> AudioLevelSnapshot {
         lock.lock()
         defer { lock.unlock() }
 
         rawInputLevel = AudioLevelMeter.smooth(previous: rawInputLevel, next: rawLevel)
-        let nextProcessedLevel = speechDetected ? rawInputLevel : 0
-        processedInputLevel = AudioLevelMeter.smooth(previous: processedInputLevel, next: nextProcessedLevel)
-
-        return AudioLevelSnapshot(
-            rawInputLevel: rawInputLevel,
-            processedInputLevel: processedInputLevel,
-            speechDetected: speechDetected,
-            vadState: vadState
-        )
+        return makeSnapshot(now: Date())
     }
 
     func updateVAD(speechDetected: Bool, label: String? = nil) -> AudioLevelSnapshot {
         lock.lock()
         defer { lock.unlock() }
 
-        self.speechDetected = speechDetected
-        vadState = label ?? (speechDetected ? "Speech detected" : "No speech")
+        detectorSpeechDetected = speechDetected
+        vadError = label
+
+        return makeSnapshot(now: Date())
+    }
+
+    func updateSpeechActivity() -> AudioLevelSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+
+        speechActivityExpiresAt = Date().addingTimeInterval(Self.speechActivityHoldDuration)
+        return makeSnapshot(now: Date())
+    }
+
+    private func makeSnapshot(now: Date) -> AudioLevelSnapshot {
+        let speechDetected = isSpeechActive(now: now)
         let nextProcessedLevel = speechDetected ? rawInputLevel : 0
         processedInputLevel = AudioLevelMeter.smooth(previous: processedInputLevel, next: nextProcessedLevel)
 
@@ -464,8 +474,28 @@ private final class LiveAudioState: @unchecked Sendable {
             rawInputLevel: rawInputLevel,
             processedInputLevel: processedInputLevel,
             speechDetected: speechDetected,
-            vadState: vadState
+            vadState: vadState(now: now)
         )
+    }
+
+    private func isSpeechActive(now: Date) -> Bool {
+        detectorSpeechDetected || speechActivityExpiresAt.map { now < $0 } == true
+    }
+
+    private func vadState(now: Date) -> String {
+        if let vadError {
+            return vadError
+        }
+
+        if detectorSpeechDetected {
+            return "Speech detected"
+        }
+
+        if speechActivityExpiresAt.map({ now < $0 }) == true {
+            return "Speech recognized"
+        }
+
+        return "No speech"
     }
 }
 
