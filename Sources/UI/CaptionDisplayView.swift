@@ -7,7 +7,7 @@ public struct CaptionDisplayView: View {
     @State private var isPinnedToBottom = true
 
     private let bottomSentinelID = "caption-bottom-sentinel"
-    private let coordinateSpaceName = "caption-scroll-space"
+    private let bottomTolerance: CGFloat = 28
 
     public init(lines: [CaptionLine], fontSize: Double) {
         self.lines = lines
@@ -38,33 +38,36 @@ public struct CaptionDisplayView: View {
                         Color.clear
                             .frame(height: 1)
                             .id(bottomSentinelID)
-                            .background(
-                                GeometryReader { bottomGeometry in
-                                    Color.clear.preference(
-                                        key: CaptionBottomPreferenceKey.self,
-                                        value: bottomGeometry.frame(in: .named(coordinateSpaceName)).maxY
-                                    )
-                                }
-                            )
                     }
                     .padding(24)
                     .frame(maxWidth: .infinity, minHeight: scrollContainer.size.height, alignment: .topLeading)
                 }
-                .coordinateSpace(name: coordinateSpaceName)
-                .onPreferenceChange(CaptionBottomPreferenceKey.self) { bottomMaxY in
-                    let distanceFromBottom = bottomMaxY - scrollContainer.size.height
-                    isPinnedToBottom = distanceFromBottom <= 28
+                .onScrollGeometryChange(for: CaptionScrollGeometry.self) { geometry in
+                    CaptionScrollGeometry(
+                        contentOffsetY: geometry.contentOffset.y,
+                        visibleMaxY: geometry.visibleRect.maxY,
+                        contentHeight: geometry.contentSize.height
+                    )
+                } action: { oldGeometry, newGeometry in
+                    updateBottomStickiness(oldGeometry: oldGeometry, newGeometry: newGeometry)
                 }
                 .onAppear {
-                    scrollToBottom(proxy)
+                    scrollToBottom(proxy, animated: false)
                 }
-                .task(id: scrollSignature) {
-                    guard isPinnedToBottom else { return }
-                    scrollToBottom(proxy)
-                }
-                .task(id: fontSize) {
-                    guard isPinnedToBottom else { return }
-                    scrollToBottom(proxy)
+                .task {
+                    var lastScrolledSignature = ""
+
+                    while !Task.isCancelled {
+                        if isPinnedToBottom {
+                            let currentSignature = scrollSignature
+                            if currentSignature != lastScrolledSignature {
+                                lastScrolledSignature = currentSignature
+                                scrollToBottom(proxy, animated: false)
+                            }
+                        }
+
+                        try? await Task.sleep(for: .milliseconds(80))
+                    }
                 }
             }
         }
@@ -77,19 +80,39 @@ public struct CaptionDisplayView: View {
             .joined(separator: "\u{1f}")
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+    private func updateBottomStickiness(oldGeometry: CaptionScrollGeometry, newGeometry: CaptionScrollGeometry) {
+        if newGeometry.distanceFromBottom <= bottomTolerance {
+            if !isPinnedToBottom {
+                isPinnedToBottom = true
+            }
+            return
+        }
+
+        let didScrollUp = newGeometry.contentOffsetY < oldGeometry.contentOffsetY - 1
+        if didScrollUp, isPinnedToBottom {
+            isPinnedToBottom = false
+        }
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
         DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.2)) {
+            if animated {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(bottomSentinelID, anchor: .bottom)
+                }
+            } else {
                 proxy.scrollTo(bottomSentinelID, anchor: .bottom)
             }
         }
     }
 }
 
-private struct CaptionBottomPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
+private struct CaptionScrollGeometry: Equatable {
+    let contentOffsetY: CGFloat
+    let visibleMaxY: CGFloat
+    let contentHeight: CGFloat
 
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+    var distanceFromBottom: CGFloat {
+        max(0, contentHeight - visibleMaxY)
     }
 }
