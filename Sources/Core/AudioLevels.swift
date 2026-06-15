@@ -15,26 +15,94 @@ public struct AudioLevelSnapshot: Equatable, Sendable {
 
 public enum AudioLevelMeter {
     public static func normalizedRMS(from buffer: AVAudioPCMBuffer) -> Double {
-        guard let channelData = buffer.floatChannelData else {
-            return 0
-        }
-
         let channelCount = Int(buffer.format.channelCount)
         let frameLength = Int(buffer.frameLength)
         guard channelCount > 0, frameLength > 0 else {
             return 0
         }
 
+        switch buffer.format.commonFormat {
+        case .pcmFormatFloat32:
+            guard let channelData = buffer.floatChannelData else {
+                return 0
+            }
+            return normalizedRMS(
+                channelData: channelData,
+                channelCount: channelCount,
+                frameLength: frameLength,
+                isInterleaved: buffer.format.isInterleaved
+            )
+        case .pcmFormatInt16:
+            guard let channelData = buffer.int16ChannelData else {
+                return 0
+            }
+            return normalizedRMS(
+                channelData: channelData,
+                channelCount: channelCount,
+                frameLength: frameLength,
+                isInterleaved: buffer.format.isInterleaved
+            )
+        default:
+            return 0
+        }
+    }
+
+    private static func normalizedRMS(
+        channelData: UnsafePointer<UnsafeMutablePointer<Float>>,
+        channelCount: Int,
+        frameLength: Int,
+        isInterleaved: Bool
+    ) -> Double {
+        let sampleCount = channelCount * frameLength
         var sum: Float = 0
-        for channel in 0..<channelCount {
-            let samples = channelData[channel]
-            for frame in 0..<frameLength {
-                let sample = samples[frame]
+
+        if isInterleaved {
+            let samples = channelData[0]
+            for sampleIndex in 0..<sampleCount {
+                let sample = samples[sampleIndex]
                 sum += sample * sample
+            }
+        } else {
+            for channel in 0..<channelCount {
+                let samples = channelData[channel]
+                for frame in 0..<frameLength {
+                    let sample = samples[frame]
+                    sum += sample * sample
+                }
             }
         }
 
-        let meanSquare = sum / Float(channelCount * frameLength)
+        let meanSquare = sum / Float(sampleCount)
+        let rms = sqrt(meanSquare)
+        return min(1, max(0, Double(rms) * 8))
+    }
+
+    private static func normalizedRMS(
+        channelData: UnsafePointer<UnsafeMutablePointer<Int16>>,
+        channelCount: Int,
+        frameLength: Int,
+        isInterleaved: Bool
+    ) -> Double {
+        let sampleCount = channelCount * frameLength
+        var sum: Float = 0
+
+        if isInterleaved {
+            let samples = channelData[0]
+            for sampleIndex in 0..<sampleCount {
+                let sample = Float(samples[sampleIndex]) / Float(Int16.max)
+                sum += sample * sample
+            }
+        } else {
+            for channel in 0..<channelCount {
+                let samples = channelData[channel]
+                for frame in 0..<frameLength {
+                    let sample = Float(samples[frame]) / Float(Int16.max)
+                    sum += sample * sample
+                }
+            }
+        }
+
+        let meanSquare = sum / Float(sampleCount)
         let rms = sqrt(meanSquare)
         return min(1, max(0, Double(rms) * 8))
     }

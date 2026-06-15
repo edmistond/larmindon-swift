@@ -102,6 +102,10 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             compatibleWith: modules,
             considering: inputFormat
         ) ?? inputFormat
+        let bufferConverter = try AudioBufferConverter(
+            inputFormat: inputFormat,
+            outputFormat: analysisFormat
+        )
 
         try await analyzer.prepareToAnalyze(in: analysisFormat)
 
@@ -164,27 +168,27 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         inputNode.installTap(
             onBus: 0,
             bufferSize: 768,
-            format: analysisFormat
+            format: nil
         ) { buffer, time in
-            guard let copiedBuffer = buffer.copyPCMBuffer() else {
-                return
-            }
-
-            let rawLevel = AudioLevelMeter.normalizedRMS(from: copiedBuffer)
+            let rawLevel = AudioLevelMeter.normalizedRMS(from: buffer)
             levelContinuation.yield(audioState.updateRawLevel(rawLevel))
 
             let startTime: CMTime?
-            if time.sampleTime >= 0, copiedBuffer.format.sampleRate > 0 {
+            if time.sampleTime >= 0, inputFormat.sampleRate > 0 {
                 startTime = CMTime(
                     value: time.sampleTime,
-                    timescale: CMTimeScale(copiedBuffer.format.sampleRate.rounded())
+                    timescale: CMTimeScale(inputFormat.sampleRate.rounded())
                 )
             } else {
                 startTime = nil
             }
 
+            guard let analyzerBuffer = bufferConverter.convert(buffer) else {
+                return
+            }
+
             analyzerInputContinuation.yield(
-                AnalyzerInput(buffer: copiedBuffer, bufferStartTime: startTime)
+                AnalyzerInput(buffer: analyzerBuffer, bufferStartTime: startTime)
             )
         }
 
@@ -239,6 +243,97 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
                 "Could not reserve SpeechAnalyzer assets for \(supportedLocale.identifier): \(error.localizedDescription). Installed SpeechTranscriber locales: \(installedLocales.isEmpty ? "none" : installedLocales)"
             )
         }
+    }
+}
+
+private final class AudioBufferConverter: @unchecked Sendable {
+    private let inputFormat: AVAudioFormat
+    private let outputFormat: AVAudioFormat
+    private let converter: AVAudioConverter?
+    private let lock = NSLock()
+
+    init(inputFormat: AVAudioFormat, outputFormat: AVAudioFormat) throws {
+        self.inputFormat = inputFormat
+        self.outputFormat = outputFormat
+
+        if inputFormat.isEquivalent(to: outputFormat) {
+            self.converter = nil
+        } else if let converter = AVAudioConverter(from: inputFormat, to: outputFormat) {
+            self.converter = converter
+        } else {
+            throw TranscriptionSourceError.unavailable(
+                "Could not convert microphone audio from \(inputFormat) to \(outputFormat)"
+            )
+        }
+    }
+
+    func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let converter else {
+            return buffer.copyPCMBuffer()
+        }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        let sampleRateRatio = outputFormat.sampleRate / inputFormat.sampleRate
+        let outputCapacity = AVAudioFrameCount(
+            max(1, ceil(Double(buffer.frameLength) * sampleRateRatio) + 16)
+        )
+        guard let outputBuffer = AVAudioPCMBuffer(
+            pcmFormat: outputFormat,
+            frameCapacity: outputCapacity
+        ) else {
+            return nil
+        }
+
+        let inputProvider = AudioConverterInputProvider(buffer: buffer)
+        var conversionError: NSError?
+        let status = converter.convert(
+            to: outputBuffer,
+            error: &conversionError
+        ) { _, inputStatus in
+            inputProvider.nextBuffer(inputStatus: inputStatus)
+        }
+
+        switch status {
+        case .haveData, .inputRanDry, .endOfStream:
+            return outputBuffer.frameLength > 0 ? outputBuffer : nil
+        case .error:
+            return nil
+        @unknown default:
+            return nil
+        }
+    }
+}
+
+private final class AudioConverterInputProvider: @unchecked Sendable {
+    private let buffer: AVAudioPCMBuffer
+    private var didProvideInput = false
+
+    init(buffer: AVAudioPCMBuffer) {
+        self.buffer = buffer
+    }
+
+    func nextBuffer(
+        inputStatus: UnsafeMutablePointer<AVAudioConverterInputStatus>
+    ) -> AVAudioBuffer? {
+        guard !didProvideInput else {
+            inputStatus.pointee = .noDataNow
+            return nil
+        }
+
+        didProvideInput = true
+        inputStatus.pointee = .haveData
+        return buffer
+    }
+}
+
+private extension AVAudioFormat {
+    func isEquivalent(to other: AVAudioFormat) -> Bool {
+        commonFormat == other.commonFormat &&
+            sampleRate == other.sampleRate &&
+            channelCount == other.channelCount &&
+            isInterleaved == other.isInterleaved
     }
 }
 
