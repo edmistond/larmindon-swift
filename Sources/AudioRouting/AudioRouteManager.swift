@@ -112,12 +112,6 @@ public final class AudioRouteManager {
                 self?.refresh()
             }
         }
-        #elseif os(macOS)
-        MacAudioDeviceProvider.observeInputChanges { [weak self] in
-            Task { @MainActor in
-                self?.refresh()
-            }
-        }
         #endif
     }
 }
@@ -198,34 +192,6 @@ private enum MacAudioDeviceProvider {
         }
     }
 
-    static func observeInputChanges(_ handler: @escaping @Sendable () -> Void) {
-        var defaultInputAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectAddPropertyListenerBlock(
-            systemObjectID,
-            &defaultInputAddress,
-            DispatchQueue.main
-        ) { _, _ in
-            handler()
-        }
-
-        var devicesAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectAddPropertyListenerBlock(
-            systemObjectID,
-            &devicesAddress,
-            DispatchQueue.main
-        ) { _, _ in
-            handler()
-        }
-    }
-
     private static func inputDevicesWithIDs() -> [(deviceID: AudioObjectID, port: AudioRoutePort)] {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
@@ -271,12 +237,37 @@ private enum MacAudioDeviceProvider {
 
     private static func isInputDevice(_ deviceID: AudioObjectID) -> Bool {
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreams,
+            mSelector: kAudioDevicePropertyStreamConfiguration,
             mScope: kAudioDevicePropertyScopeInput,
             mElement: kAudioObjectPropertyElementMain
         )
         var dataSize: UInt32 = 0
-        return AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize) == noErr && dataSize > 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize) == noErr,
+              dataSize > 0 else {
+            return false
+        }
+
+        guard let rawBufferList = malloc(Int(dataSize)) else {
+            return false
+        }
+        defer {
+            free(rawBufferList)
+        }
+        let audioBufferList = rawBufferList.bindMemory(to: AudioBufferList.self, capacity: 1)
+        let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
+
+        guard AudioObjectGetPropertyData(
+            deviceID,
+            &address,
+            0,
+            nil,
+            &dataSize,
+            audioBufferList
+        ) == noErr else {
+            return false
+        }
+
+        return buffers.contains { $0.mNumberChannels > 0 }
     }
 
     private static func routePort(for deviceID: AudioObjectID) -> AudioRoutePort? {
