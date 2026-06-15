@@ -97,7 +97,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         )
 
         let modules: [any SpeechModule] = [detector, transcriber]
-        try await installAssetsIfNeeded(for: modules, locale: locale)
+        try await validateAssets(for: modules, locale: locale)
 
         let analyzer = SpeechAnalyzer(modules: modules)
         let analysisFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
@@ -201,23 +201,11 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         }
     }
 
-    private func installAssetsIfNeeded(for modules: [any SpeechModule], locale: Locale) async throws {
+    private func validateAssets(for modules: [any SpeechModule], locale: Locale) async throws {
         let status = await AssetInventory.status(forModules: modules)
-        guard status < .installed else {
-            return
-        }
-
-        guard let request = try await AssetInventory.assetInstallationRequest(supporting: modules) else {
+        guard status != .unsupported else {
             throw TranscriptionSourceError.unavailable(
-                "SpeechAnalyzer assets for \(locale.identifier) are \(status), and no installation request is available."
-            )
-        }
-
-        do {
-            try await request.downloadAndInstall()
-        } catch {
-            throw TranscriptionSourceError.unavailable(
-                "Could not install SpeechAnalyzer assets for \(locale.identifier): \(error.localizedDescription)"
+                "SpeechAnalyzer assets for \(locale.identifier) are unsupported on this device or simulator."
             )
         }
     }
@@ -240,7 +228,16 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         }
 
         do {
-            try await AssetInventory.reserve(locale: supportedLocale)
+            let didReserve = try await AssetInventory.reserve(locale: supportedLocale)
+            guard didReserve else {
+                let reservedLocales = await AssetInventory.reservedLocales
+                    .map(\.identifier)
+                    .sorted()
+                    .joined(separator: ", ")
+                throw TranscriptionSourceError.unavailable(
+                    "Could not reserve SpeechAnalyzer locale \(supportedLocale.identifier). Reserved locales: \(reservedLocales.isEmpty ? "none" : reservedLocales)"
+                )
+            }
             reservedLocale = supportedLocale
             return supportedLocale
         } catch {
