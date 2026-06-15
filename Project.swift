@@ -5,6 +5,7 @@ let appSettings: SettingsDictionary = [
     "CURRENT_PROJECT_VERSION": "1",
     "SWIFT_VERSION": "6.0",
     "PRODUCT_NAME": "Larmindon",
+    "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
     "ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS": "YES",
 ]
 
@@ -55,6 +56,7 @@ let project = Project(
             deploymentTargets: .iOS("26.0"),
             infoPlist: .extendingDefault(with: privacyPlist),
             sources: ["Sources/App/**"],
+            resources: ["Resources/**"],
             dependencies: [.target(name: "LarmindonKit")],
             settings: iOSAppTargetSettings
         ),
@@ -66,6 +68,7 @@ let project = Project(
             deploymentTargets: .macOS("26.0"),
             infoPlist: .extendingDefault(with: privacyPlist),
             sources: ["Sources/App/**"],
+            resources: ["Resources/**"],
             dependencies: [.target(name: "LarmindonKit")]
         ),
         .target(
