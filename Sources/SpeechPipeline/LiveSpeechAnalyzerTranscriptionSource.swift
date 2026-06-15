@@ -17,6 +17,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     private let levelContinuation: AsyncStream<AudioLevelSnapshot>.Continuation
     private let sensitivity: VADSensitivity
     private let inputDeviceID: UInt32?
+    private let bufferFrameCount: AVAudioFrameCount
     private let audioEngine = AVAudioEngine()
     private let audioState = LiveAudioState()
 
@@ -27,9 +28,16 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     private var stopPipeline: (() async -> Void)?
     private var reservedLocale: Locale?
 
-    public init(sensitivity: VADSensitivity = .medium, inputDeviceID: UInt32? = nil) {
+    public init(
+        sensitivity: VADSensitivity = .medium,
+        inputDeviceID: UInt32? = nil,
+        bufferFrameCount: Int = AudioCaptureBufferFrames.defaultValue
+    ) {
         self.sensitivity = sensitivity
         self.inputDeviceID = inputDeviceID
+        self.bufferFrameCount = AVAudioFrameCount(
+            AudioCaptureBufferFrames.clamped(bufferFrameCount)
+        )
 
         var capturedContinuation: AsyncStream<CaptionResult>.Continuation!
         self.results = AsyncStream { continuation in
@@ -228,7 +236,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         )
         inputNode.installTap(
             onBus: 0,
-            bufferSize: 768,
+            bufferSize: bufferFrameCount,
             format: captureFormat,
             block: tapHandler
         )
@@ -391,7 +399,12 @@ private struct AudioTapSink: @unchecked Sendable {
 
     func handle(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
         let rawLevel = AudioLevelMeter.normalizedRMS(from: buffer)
-        levelContinuation.yield(audioState.updateRawLevel(rawLevel))
+        levelContinuation.yield(
+            audioState.updateRawLevel(
+                rawLevel,
+                observedCallbackFrameLength: Int(buffer.frameLength)
+            )
+        )
 
         guard let copiedBuffer = buffer.copyPCMBuffer() else {
             return
@@ -526,12 +539,14 @@ private final class LiveAudioState: @unchecked Sendable {
     private var detectorSpeechDetected = false
     private var speechActivityExpiresAt: Date?
     private var vadError: String?
+    private var observedCallbackFrameLength: Int?
 
-    func updateRawLevel(_ rawLevel: Double) -> AudioLevelSnapshot {
+    func updateRawLevel(_ rawLevel: Double, observedCallbackFrameLength: Int) -> AudioLevelSnapshot {
         lock.lock()
         defer { lock.unlock() }
 
         rawInputLevel = AudioLevelMeter.smooth(previous: rawInputLevel, next: rawLevel)
+        self.observedCallbackFrameLength = observedCallbackFrameLength
         return makeSnapshot(now: Date())
     }
 
@@ -562,7 +577,8 @@ private final class LiveAudioState: @unchecked Sendable {
             rawInputLevel: rawInputLevel,
             processedInputLevel: processedInputLevel,
             speechDetected: speechDetected,
-            vadState: vadState(now: now)
+            vadState: vadState(now: now),
+            observedCallbackFrameLength: observedCallbackFrameLength
         )
     }
 

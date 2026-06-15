@@ -65,3 +65,15 @@ public enum VADSensitivity: String, CaseIterable, Identifiable {
         }
     }
 }
+
+public enum AudioCaptureBufferFrames {
+    public static let storageKey = "audioCaptureBufferFrameCount"
+    public static let min = 160
+    public static let max = 2048
+    public static let step = 32
+    public static let defaultValue = 768
+
+    public static func clamped(_ value: Int) -> Int {
+        Swift.min(max, Swift.max(min, value))
+    }
+}

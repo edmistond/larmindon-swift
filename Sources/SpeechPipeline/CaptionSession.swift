@@ -12,29 +12,40 @@ public final class CaptionSession {
     public private(set) var lastError: String?
     public private(set) var lastVolatileResult: String = ""
     public private(set) var audioLevels = AudioLevelSnapshot()
+    public private(set) var activeAudioBufferFrameCount: Int?
 
     private var activeSource: TranscriptionSource?
     private var resultTask: Task<Void, Never>?
     private var levelTask: Task<Void, Never>?
     private var vadSensitivity: VADSensitivity
+    private var audioBufferFrameCount: Int
 
     public init(
         store: CaptionStore = CaptionStore(),
         routeManager: AudioRouteManager = AudioRouteManager(),
         selectedSourceKind: TranscriptionSourceKind = .live,
-        vadSensitivity: VADSensitivity = .medium
+        vadSensitivity: VADSensitivity = .medium,
+        audioBufferFrameCount: Int = AudioCaptureBufferFrames.defaultValue
     ) {
         self.store = store
         self.routeManager = routeManager
         self.selectedSourceKind = selectedSourceKind
         self.vadSensitivity = vadSensitivity
+        self.audioBufferFrameCount = AudioCaptureBufferFrames.clamped(audioBufferFrameCount)
     }
 
-    public func start(kind: TranscriptionSourceKind? = nil, vadSensitivity: VADSensitivity? = nil) {
+    public func start(
+        kind: TranscriptionSourceKind? = nil,
+        vadSensitivity: VADSensitivity? = nil,
+        audioBufferFrameCount: Int? = nil
+    ) {
         let sourceKind = kind ?? selectedSourceKind
         selectedSourceKind = sourceKind
         if let vadSensitivity {
             self.vadSensitivity = vadSensitivity
+        }
+        if let audioBufferFrameCount {
+            self.audioBufferFrameCount = AudioCaptureBufferFrames.clamped(audioBufferFrameCount)
         }
 
         Task {
@@ -42,6 +53,7 @@ public final class CaptionSession {
 
             let source: TranscriptionSource = makeSource(kind: sourceKind)
             activeSource = source
+            activeAudioBufferFrameCount = sourceKind == .live ? self.audioBufferFrameCount : nil
             store.isRunning = true
             lastError = nil
             speechAnalyzerState = "Starting \(source.name)"
@@ -68,6 +80,7 @@ public final class CaptionSession {
                 store.isRunning = false
                 await source.stop()
                 activeSource = nil
+                activeAudioBufferFrameCount = nil
                 resultTask?.cancel()
                 resultTask = nil
                 levelTask?.cancel()
@@ -86,6 +99,7 @@ public final class CaptionSession {
             await activeSource.stop()
         }
         activeSource = nil
+        activeAudioBufferFrameCount = nil
         store.isRunning = false
         speechAnalyzerState = "Stopped"
         audioLevels = AudioLevelSnapshot()
@@ -107,7 +121,8 @@ public final class CaptionSession {
         case .live:
             return LiveSpeechAnalyzerTranscriptionSource(
                 sensitivity: vadSensitivity,
-                inputDeviceID: routeManager.preferredInputDeviceID
+                inputDeviceID: routeManager.preferredInputDeviceID,
+                bufferFrameCount: audioBufferFrameCount
             )
         }
     }

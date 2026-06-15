@@ -5,6 +5,7 @@ public struct PreferencesView: View {
     @AppStorage("appearancePreference") private var appearancePreferenceRaw = AppearancePreference.system.rawValue
     @AppStorage("transcriptionSourceKind") private var sourceKindRaw = TranscriptionSourceKind.live.rawValue
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
+    @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
     @AppStorage("voiceProcessingEnabled") private var voiceProcessingEnabled = true
     @AppStorage("showDebugPanel") private var showDebugPanel = false
 
@@ -44,11 +45,56 @@ public struct PreferencesView: View {
                     }
                 }
 
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Buffer size")
+                        Spacer()
+                        Text("\(audioBufferFrameCount) frames")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+
+                    Slider(
+                        value: audioBufferFrameCountBinding,
+                        in: Double(AudioCaptureBufferFrames.min)...Double(AudioCaptureBufferFrames.max),
+                        step: Double(AudioCaptureBufferFrames.step)
+                    )
+
+                    Stepper(
+                        "Capture buffer",
+                        value: $audioBufferFrameCount,
+                        in: AudioCaptureBufferFrames.min...AudioCaptureBufferFrames.max,
+                        step: AudioCaptureBufferFrames.step
+                    )
+                    .labelsHidden()
+                }
+
                 Toggle("Voice processing", isOn: $voiceProcessingEnabled)
                 Toggle("Show debug panel", isOn: $showDebugPanel)
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            normalizeAudioBufferFrameCount()
+        }
+        .onChange(of: audioBufferFrameCount) {
+            normalizeAudioBufferFrameCount()
+        }
+    }
+
+    private var audioBufferFrameCountBinding: Binding<Double> {
+        Binding {
+            Double(audioBufferFrameCount)
+        } set: { newValue in
+            audioBufferFrameCount = AudioCaptureBufferFrames.clamped(Int(newValue.rounded()))
+        }
+    }
+
+    private func normalizeAudioBufferFrameCount() {
+        let clamped = AudioCaptureBufferFrames.clamped(audioBufferFrameCount)
+        if audioBufferFrameCount != clamped {
+            audioBufferFrameCount = clamped
+        }
     }
 }
 

@@ -15,6 +15,7 @@ public struct LarmindonRootView: View {
     @AppStorage("appearancePreference") private var appearancePreferenceRaw = AppearancePreference.system.rawValue
     @AppStorage("transcriptionSourceKind") private var sourceKindRaw = TranscriptionSourceKind.live.rawValue
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
+    @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
     @AppStorage("showDebugPanel") private var persistedShowDebugPanel = false
 
     public init() {}
@@ -52,12 +53,10 @@ public struct LarmindonRootView: View {
                 }
             }
             .sheet(isPresented: $showSettings) {
-                PreferencesView()
-                    .presentationDetents([.medium, .large])
+                settingsSheet
             }
             .sheet(isPresented: $showDebugPanel) {
-                DebugPanelView(session: session)
-                    .presentationDetents([.medium, .large])
+                debugPanelSheet
             }
             .onAppear {
                 showDebugPanel = persistedShowDebugPanel
@@ -93,7 +92,11 @@ public struct LarmindonRootView: View {
                     if session.store.isRunning {
                         Task { await session.stop() }
                     } else {
-                        session.start(kind: sourceKind, vadSensitivity: vadSensitivity)
+                        session.start(
+                            kind: sourceKind,
+                            vadSensitivity: vadSensitivity,
+                            audioBufferFrameCount: audioBufferFrameCount
+                        )
                     }
                 } label: {
                     Label(session.store.isRunning ? "Stop Captions" : "Start Captions", systemImage: session.store.isRunning ? "stop.fill" : "play.fill")
@@ -131,6 +134,28 @@ public struct LarmindonRootView: View {
         }
         #else
         InputSelectionMenu(routeManager: session.routeManager)
+        #endif
+    }
+
+    @ViewBuilder
+    private var debugPanelSheet: some View {
+        #if os(iOS)
+        DebugPanelView(session: session)
+            .presentationDetents([.medium, .large])
+        #else
+        DebugPanelView(session: session)
+            .frame(minWidth: 560, idealWidth: 640, minHeight: 620, idealHeight: 720)
+        #endif
+    }
+
+    @ViewBuilder
+    private var settingsSheet: some View {
+        #if os(iOS)
+        PreferencesView()
+            .presentationDetents([.medium, .large])
+        #else
+        PreferencesView()
+            .frame(minWidth: 520, idealWidth: 600, minHeight: 520, idealHeight: 620)
         #endif
     }
 

@@ -6,17 +6,20 @@ public struct AudioLevelSnapshot: Equatable, Sendable {
     public var processedInputLevel: Double
     public var speechDetected: Bool
     public var vadState: String
+    public var observedCallbackFrameLength: Int?
 
     public init(
         rawInputLevel: Double = 0,
         processedInputLevel: Double = 0,
         speechDetected: Bool = false,
-        vadState: String = "Unknown"
+        vadState: String = "Unknown",
+        observedCallbackFrameLength: Int? = nil
     ) {
         self.rawInputLevel = rawInputLevel
         self.processedInputLevel = processedInputLevel
         self.speechDetected = speechDetected
         self.vadState = vadState
+        self.observedCallbackFrameLength = observedCallbackFrameLength
     }
 }
 

@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct DebugPanelView: View {
     @Bindable private var session: CaptionSession
+    @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
 
     public init(session: CaptionSession) {
         self.session = session
@@ -30,6 +31,12 @@ public struct DebugPanelView: View {
                     row("Raw input", session.audioLevels.rawInputLevel.formatted(.number.precision(.fractionLength(2))))
                     row("Processed", session.audioLevels.processedInputLevel.formatted(.number.precision(.fractionLength(2))))
                     row("VAD active", session.audioLevels.speechDetected ? "Yes" : "No")
+                    row("Configured buffer", "\(audioBufferFrameCount) frames")
+                    row("Active buffer", session.activeAudioBufferFrameCount.map { "\($0) frames" } ?? "None")
+                    row(
+                        "Observed callback",
+                        session.audioLevels.observedCallbackFrameLength.map { "\($0) frames" } ?? "None"
+                    )
                     AudioLevelBar(
                         level: session.audioLevels.rawInputLevel,
                         isActive: session.audioLevels.speechDetected
@@ -48,7 +55,10 @@ public struct DebugPanelView: View {
                     }
 
                     Button("Start live transcription source") {
-                        session.start(kind: .live)
+                        session.start(
+                            kind: .live,
+                            audioBufferFrameCount: audioBufferFrameCount
+                        )
                     }
 
                     Button("Dump route info to console") {
