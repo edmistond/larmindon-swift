@@ -17,7 +17,7 @@ let privacyPlist: [String: Plist.Value] = [
 
 let iOSAppTargetSettings: Settings = .settings(
     base: [
-        "CODE_SIGN_ENTITLEMENTS": "Entitlements/Larmindon.entitlements",
+        "CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]": "Entitlements/Larmindon.entitlements",
     ]
 )
 
