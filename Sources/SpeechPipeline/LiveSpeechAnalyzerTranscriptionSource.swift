@@ -193,11 +193,19 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
                 }
 
                 analyzerInputContinuation.yield(
-                    AnalyzerInput(buffer: analyzerBuffer, bufferStartTime: packet.startTime)
+                    AnalyzerInput(buffer: analyzerBuffer)
                 )
             }
 
             analyzerInputContinuation.finish()
+        }
+
+        analyzerTask = Task { [analyzer, inputStream, continuation] in
+            do {
+                try await analyzer.start(inputSequence: inputStream)
+            } catch {
+                continuation.yield(.volatile("SpeechAnalyzer error: \(error.localizedDescription)"))
+            }
         }
 
         let tapHandler = makeAudioTapHandler(
@@ -215,14 +223,6 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         )
 
         try audioEngine.start()
-
-        analyzerTask = Task { [analyzer, inputStream, continuation] in
-            do {
-                try await analyzer.start(inputSequence: inputStream)
-            } catch {
-                continuation.yield(.volatile("SpeechAnalyzer error: \(error.localizedDescription)"))
-            }
-        }
     }
 
     private func prepareTranscriberLocale() async throws -> Locale {
@@ -301,21 +301,11 @@ private struct AudioTapSink: @unchecked Sendable {
         let rawLevel = AudioLevelMeter.normalizedRMS(from: buffer)
         levelContinuation.yield(audioState.updateRawLevel(rawLevel))
 
-        let startTime: CMTime?
-        if time.sampleTime >= 0, buffer.format.sampleRate > 0 {
-            startTime = CMTime(
-                value: time.sampleTime,
-                timescale: CMTimeScale(buffer.format.sampleRate.rounded())
-            )
-        } else {
-            startTime = nil
-        }
-
         guard let copiedBuffer = buffer.copyPCMBuffer() else {
             return
         }
 
-        captureContinuation.yield(CapturedAudioBuffer(buffer: copiedBuffer, startTime: startTime))
+        captureContinuation.yield(CapturedAudioBuffer(buffer: copiedBuffer))
     }
 }
 
@@ -329,7 +319,6 @@ private func makeAudioTapHandler(
 
 private struct CapturedAudioBuffer: @unchecked Sendable {
     let buffer: AVAudioPCMBuffer
-    let startTime: CMTime?
 }
 
 private final class DynamicAudioBufferConverter: @unchecked Sendable {
