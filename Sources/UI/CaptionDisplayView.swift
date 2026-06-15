@@ -54,19 +54,23 @@ public struct CaptionDisplayView: View {
                 .onAppear {
                     scrollToBottom(proxy, animated: false)
                 }
-                .task {
-                    var lastScrolledSignature = ""
+                .onChange(of: scrollSignature) { _, newSignature in
+                    if newSignature.isEmpty {
+                        isPinnedToBottom = true
+                    }
 
-                    while !Task.isCancelled {
-                        if isPinnedToBottom {
-                            let currentSignature = scrollSignature
-                            if currentSignature != lastScrolledSignature {
-                                lastScrolledSignature = currentSignature
-                                scrollToBottom(proxy, animated: false)
-                            }
-                        }
-
-                        try? await Task.sleep(for: .milliseconds(80))
+                    if isPinnedToBottom {
+                        scrollToBottom(proxy, animated: false)
+                    }
+                }
+                .onChange(of: scrollContainer.size.height) {
+                    if isPinnedToBottom {
+                        scrollToBottom(proxy, animated: false)
+                    }
+                }
+                .onChange(of: fontSize) {
+                    if isPinnedToBottom {
+                        scrollToBottom(proxy, animated: false)
                     }
                 }
             }
@@ -95,7 +99,9 @@ public struct CaptionDisplayView: View {
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
-        DispatchQueue.main.async {
+        Task { @MainActor in
+            await Task.yield()
+
             if animated {
                 withAnimation(.easeOut(duration: 0.2)) {
                     proxy.scrollTo(bottomSentinelID, anchor: .bottom)

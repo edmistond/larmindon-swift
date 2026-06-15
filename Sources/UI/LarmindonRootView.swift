@@ -22,15 +22,13 @@ public struct LarmindonRootView: View {
     public var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                topBar
-
                 CaptionDisplayView(
                     lines: session.store.visibleCaptionLines(),
                     fontSize: captionFontSize
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                bottomBar
+                captureControls
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(platformBackgroundColor))
@@ -72,8 +70,13 @@ public struct LarmindonRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var topBar: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var captureControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AudioLevelBar(
+                level: session.audioLevels.rawInputLevel,
+                isActive: session.audioLevels.speechDetected
+            )
+
             HStack(spacing: 12) {
                 Label("Input: \(session.routeManager.currentInputName)", systemImage: "mic")
                     .font(.subheadline)
@@ -85,49 +88,46 @@ public struct LarmindonRootView: View {
                 inputPicker
             }
 
-            AudioLevelBar(
-                level: session.audioLevels.rawInputLevel,
-                isActive: session.audioLevels.speechDetected
-            )
+            HStack(spacing: 12) {
+                Button {
+                    if session.store.isRunning {
+                        Task { await session.stop() }
+                    } else {
+                        session.start(kind: sourceKind, vadSensitivity: vadSensitivity)
+                    }
+                } label: {
+                    Label(session.store.isRunning ? "Stop Captions" : "Start Captions", systemImage: session.store.isRunning ? "stop.fill" : "play.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    session.clear()
+                } label: {
+                    Label("Clear", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+            }
         }
         .padding(.horizontal)
-        .padding(.vertical, 12)
-        .background(.thinMaterial)
-    }
-
-    private var bottomBar: some View {
-        HStack(spacing: 12) {
-            Button {
-                if session.store.isRunning {
-                    Task { await session.stop() }
-                } else {
-                    session.start(kind: sourceKind, vadSensitivity: vadSensitivity)
-                }
-            } label: {
-                Label(session.store.isRunning ? "Stop Captions" : "Start Captions", systemImage: session.store.isRunning ? "stop.fill" : "play.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-
-            Button {
-                session.clear()
-            } label: {
-                Label("Clear", systemImage: "trash")
-            }
-            .buttonStyle(.bordered)
-        }
-        .padding()
+        .padding(.top, 12)
+        .padding(.bottom)
         .background(.thinMaterial)
     }
 
     @ViewBuilder
     private var inputPicker: some View {
         #if os(iOS)
-        ZStack {
-            InputSelectionMenu(routeManager: session.routeManager)
-            SystemInputPickerView()
-                .frame(width: 88, height: 44)
-                .accessibilityHidden(true)
+        HStack(spacing: 6) {
+            SystemInputPickerButton(routeManager: session.routeManager)
+                .fixedSize()
+
+            InputSelectionMenu(
+                routeManager: session.routeManager,
+                labelTitle: "Input options",
+                systemImage: "ellipsis.circle"
+            )
+            .labelStyle(.iconOnly)
         }
         #else
         InputSelectionMenu(routeManager: session.routeManager)

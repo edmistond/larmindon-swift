@@ -91,12 +91,19 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
 
     private func startSpeechAnalyzerPipeline() async throws {
         let inputNode = audioEngine.inputNode
+        let captureFormat: AVAudioFormat
+
         #if os(macOS)
         if let inputDeviceID {
             try configureMacOSInputDevice(inputDeviceID, on: inputNode)
+            captureFormat = try macOSInputDeviceCaptureFormat(deviceID: AudioDeviceID(inputDeviceID))
+        } else {
+            captureFormat = inputNode.outputFormat(forBus: 0)
         }
+        #else
+        captureFormat = inputNode.outputFormat(forBus: 0)
         #endif
-        let inputFormat = inputNode.outputFormat(forBus: 0)
+
         let locale = try await prepareTranscriberLocale()
 
         let transcriber = SpeechTranscriber(
@@ -114,8 +121,8 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         let analyzer = SpeechAnalyzer(modules: modules)
         let analysisFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
             compatibleWith: modules,
-            considering: inputFormat
-        ) ?? inputFormat
+            considering: captureFormat
+        ) ?? captureFormat
         let bufferConverter = DynamicAudioBufferConverter(outputFormat: analysisFormat)
 
         try await analyzer.prepareToAnalyze(in: analysisFormat)
@@ -222,7 +229,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         inputNode.installTap(
             onBus: 0,
             bufferSize: 768,
-            format: nil,
+            format: captureFormat,
             block: tapHandler
         )
 
@@ -293,6 +300,87 @@ private func configureMacOSInputDevice(_ deviceID: UInt32, on inputNode: AVAudio
             "Could not open selected macOS input device \(deviceID): \(status)"
         )
     }
+}
+
+private func macOSInputDeviceCaptureFormat(deviceID: AudioDeviceID) throws -> AVAudioFormat {
+    let sampleRate = try macOSInputDeviceNominalSampleRate(deviceID: deviceID)
+    let channelCount = try macOSInputDeviceInputChannelCount(deviceID: deviceID)
+
+    guard let format = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
+        sampleRate: sampleRate,
+        channels: channelCount,
+        interleaved: false
+    ) else {
+        throw TranscriptionSourceError.unavailable(
+            "Could not build input format for macOS audio device \(deviceID): \(channelCount) ch at \(sampleRate) Hz"
+        )
+    }
+
+    return format
+}
+
+private func macOSInputDeviceNominalSampleRate(deviceID: AudioDeviceID) throws -> Double {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyNominalSampleRate,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var sampleRate = Float64(0)
+    var dataSize = UInt32(MemoryLayout<Float64>.size)
+    let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &sampleRate)
+
+    guard status == noErr, sampleRate > 0 else {
+        throw TranscriptionSourceError.unavailable(
+            "Could not read nominal sample rate for macOS audio device \(deviceID): \(status)"
+        )
+    }
+
+    return Double(sampleRate)
+}
+
+private func macOSInputDeviceInputChannelCount(deviceID: AudioDeviceID) throws -> AVAudioChannelCount {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyStreamConfiguration,
+        mScope: kAudioDevicePropertyScopeInput,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var dataSize: UInt32 = 0
+    let sizeStatus = AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize)
+
+    guard sizeStatus == noErr, dataSize > 0 else {
+        throw TranscriptionSourceError.unavailable(
+            "Could not read input channel layout for macOS audio device \(deviceID): \(sizeStatus)"
+        )
+    }
+
+    guard let rawBufferList = malloc(Int(dataSize)) else {
+        throw TranscriptionSourceError.unavailable(
+            "Could not allocate input channel layout buffer for macOS audio device \(deviceID)"
+        )
+    }
+    defer {
+        free(rawBufferList)
+    }
+
+    let audioBufferList = rawBufferList.bindMemory(to: AudioBufferList.self, capacity: 1)
+    let dataStatus = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, audioBufferList)
+    guard dataStatus == noErr else {
+        throw TranscriptionSourceError.unavailable(
+            "Could not read input channel layout for macOS audio device \(deviceID): \(dataStatus)"
+        )
+    }
+
+    let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
+    let channelCount = buffers.reduce(0) { $0 + Int($1.mNumberChannels) }
+
+    guard channelCount > 0, channelCount <= Int(UInt32.max) else {
+        throw TranscriptionSourceError.unavailable(
+            "Invalid input channel count for macOS audio device \(deviceID): \(channelCount)"
+        )
+    }
+
+    return AVAudioChannelCount(channelCount)
 }
 #endif
 

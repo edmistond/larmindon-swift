@@ -16,12 +16,6 @@ let privacyPlist: [String: Plist.Value] = [
     "UILaunchScreen": .dictionary([:]),
 ]
 
-let iOSAppTargetSettings: Settings = .settings(
-    base: [
-        "CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]": "Entitlements/Larmindon.entitlements",
-    ]
-)
-
 let project = Project(
     name: "Larmindon",
     organizationName: "David Edmiston",
@@ -57,8 +51,7 @@ let project = Project(
             infoPlist: .extendingDefault(with: privacyPlist),
             sources: ["Sources/App/**"],
             resources: ["Resources/**"],
-            dependencies: [.target(name: "LarmindonKit")],
-            settings: iOSAppTargetSettings
+            dependencies: [.target(name: "LarmindonKit")]
         ),
         .target(
             name: "Larmindon-macOS",

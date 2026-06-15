@@ -36,6 +36,10 @@ public final class AudioRouteManager {
     }
 
     public func configureForCapture() async throws {
+        try await configureForInputSelection()
+    }
+
+    public func configureForInputSelection() async throws {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(
