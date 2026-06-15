@@ -200,32 +200,19 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             analyzerInputContinuation.finish()
         }
 
-        let levelContinuation = levelContinuation
-        let audioState = audioState
+        let tapHandler = makeAudioTapHandler(
+            sink: AudioTapSink(
+                levelContinuation: levelContinuation,
+                audioState: audioState,
+                captureContinuation: captureContinuation
+            )
+        )
         inputNode.installTap(
             onBus: 0,
             bufferSize: 768,
-            format: nil
-        ) { buffer, time in
-            let rawLevel = AudioLevelMeter.normalizedRMS(from: buffer)
-            levelContinuation.yield(audioState.updateRawLevel(rawLevel))
-
-            let startTime: CMTime?
-            if time.sampleTime >= 0, buffer.format.sampleRate > 0 {
-                startTime = CMTime(
-                    value: time.sampleTime,
-                    timescale: CMTimeScale(buffer.format.sampleRate.rounded())
-                )
-            } else {
-                startTime = nil
-            }
-
-            guard let copiedBuffer = buffer.copyPCMBuffer() else {
-                return
-            }
-
-            captureContinuation.yield(CapturedAudioBuffer(buffer: copiedBuffer, startTime: startTime))
-        }
+            format: nil,
+            block: tapHandler
+        )
 
         try audioEngine.start()
 
@@ -304,6 +291,41 @@ private func configureMacOSInputDevice(_ deviceID: UInt32, on inputNode: AVAudio
     }
 }
 #endif
+
+private struct AudioTapSink: @unchecked Sendable {
+    let levelContinuation: AsyncStream<AudioLevelSnapshot>.Continuation
+    let audioState: LiveAudioState
+    let captureContinuation: AsyncStream<CapturedAudioBuffer>.Continuation
+
+    func handle(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
+        let rawLevel = AudioLevelMeter.normalizedRMS(from: buffer)
+        levelContinuation.yield(audioState.updateRawLevel(rawLevel))
+
+        let startTime: CMTime?
+        if time.sampleTime >= 0, buffer.format.sampleRate > 0 {
+            startTime = CMTime(
+                value: time.sampleTime,
+                timescale: CMTimeScale(buffer.format.sampleRate.rounded())
+            )
+        } else {
+            startTime = nil
+        }
+
+        guard let copiedBuffer = buffer.copyPCMBuffer() else {
+            return
+        }
+
+        captureContinuation.yield(CapturedAudioBuffer(buffer: copiedBuffer, startTime: startTime))
+    }
+}
+
+private func makeAudioTapHandler(
+    sink: AudioTapSink
+) -> (AVAudioPCMBuffer, AVAudioTime) -> Void {
+    { buffer, time in
+        sink.handle(buffer: buffer, time: time)
+    }
+}
 
 private struct CapturedAudioBuffer: @unchecked Sendable {
     let buffer: AVAudioPCMBuffer
