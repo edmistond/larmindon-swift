@@ -105,10 +105,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             compatibleWith: modules,
             considering: inputFormat
         ) ?? inputFormat
-        let bufferConverter = try AudioBufferConverter(
-            inputFormat: inputFormat,
-            outputFormat: analysisFormat
-        )
+        let bufferConverter = DynamicAudioBufferConverter(outputFormat: analysisFormat)
 
         try await analyzer.prepareToAnalyze(in: analysisFormat)
 
@@ -203,10 +200,10 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             levelContinuation.yield(audioState.updateRawLevel(rawLevel))
 
             let startTime: CMTime?
-            if time.sampleTime >= 0, inputFormat.sampleRate > 0 {
+            if time.sampleTime >= 0, buffer.format.sampleRate > 0 {
                 startTime = CMTime(
                     value: time.sampleTime,
-                    timescale: CMTimeScale(inputFormat.sampleRate.rounded())
+                    timescale: CMTimeScale(buffer.format.sampleRate.rounded())
                 )
             } else {
                 startTime = nil
@@ -278,34 +275,33 @@ private struct CapturedAudioBuffer: @unchecked Sendable {
     let startTime: CMTime?
 }
 
-private final class AudioBufferConverter: @unchecked Sendable {
-    private let inputFormat: AVAudioFormat
+private final class DynamicAudioBufferConverter: @unchecked Sendable {
     private let outputFormat: AVAudioFormat
-    private let converter: AVAudioConverter?
     private let lock = NSLock()
+    private var converter: AVAudioConverter?
+    private var converterInputFormat: AVAudioFormat?
 
-    init(inputFormat: AVAudioFormat, outputFormat: AVAudioFormat) throws {
-        self.inputFormat = inputFormat
+    init(outputFormat: AVAudioFormat) {
         self.outputFormat = outputFormat
-
-        if inputFormat.isEquivalent(to: outputFormat) {
-            self.converter = nil
-        } else if let converter = AVAudioConverter(from: inputFormat, to: outputFormat) {
-            self.converter = converter
-        } else {
-            throw TranscriptionSourceError.unavailable(
-                "Could not convert microphone audio from \(inputFormat) to \(outputFormat)"
-            )
-        }
     }
 
     func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard let converter else {
+        let inputFormat = buffer.format
+        if inputFormat.isEquivalent(to: outputFormat) {
             return buffer.copyPCMBuffer()
         }
 
         lock.lock()
         defer { lock.unlock() }
+
+        if converterInputFormat?.isEquivalent(to: inputFormat) != true {
+            converter = AVAudioConverter(from: inputFormat, to: outputFormat)
+            converterInputFormat = inputFormat
+        }
+
+        guard let converter else {
+            return nil
+        }
 
         let sampleRateRatio = outputFormat.sampleRate / inputFormat.sampleRate
         let outputCapacity = AVAudioFrameCount(
