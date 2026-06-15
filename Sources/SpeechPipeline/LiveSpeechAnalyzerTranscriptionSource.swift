@@ -16,6 +16,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     private let audioState = LiveAudioState()
 
     private var analyzerTask: Task<Void, Never>?
+    private var audioConversionTask: Task<Void, Never>?
     private var transcriberTask: Task<Void, Never>?
     private var detectorTask: Task<Void, Never>?
     private var stopPipeline: (() async -> Void)?
@@ -51,9 +52,11 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
 
         transcriberTask?.cancel()
         detectorTask?.cancel()
+        audioConversionTask?.cancel()
         analyzerTask?.cancel()
         transcriberTask = nil
         detectorTask = nil
+        audioConversionTask = nil
         analyzerTask = nil
 
         await stopPipeline?()
@@ -115,6 +118,12 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         ) { continuation in
             capturedInputContinuation = continuation
         }
+        var capturedAudioContinuation: AsyncStream<CapturedAudioBuffer>.Continuation!
+        let capturedAudioStream = AsyncStream(
+            bufferingPolicy: .bufferingNewest(32)
+        ) { continuation in
+            capturedAudioContinuation = continuation
+        }
 
         transcriberTask = Task { [continuation, transcriber] in
             var finalizedRanges = Set<String>()
@@ -158,9 +167,29 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         }
 
         let analyzerInputContinuation = capturedInputContinuation!
+        let captureContinuation = capturedAudioContinuation!
         stopPipeline = {
+            captureContinuation.finish()
             analyzerInputContinuation.finish()
             await analyzer.cancelAndFinishNow()
+        }
+
+        audioConversionTask = Task { [capturedAudioStream, bufferConverter, analyzerInputContinuation] in
+            for await packet in capturedAudioStream {
+                if Task.isCancelled {
+                    break
+                }
+
+                guard let analyzerBuffer = bufferConverter.convert(packet.buffer) else {
+                    continue
+                }
+
+                analyzerInputContinuation.yield(
+                    AnalyzerInput(buffer: analyzerBuffer, bufferStartTime: packet.startTime)
+                )
+            }
+
+            analyzerInputContinuation.finish()
         }
 
         let levelContinuation = levelContinuation
@@ -183,13 +212,11 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
                 startTime = nil
             }
 
-            guard let analyzerBuffer = bufferConverter.convert(buffer) else {
+            guard let copiedBuffer = buffer.copyPCMBuffer() else {
                 return
             }
 
-            analyzerInputContinuation.yield(
-                AnalyzerInput(buffer: analyzerBuffer, bufferStartTime: startTime)
-            )
+            captureContinuation.yield(CapturedAudioBuffer(buffer: copiedBuffer, startTime: startTime))
         }
 
         try audioEngine.start()
@@ -244,6 +271,11 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             )
         }
     }
+}
+
+private struct CapturedAudioBuffer: @unchecked Sendable {
+    let buffer: AVAudioPCMBuffer
+    let startTime: CMTime?
 }
 
 private final class AudioBufferConverter: @unchecked Sendable {

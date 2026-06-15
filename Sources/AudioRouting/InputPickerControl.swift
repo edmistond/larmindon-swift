@@ -33,12 +33,26 @@ public struct InputSelectionMenu: View {
 
     public var body: some View {
         Menu {
+            Button {
+                routeManager.refresh()
+            } label: {
+                Label("Refresh Inputs", systemImage: "arrow.clockwise")
+            }
+
+            Divider()
+
             if routeManager.availableInputs.isEmpty {
                 Text("No selectable inputs")
             } else {
                 ForEach(routeManager.availableInputs) { input in
-                    Button(input.name) {
+                    Button {
                         routeManager.setPreferredInput(id: input.id)
+                    } label: {
+                        if input.name == routeManager.currentInputName {
+                            Label(input.name, systemImage: "checkmark")
+                        } else {
+                            Text(input.name)
+                        }
                     }
                 }
             }
