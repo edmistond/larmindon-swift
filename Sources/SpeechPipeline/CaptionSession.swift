@@ -105,7 +105,10 @@ public final class CaptionSession {
         case .fake:
             return FakeTranscriptionSource()
         case .live:
-            return LiveSpeechAnalyzerTranscriptionSource(sensitivity: vadSensitivity)
+            return LiveSpeechAnalyzerTranscriptionSource(
+                sensitivity: vadSensitivity,
+                inputDeviceID: routeManager.preferredInputDeviceID
+            )
         }
     }
 

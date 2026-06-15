@@ -3,6 +3,10 @@ import CoreMedia
 import Foundation
 import Speech
 
+#if os(macOS)
+import AudioToolbox
+#endif
+
 @available(iOS 26.0, macOS 26.0, *)
 public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     public let name = "Live SpeechAnalyzer"
@@ -12,6 +16,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     private let continuation: AsyncStream<CaptionResult>.Continuation
     private let levelContinuation: AsyncStream<AudioLevelSnapshot>.Continuation
     private let sensitivity: VADSensitivity
+    private let inputDeviceID: UInt32?
     private let audioEngine = AVAudioEngine()
     private let audioState = LiveAudioState()
 
@@ -22,8 +27,9 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     private var stopPipeline: (() async -> Void)?
     private var reservedLocale: Locale?
 
-    public init(sensitivity: VADSensitivity = .medium) {
+    public init(sensitivity: VADSensitivity = .medium, inputDeviceID: UInt32? = nil) {
         self.sensitivity = sensitivity
+        self.inputDeviceID = inputDeviceID
 
         var capturedContinuation: AsyncStream<CaptionResult>.Continuation!
         self.results = AsyncStream { continuation in
@@ -85,6 +91,11 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
 
     private func startSpeechAnalyzerPipeline() async throws {
         let inputNode = audioEngine.inputNode
+        #if os(macOS)
+        if let inputDeviceID {
+            try configureMacOSInputDevice(inputDeviceID, on: inputNode)
+        }
+        #endif
         let inputFormat = inputNode.outputFormat(forBus: 0)
         let locale = try await prepareTranscriberLocale()
 
@@ -269,6 +280,30 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         }
     }
 }
+
+#if os(macOS)
+@available(macOS 26.0, *)
+private func configureMacOSInputDevice(_ deviceID: UInt32, on inputNode: AVAudioInputNode) throws {
+    guard let audioUnit = inputNode.audioUnit else {
+        throw TranscriptionSourceError.unavailable("Could not access AVAudioEngine input audio unit")
+    }
+
+    var mutableDeviceID = AudioDeviceID(deviceID)
+    let status = AudioUnitSetProperty(
+        audioUnit,
+        kAudioOutputUnitProperty_CurrentDevice,
+        kAudioUnitScope_Global,
+        0,
+        &mutableDeviceID,
+        UInt32(MemoryLayout<AudioDeviceID>.size)
+    )
+    guard status == noErr else {
+        throw TranscriptionSourceError.unavailable(
+            "Could not open selected macOS input device \(deviceID): \(status)"
+        )
+    }
+}
+#endif
 
 private struct CapturedAudioBuffer: @unchecked Sendable {
     let buffer: AVAudioPCMBuffer

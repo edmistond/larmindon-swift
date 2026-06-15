@@ -10,11 +10,13 @@ public struct AudioRoutePort: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
     public let kind: String
+    public let systemDeviceID: UInt32?
 
-    public init(id: String, name: String, kind: String) {
+    public init(id: String, name: String, kind: String, systemDeviceID: UInt32? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
+        self.systemDeviceID = systemDeviceID
     }
 }
 
@@ -23,6 +25,7 @@ public struct AudioRoutePort: Identifiable, Equatable, Sendable {
 public final class AudioRouteManager {
     public private(set) var currentInputName = "Unknown"
     public private(set) var preferredInputName: String?
+    public private(set) var preferredInputDeviceID: UInt32?
     public private(set) var availableInputs: [AudioRoutePort] = []
     public private(set) var currentRouteInputs: [AudioRoutePort] = []
     public private(set) var currentRouteOutputs: [AudioRoutePort] = []
@@ -52,14 +55,23 @@ public final class AudioRouteManager {
         currentRouteInputs = session.currentRoute.inputs.map(AudioRoutePort.init(portDescription:))
         currentRouteOutputs = session.currentRoute.outputs.map(AudioRoutePort.init(portDescription:))
         preferredInputName = session.preferredInput?.portName
+        preferredInputDeviceID = nil
         currentInputName = currentRouteInputs.first?.name ?? "Unknown"
         #elseif os(macOS)
         let inputs = MacAudioDeviceProvider.inputDevices()
         let defaultInput = MacAudioDeviceProvider.defaultInputDevice()
         availableInputs = inputs
-        preferredInputName = defaultInput?.name
-        currentInputName = defaultInput?.name ?? "Unknown"
-        currentRouteInputs = defaultInput.map { [$0] } ?? []
+        if let preferredInputDeviceID,
+           let preferredInput = inputs.first(where: { $0.systemDeviceID == preferredInputDeviceID }) {
+            preferredInputName = preferredInput.name
+            currentInputName = preferredInput.name
+            currentRouteInputs = [preferredInput]
+        } else {
+            preferredInputDeviceID = defaultInput?.systemDeviceID
+            preferredInputName = defaultInput?.name
+            currentInputName = defaultInput?.name ?? "Unknown"
+            currentRouteInputs = defaultInput.map { [$0] } ?? []
+        }
         currentRouteOutputs = []
         #endif
     }
@@ -81,13 +93,10 @@ public final class AudioRouteManager {
         guard let input = availableInputs.first(where: { $0.id == id }) else {
             return
         }
-        do {
-            try MacAudioDeviceProvider.setDefaultInputDevice(uid: id)
-            preferredInputName = input.name
-            refresh()
-        } catch {
-            print("Failed to set default macOS input: \(error.localizedDescription)")
-        }
+        preferredInputName = input.name
+        preferredInputDeviceID = input.systemDeviceID
+        currentInputName = input.name
+        currentRouteInputs = [input]
         #endif
     }
 
@@ -164,32 +173,6 @@ private enum MacAudioDeviceProvider {
             return nil
         }
         return routePort(for: deviceID)
-    }
-
-    static func setDefaultInputDevice(uid: String) throws {
-        guard let deviceID = inputDevicesWithIDs().first(where: { $0.port.id == uid })?.deviceID else {
-            throw TranscriptionSourceError.unavailable("No macOS input device found for \(uid)")
-        }
-
-        var mutableDeviceID = deviceID
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        let status = AudioObjectSetPropertyData(
-            systemObjectID,
-            &address,
-            0,
-            nil,
-            UInt32(MemoryLayout<AudioObjectID>.size),
-            &mutableDeviceID
-        )
-        guard status == noErr else {
-            throw TranscriptionSourceError.unavailable(
-                "Could not set macOS default input device \(uid): \(status)"
-            )
-        }
     }
 
     private static func inputDevicesWithIDs() -> [(deviceID: AudioObjectID, port: AudioRoutePort)] {
@@ -285,7 +268,7 @@ private enum MacAudioDeviceProvider {
             deviceID: deviceID
         ) ?? uid
 
-        return AudioRoutePort(id: uid, name: name, kind: "CoreAudio")
+        return AudioRoutePort(id: uid, name: name, kind: "CoreAudio", systemDeviceID: deviceID)
     }
 
     private static func stringProperty(
