@@ -16,6 +16,7 @@ public struct LarmindonRootView: View {
     @AppStorage("transcriptionSourceKind") private var sourceKindRaw = TranscriptionSourceKind.live.rawValue
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
     @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
+    @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
     @AppStorage("showDebugPanel") private var persistedShowDebugPanel = false
 
     public init() {}
@@ -95,7 +96,8 @@ public struct LarmindonRootView: View {
                         session.start(
                             kind: sourceKind,
                             vadSensitivity: vadSensitivity,
-                            audioBufferFrameCount: audioBufferFrameCount
+                            audioBufferFrameCount: audioBufferFrameCount,
+                            profanityFilterEnabled: profanityFilterEnabled
                         )
                     }
                 } label: {

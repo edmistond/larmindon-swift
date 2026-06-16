@@ -18,6 +18,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     private let sensitivity: VADSensitivity
     private let inputDeviceID: UInt32?
     private let bufferFrameCount: AVAudioFrameCount
+    private let profanityFilterEnabled: Bool
     private let audioEngine = AVAudioEngine()
     private let audioState = LiveAudioState()
 
@@ -31,13 +32,15 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     public init(
         sensitivity: VADSensitivity = .medium,
         inputDeviceID: UInt32? = nil,
-        bufferFrameCount: Int = AudioCaptureBufferFrames.defaultValue
+        bufferFrameCount: Int = AudioCaptureBufferFrames.defaultValue,
+        profanityFilterEnabled: Bool = false
     ) {
         self.sensitivity = sensitivity
         self.inputDeviceID = inputDeviceID
         self.bufferFrameCount = AVAudioFrameCount(
             AudioCaptureBufferFrames.clamped(bufferFrameCount)
         )
+        self.profanityFilterEnabled = profanityFilterEnabled
 
         var capturedContinuation: AsyncStream<CaptionResult>.Continuation!
         self.results = AsyncStream { continuation in
@@ -116,7 +119,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
 
         let transcriber = SpeechTranscriber(
             locale: locale,
-            transcriptionOptions: [],
+            transcriptionOptions: profanityFilterEnabled ? [.etiquetteReplacements] : [],
             reportingOptions: [.fastResults, .volatileResults],
             attributeOptions: [.audioTimeRange]
         )

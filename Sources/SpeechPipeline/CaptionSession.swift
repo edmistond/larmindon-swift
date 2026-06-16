@@ -19,25 +19,29 @@ public final class CaptionSession {
     private var levelTask: Task<Void, Never>?
     private var vadSensitivity: VADSensitivity
     private var audioBufferFrameCount: Int
+    private var profanityFilterEnabled: Bool
 
     public init(
         store: CaptionStore = CaptionStore(),
         routeManager: AudioRouteManager = AudioRouteManager(),
         selectedSourceKind: TranscriptionSourceKind = .live,
         vadSensitivity: VADSensitivity = .medium,
-        audioBufferFrameCount: Int = AudioCaptureBufferFrames.defaultValue
+        audioBufferFrameCount: Int = AudioCaptureBufferFrames.defaultValue,
+        profanityFilterEnabled: Bool = false
     ) {
         self.store = store
         self.routeManager = routeManager
         self.selectedSourceKind = selectedSourceKind
         self.vadSensitivity = vadSensitivity
         self.audioBufferFrameCount = AudioCaptureBufferFrames.clamped(audioBufferFrameCount)
+        self.profanityFilterEnabled = profanityFilterEnabled
     }
 
     public func start(
         kind: TranscriptionSourceKind? = nil,
         vadSensitivity: VADSensitivity? = nil,
-        audioBufferFrameCount: Int? = nil
+        audioBufferFrameCount: Int? = nil,
+        profanityFilterEnabled: Bool? = nil
     ) {
         let sourceKind = kind ?? selectedSourceKind
         selectedSourceKind = sourceKind
@@ -46,6 +50,9 @@ public final class CaptionSession {
         }
         if let audioBufferFrameCount {
             self.audioBufferFrameCount = AudioCaptureBufferFrames.clamped(audioBufferFrameCount)
+        }
+        if let profanityFilterEnabled {
+            self.profanityFilterEnabled = profanityFilterEnabled
         }
 
         Task {
@@ -122,7 +129,8 @@ public final class CaptionSession {
             return LiveSpeechAnalyzerTranscriptionSource(
                 sensitivity: vadSensitivity,
                 inputDeviceID: routeManager.preferredInputDeviceID,
-                bufferFrameCount: audioBufferFrameCount
+                bufferFrameCount: audioBufferFrameCount,
+                profanityFilterEnabled: profanityFilterEnabled
             )
         }
     }

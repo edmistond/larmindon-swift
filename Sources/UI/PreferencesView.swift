@@ -7,6 +7,7 @@ public struct PreferencesView: View {
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
     @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
     @AppStorage("voiceProcessingEnabled") private var voiceProcessingEnabled = true
+    @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
     @AppStorage("showDebugPanel") private var showDebugPanel = false
 
     public init() {}
@@ -70,6 +71,12 @@ public struct PreferencesView: View {
                 }
 
                 Toggle("Voice processing", isOn: $voiceProcessingEnabled)
+
+                Toggle("Filter profanity", isOn: $profanityFilterEnabled)
+                Text("Replaces profane words with a milder form. Takes effect the next time captioning starts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Toggle("Show debug panel", isOn: $showDebugPanel)
             }
         }
