@@ -187,3 +187,8 @@ private var platformBackgroundColor: PlatformColor {
     return .systemBackground
     #endif
 }
+
+#Preview {
+    LarmindonRootView()
+        .frame(minWidth: 480, minHeight: 600)
+}

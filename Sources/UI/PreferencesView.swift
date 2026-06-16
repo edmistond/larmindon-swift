@@ -112,3 +112,8 @@ private let defaultCaptionFontSize: Double = {
     return 34
     #endif
 }()
+
+#Preview {
+    PreferencesView()
+        .frame(width: 520, height: 620)
+}

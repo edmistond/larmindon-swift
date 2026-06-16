@@ -122,3 +122,20 @@ private struct CaptionScrollGeometry: Equatable {
         max(0, contentHeight - visibleMaxY)
     }
 }
+
+#Preview("Captions") {
+    CaptionDisplayView(
+        lines: [
+            .finalized(TranscriptChunk(text: "Welcome to the meeting, everyone.")),
+            .finalized(TranscriptChunk(text: "Today we're covering the quarterly results and the roadmap.")),
+            .volatile(VolatileCaption(text: "And then we'll move on to the open questions…")),
+        ],
+        fontSize: 30
+    )
+    .frame(width: 520, height: 360)
+}
+
+#Preview("Empty") {
+    CaptionDisplayView(lines: [], fontSize: 30)
+        .frame(width: 520, height: 360)
+}

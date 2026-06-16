@@ -96,3 +96,8 @@ public struct DebugPanelView: View {
         }
     }
 }
+
+#Preview {
+    DebugPanelView(session: CaptionSession())
+        .frame(width: 640, height: 720)
+}

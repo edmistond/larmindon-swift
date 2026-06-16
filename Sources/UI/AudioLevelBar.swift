@@ -33,3 +33,13 @@ public struct AudioLevelBar: View {
         )
     }
 }
+
+#Preview {
+    VStack(spacing: 24) {
+        AudioLevelBar(level: 0.75, isActive: true)
+        AudioLevelBar(level: 0.35, isActive: true)
+        AudioLevelBar(level: 0.2, isActive: false)
+    }
+    .padding()
+    .frame(width: 320)
+}

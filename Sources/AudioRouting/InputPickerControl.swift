@@ -152,3 +152,8 @@ public struct InputSelectionMenu: View {
         }
     }
 }
+
+#Preview {
+    InputSelectionMenu(routeManager: AudioRouteManager())
+        .padding()
+}
