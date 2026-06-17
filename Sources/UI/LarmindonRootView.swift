@@ -23,17 +23,13 @@ public struct LarmindonRootView: View {
 
     public var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                CaptionDisplayView(
-                    lines: session.store.visibleCaptionLines(),
-                    fontSize: captionFontSize
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            GeometryReader { geometry in
+                let layout = CaptionRootLayout.resolved(for: geometry.size)
 
-                captureControls
+                rootContent(layout: layout, containerSize: geometry.size)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(rootBackground)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(rootBackground)
             .navigationTitle("Larmindon")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -71,54 +67,130 @@ public struct LarmindonRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var captureControls: some View {
+    @ViewBuilder
+    private func rootContent(layout: CaptionRootLayout, containerSize: CGSize) -> some View {
+        switch layout {
+        case .standard:
+            VStack(spacing: 0) {
+                captions
+
+                captureControls(placement: .bottom)
+            }
+        case .compactLandscape:
+            HStack(spacing: 0) {
+                captions
+
+                Divider()
+
+                captureControls(placement: .trailing)
+                    .frame(width: CaptionRootLayout.trailingControlsWidth(for: containerSize))
+                    .frame(maxHeight: .infinity, alignment: .top)
+            }
+        }
+    }
+
+    private var captions: some View {
+        CaptionDisplayView(
+            lines: session.store.visibleCaptionLines(),
+            fontSize: captionFontSize
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func captureControls(placement: CaptionControlsPlacement) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             AudioLevelBar(
                 level: session.audioLevels.rawInputLevel,
                 isActive: session.audioLevels.speechDetected
             )
 
+            routeControls(placement: placement)
+
+            actionControls(placement: placement)
+        }
+        .padding(.horizontal)
+        .padding(.top, 12)
+        .padding(.bottom)
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: placement == .trailing ? .infinity : nil,
+            alignment: .topLeading
+        )
+        .background(captureControlsBackground)
+    }
+
+    @ViewBuilder
+    private func routeControls(placement: CaptionControlsPlacement) -> some View {
+        switch placement {
+        case .bottom:
             HStack(spacing: 12) {
-                Label("Input: \(session.routeManager.currentInputName)", systemImage: "mic")
-                    .font(.subheadline)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+                inputNameLabel(lineLimit: 1)
 
                 Spacer(minLength: 12)
 
                 inputPicker
             }
+        case .trailing:
+            VStack(alignment: .leading, spacing: 10) {
+                inputNameLabel(lineLimit: 2)
 
-            HStack(spacing: 12) {
-                Button {
-                    if session.store.isRunning {
-                        Task { await session.stop() }
-                    } else {
-                        session.start(
-                            kind: sourceKind,
-                            vadSensitivity: vadSensitivity,
-                            audioBufferFrameCount: audioBufferFrameCount,
-                            profanityFilterEnabled: profanityFilterEnabled
-                        )
-                    }
-                } label: {
-                    Label(session.store.isRunning ? "Stop Captions" : "Start Captions", systemImage: session.store.isRunning ? "stop.fill" : "play.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button {
-                    session.clear()
-                } label: {
-                    Label("Clear", systemImage: "trash")
-                }
-                .buttonStyle(.bordered)
+                inputPicker
             }
         }
-        .padding(.horizontal)
-        .padding(.top, 12)
-        .padding(.bottom)
-        .background(captureControlsBackground)
+    }
+
+    @ViewBuilder
+    private func actionControls(placement: CaptionControlsPlacement) -> some View {
+        switch placement {
+        case .bottom:
+            HStack(spacing: 12) {
+                startStopButton
+
+                clearButton
+            }
+        case .trailing:
+            VStack(spacing: 10) {
+                startStopButton
+
+                clearButton
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    private func inputNameLabel(lineLimit: Int) -> some View {
+        Label("Input: \(session.routeManager.currentInputName)", systemImage: "mic")
+            .font(.subheadline)
+            .lineLimit(lineLimit)
+            .minimumScaleFactor(0.75)
+    }
+
+    private var startStopButton: some View {
+        Button {
+            if session.store.isRunning {
+                Task { await session.stop() }
+            } else {
+                session.start(
+                    kind: sourceKind,
+                    vadSensitivity: vadSensitivity,
+                    audioBufferFrameCount: audioBufferFrameCount,
+                    profanityFilterEnabled: profanityFilterEnabled
+                )
+            }
+        } label: {
+            Label(session.store.isRunning ? "Stop Captions" : "Start Captions", systemImage: session.store.isRunning ? "stop.fill" : "play.fill")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+    }
+
+    private var clearButton: some View {
+        Button {
+            session.clear()
+        } label: {
+            Label("Clear", systemImage: "trash")
+        }
+        .buttonStyle(.bordered)
     }
 
     @ViewBuilder
@@ -200,6 +272,39 @@ private var platformBackgroundColor: PlatformColor {
     #else
     return .systemBackground
     #endif
+}
+
+enum CaptionRootLayout: Equatable {
+    case standard
+    case compactLandscape
+
+    static func resolved(
+        for size: CGSize,
+        supportsCompactLandscape: Bool = platformSupportsCompactLandscape
+    ) -> Self {
+        if supportsCompactLandscape, size.width > size.height, size.height < 500 {
+            return .compactLandscape
+        }
+
+        return .standard
+    }
+
+    static func trailingControlsWidth(for size: CGSize) -> CGFloat {
+        min(300, max(240, size.width * 0.34))
+    }
+
+    private static var platformSupportsCompactLandscape: Bool {
+        #if os(iOS)
+        return true
+        #else
+        return false
+        #endif
+    }
+}
+
+private enum CaptionControlsPlacement {
+    case bottom
+    case trailing
 }
 
 #Preview {

@@ -9,12 +9,26 @@ let appSettings: SettingsDictionary = [
     "ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS": "YES",
 ]
 
-let privacyPlist: [String: Plist.Value] = [
+let sharedPrivacyPlist: [String: Plist.Value] = [
     "CFBundleDisplayName": "Larmindon",
     "NSMicrophoneUsageDescription": "Larmindon uses the microphone to generate on-device live captions.",
     "NSSpeechRecognitionUsageDescription": "Larmindon uses Apple Speech APIs to transcribe live microphone audio on device.",
-    "UILaunchScreen": .dictionary([:]),
 ]
+
+let iOSInfoPlist: [String: Plist.Value] = sharedPrivacyPlist.merging([
+    "UISupportedInterfaceOrientations": .array([
+        .string("UIInterfaceOrientationPortrait"),
+        .string("UIInterfaceOrientationLandscapeLeft"),
+        .string("UIInterfaceOrientationLandscapeRight"),
+    ]),
+    "UISupportedInterfaceOrientations~ipad": .array([
+        .string("UIInterfaceOrientationPortrait"),
+        .string("UIInterfaceOrientationPortraitUpsideDown"),
+        .string("UIInterfaceOrientationLandscapeLeft"),
+        .string("UIInterfaceOrientationLandscapeRight"),
+    ]),
+    "UILaunchScreen": .dictionary([:]),
+]) { _, newValue in newValue }
 
 let project = Project(
     name: "Larmindon",
@@ -48,7 +62,7 @@ let project = Project(
             product: .app,
             bundleId: "com.davidedmiston.larmindon",
             deploymentTargets: .iOS("26.0"),
-            infoPlist: .extendingDefault(with: privacyPlist),
+            infoPlist: .extendingDefault(with: iOSInfoPlist),
             sources: ["Sources/App/**"],
             resources: ["Resources/**"],
             dependencies: [.target(name: "LarmindonKit")]
@@ -59,7 +73,7 @@ let project = Project(
             product: .app,
             bundleId: "com.davidedmiston.larmindon",
             deploymentTargets: .macOS("26.0"),
-            infoPlist: .extendingDefault(with: privacyPlist),
+            infoPlist: .extendingDefault(with: sharedPrivacyPlist),
             sources: ["Sources/App/**"],
             resources: ["Resources/**"],
             dependencies: [.target(name: "LarmindonKit")]
