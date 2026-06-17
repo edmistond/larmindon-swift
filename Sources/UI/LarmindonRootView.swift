@@ -33,7 +33,7 @@ public struct LarmindonRootView: View {
                 captureControls
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(platformBackgroundColor))
+            .background(rootBackground)
             .navigationTitle("Larmindon")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -66,6 +66,7 @@ public struct LarmindonRootView: View {
                 persistedShowDebugPanel = newValue
             }
             .preferredColorScheme(appearancePreference.colorScheme)
+            .tint(appearancePreference.tintColor)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -117,7 +118,7 @@ public struct LarmindonRootView: View {
         .padding(.horizontal)
         .padding(.top, 12)
         .padding(.bottom)
-        .background(.thinMaterial)
+        .background(captureControlsBackground)
     }
 
     @ViewBuilder
@@ -171,6 +172,19 @@ public struct LarmindonRootView: View {
 
     private var vadSensitivity: VADSensitivity {
         VADSensitivity(rawValue: vadSensitivityRaw) ?? .medium
+    }
+
+    private var rootBackground: Color {
+        appearancePreference.customBackgroundColor ?? Color(platformBackgroundColor)
+    }
+
+    @ViewBuilder
+    private var captureControlsBackground: some View {
+        if let customControlBackgroundColor = appearancePreference.customControlBackgroundColor {
+            customControlBackgroundColor
+        } else {
+            Rectangle().fill(.thinMaterial)
+        }
     }
 }
 

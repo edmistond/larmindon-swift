@@ -5,6 +5,8 @@ public enum AppearancePreference: String, CaseIterable, Identifiable {
     case system
     case light
     case dark
+    case darkBlue
+    case darkGreen
 
     public var id: String { rawValue }
 
@@ -15,6 +17,8 @@ public enum AppearancePreference: String, CaseIterable, Identifiable {
         case .light:
             return .light
         case .dark:
+            return .dark
+        case .darkBlue, .darkGreen:
             return .dark
         }
     }
@@ -27,6 +31,43 @@ public enum AppearancePreference: String, CaseIterable, Identifiable {
             return "Light"
         case .dark:
             return "Dark"
+        case .darkBlue:
+            return "Dark Blue"
+        case .darkGreen:
+            return "Dark Green"
+        }
+    }
+
+    public var tintColor: Color {
+        switch self {
+        case .system, .light, .dark:
+            return .accentColor
+        case .darkBlue:
+            return Color(red: 0.35, green: 0.58, blue: 0.98)
+        case .darkGreen:
+            return Color(red: 0.34, green: 0.76, blue: 0.49)
+        }
+    }
+
+    public var customBackgroundColor: Color? {
+        switch self {
+        case .system, .light, .dark:
+            return nil
+        case .darkBlue:
+            return Color(red: 0.04, green: 0.08, blue: 0.16)
+        case .darkGreen:
+            return Color(red: 0.03, green: 0.12, blue: 0.08)
+        }
+    }
+
+    public var customControlBackgroundColor: Color? {
+        switch self {
+        case .system, .light, .dark:
+            return nil
+        case .darkBlue:
+            return Color(red: 0.07, green: 0.13, blue: 0.24).opacity(0.92)
+        case .darkGreen:
+            return Color(red: 0.05, green: 0.18, blue: 0.11).opacity(0.92)
         }
     }
 }

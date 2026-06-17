@@ -44,7 +44,7 @@ The `Fake` source streams scripted volatile and finalized caption events every 7
 The settings surface includes:
 
 - Caption font size.
-- Light, dark, or system appearance.
+- Light, dark, system, dark blue, or dark green appearance.
 - Fake or live source selection.
 - VAD sensitivity.
 - Voice processing preference placeholder.
