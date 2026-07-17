@@ -7,3 +7,4 @@ Larmindon.xcworkspace/
 xcuserdata/
 *.xcuserstate
 /larmindon_icon.png
+buildServer.json
