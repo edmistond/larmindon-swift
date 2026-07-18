@@ -31,6 +31,21 @@ xcodebuild -workspace Larmindon.xcworkspace -scheme Larmindon -destination 'plat
 
 Use a simulator name that exists on your machine if `iPhone 17` is not installed.
 
+## Redeploy to a Connected iPhone
+
+With one iPhone connected and trusted, rebuild, install, and launch a freshly
+signed development copy from the command line:
+
+```bash
+./scripts/redeploy-device.sh
+```
+
+If more than one physical iOS device is connected, pass its name or UDID:
+
+```bash
+./scripts/redeploy-device.sh "My iPhone"
+```
+
 ## Live Transcription Mode
 
 The default transcription source is `Live`. Press **Start Captions** in the app to capture microphone audio and feed it through Apple's on-device SpeechAnalyzer pipeline.
