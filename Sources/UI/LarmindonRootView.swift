@@ -1,9 +1,15 @@
 import SwiftUI
 
 public struct LarmindonRootView: View {
-    @State private var session = CaptionSession()
+    @Bindable private var session: CaptionSession
+
+    #if os(iOS)
     @State private var showDebugPanel = false
     @State private var showSettings = false
+    #else
+    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
+    #endif
 
     @AppStorage("captionFontSize") private var captionFontSize: Double = {
         #if os(macOS)
@@ -17,9 +23,14 @@ public struct LarmindonRootView: View {
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
     @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
     @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
-    @AppStorage("showDebugPanel") private var persistedShowDebugPanel = false
 
-    public init() {}
+    #if os(iOS)
+    @AppStorage("showDebugPanel") private var persistedShowDebugPanel = false
+    #endif
+
+    public init(session: CaptionSession) {
+        self.session = session
+    }
 
     public var body: some View {
         NavigationStack {
@@ -37,18 +48,19 @@ public struct LarmindonRootView: View {
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button {
-                        showSettings = true
+                        presentSettings()
                     } label: {
                         Label("Settings", systemImage: "slider.horizontal.3")
                     }
 
                     Button {
-                        showDebugPanel.toggle()
+                        presentDebugPanel()
                     } label: {
                         Label("Debug", systemImage: "sidebar.trailing")
                     }
                 }
             }
+            #if os(iOS)
             .sheet(isPresented: $showSettings) {
                 settingsSheet
             }
@@ -61,10 +73,27 @@ public struct LarmindonRootView: View {
             .onChange(of: showDebugPanel) { _, newValue in
                 persistedShowDebugPanel = newValue
             }
+            #endif
             .preferredColorScheme(appearancePreference.colorScheme)
             .tint(appearancePreference.tintColor)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func presentSettings() {
+        #if os(iOS)
+        showSettings = true
+        #else
+        openSettings()
+        #endif
+    }
+
+    private func presentDebugPanel() {
+        #if os(iOS)
+        showDebugPanel.toggle()
+        #else
+        openWindow(id: LarmindonWindowID.debug)
+        #endif
     }
 
     @ViewBuilder
@@ -238,27 +267,17 @@ public struct LarmindonRootView: View {
         #endif
     }
 
-    @ViewBuilder
+    #if os(iOS)
     private var debugPanelSheet: some View {
-        #if os(iOS)
         DebugPanelView(session: session)
             .presentationDetents([.medium, .large])
-        #else
-        DebugPanelView(session: session)
-            .frame(minWidth: 560, idealWidth: 640, minHeight: 620, idealHeight: 720)
-        #endif
     }
 
-    @ViewBuilder
     private var settingsSheet: some View {
-        #if os(iOS)
         PreferencesView()
             .presentationDetents([.medium, .large])
-        #else
-        PreferencesView()
-            .frame(minWidth: 520, idealWidth: 600, minHeight: 520, idealHeight: 620)
-        #endif
     }
+    #endif
 
     private var appearancePreference: AppearancePreference {
         AppearancePreference(rawValue: appearancePreferenceRaw) ?? .system
@@ -287,6 +306,10 @@ public struct LarmindonRootView: View {
                 .overlay(alignment: .top) { Divider() }
         }
     }
+}
+
+public enum LarmindonWindowID {
+    public static let debug = "debug"
 }
 
 private let comfortableControlHeight: CGFloat = {
@@ -345,6 +368,6 @@ private enum CaptionControlsPlacement {
 }
 
 #Preview {
-    LarmindonRootView()
+    LarmindonRootView(session: CaptionSession())
         .frame(minWidth: 480, minHeight: 600)
 }

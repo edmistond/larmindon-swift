@@ -8,7 +8,10 @@ public struct PreferencesView: View {
     @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
     @AppStorage("voiceProcessingEnabled") private var voiceProcessingEnabled = true
     @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
+
+    #if os(iOS)
     @AppStorage("showDebugPanel") private var showDebugPanel = false
+    #endif
 
     public init() {}
 
@@ -77,7 +80,9 @@ public struct PreferencesView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                #if os(iOS)
                 Toggle("Show debug panel", isOn: $showDebugPanel)
+                #endif
             }
         }
         .formStyle(.grouped)
