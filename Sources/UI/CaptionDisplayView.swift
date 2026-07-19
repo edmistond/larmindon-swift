@@ -78,10 +78,12 @@ public struct CaptionDisplayView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var scrollSignature: String {
-        lines
-            .map { "\($0.id):\($0.text)" }
-            .joined(separator: "\u{1f}")
+    private var scrollSignature: CaptionScrollSignature {
+        CaptionScrollSignature(
+            lineCount: lines.count,
+            lastLineID: lines.last?.id,
+            lastLineText: lines.last?.text
+        )
     }
 
     private func updateBottomStickiness(oldGeometry: CaptionScrollGeometry, newGeometry: CaptionScrollGeometry) {
@@ -110,6 +112,16 @@ public struct CaptionDisplayView: View {
                 proxy.scrollTo(bottomSentinelID, anchor: .bottom)
             }
         }
+    }
+}
+
+private struct CaptionScrollSignature: Equatable {
+    let lineCount: Int
+    let lastLineID: String?
+    let lastLineText: String?
+
+    var isEmpty: Bool {
+        lineCount == 0
     }
 }
 

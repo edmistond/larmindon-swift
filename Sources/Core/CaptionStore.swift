@@ -43,8 +43,15 @@ public final class CaptionStore {
         finalizedChunks.map(\.text).joined(separator: "\n")
     }
 
-    public func visibleCaptionLines(recentLimit: Int = 32) -> [CaptionLine] {
-        let finalized = finalizedChunks.suffix(max(0, recentLimit)).map(CaptionLine.finalized)
+    public func visibleCaptionLines(recentLimit: Int? = nil) -> [CaptionLine] {
+        let visibleFinalizedChunks: ArraySlice<TranscriptChunk>
+        if let recentLimit {
+            visibleFinalizedChunks = finalizedChunks.suffix(max(0, recentLimit))
+        } else {
+            visibleFinalizedChunks = finalizedChunks[...]
+        }
+
+        let finalized = visibleFinalizedChunks.map(CaptionLine.finalized)
         if let volatileTail {
             return finalized + [.volatile(volatileTail)]
         }

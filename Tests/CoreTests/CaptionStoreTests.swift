@@ -56,4 +56,18 @@ final class CaptionStoreTests: XCTestCase {
         XCTAssertEqual(lines.map(\.text), ["second", "third", "tail"])
         XCTAssertEqual(lines.map(\.isVolatile), [false, false, true])
     }
+
+    func testVisibleCaptionTextIncludesEntireTranscriptByDefault() {
+        let store = CaptionStore()
+
+        for index in 0..<40 {
+            store.appendFinalized("caption \(index)")
+        }
+
+        let lines = store.visibleCaptionLines()
+
+        XCTAssertEqual(lines.count, 40)
+        XCTAssertEqual(lines.first?.text, "caption 0")
+        XCTAssertEqual(lines.last?.text, "caption 39")
+    }
 }
