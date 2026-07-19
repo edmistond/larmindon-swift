@@ -98,25 +98,43 @@ public struct LarmindonRootView: View {
     }
 
     private func captureControls(placement: CaptionControlsPlacement) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            AudioLevelBar(
-                level: session.audioLevels.rawInputLevel,
-                isActive: session.audioLevels.speechDetected
-            )
+        VStack(alignment: .leading, spacing: 10) {
+            levelAndStatus
 
             routeControls(placement: placement)
 
             actionControls(placement: placement)
         }
-        .padding(.horizontal)
-        .padding(.top, 12)
-        .padding(.bottom)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .frame(
             maxWidth: .infinity,
             maxHeight: placement == .trailing ? .infinity : nil,
             alignment: .topLeading
         )
         .background(captureControlsBackground)
+    }
+
+    private var levelAndStatus: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(session.store.isRunning ? Color.green : Color.secondary.opacity(0.45))
+                    .frame(width: 8, height: 8)
+
+                Text(session.store.isRunning ? "Listening" : "Ready")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(session.store.isRunning ? "Captioning is active" : "Captioning is ready")
+
+            AudioLevelBar(
+                level: session.audioLevels.rawInputLevel,
+                isActive: session.audioLevels.speechDetected
+            )
+        }
+        .animation(.easeInOut(duration: 0.2), value: session.store.isRunning)
     }
 
     @ViewBuilder
@@ -179,9 +197,12 @@ public struct LarmindonRootView: View {
             }
         } label: {
             Label(session.store.isRunning ? "Stop Captions" : "Start Captions", systemImage: session.store.isRunning ? "stop.fill" : "play.fill")
-                .frame(maxWidth: .infinity)
+                .fontWeight(.semibold)
+                .frame(maxWidth: .infinity, minHeight: comfortableControlHeight)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.borderedProminent)
+        .tint(session.store.isRunning ? .red : appearancePreference.tintColor)
     }
 
     private var clearButton: some View {
@@ -189,8 +210,11 @@ public struct LarmindonRootView: View {
             session.clear()
         } label: {
             Label("Clear", systemImage: "trash")
+                .frame(minHeight: comfortableControlHeight)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.bordered)
+        .disabled(session.store.visibleCaptionLines().isEmpty)
     }
 
     @ViewBuilder
@@ -206,6 +230,8 @@ public struct LarmindonRootView: View {
                 systemImage: "ellipsis.circle"
             )
             .labelStyle(.iconOnly)
+            .frame(width: comfortableControlHeight, height: comfortableControlHeight)
+            .contentShape(Rectangle())
         }
         #else
         InputSelectionMenu(routeManager: session.routeManager)
@@ -254,11 +280,22 @@ public struct LarmindonRootView: View {
     private var captureControlsBackground: some View {
         if let customControlBackgroundColor = appearancePreference.customControlBackgroundColor {
             customControlBackgroundColor
+                .overlay(alignment: .top) { Divider() }
         } else {
-            Rectangle().fill(.thinMaterial)
+            Rectangle()
+                .fill(.thinMaterial)
+                .overlay(alignment: .top) { Divider() }
         }
     }
 }
+
+private let comfortableControlHeight: CGFloat = {
+    #if os(iOS)
+    return 46
+    #else
+    return 32
+    #endif
+}()
 
 #if os(macOS)
 private typealias PlatformColor = NSColor

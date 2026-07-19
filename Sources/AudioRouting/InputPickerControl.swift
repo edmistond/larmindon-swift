@@ -58,10 +58,10 @@ public struct SystemInputPickerButton: UIViewRepresentable {
         configuration.image = UIImage(systemName: "mic.badge.plus")
         configuration.imagePadding = 6
         configuration.contentInsets = NSDirectionalEdgeInsets(
-            top: 6,
-            leading: 10,
-            bottom: 6,
-            trailing: 12
+            top: 11,
+            leading: 12,
+            bottom: 11,
+            trailing: 14
         )
         return configuration
     }
