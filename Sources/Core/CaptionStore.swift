@@ -43,6 +43,10 @@ public final class CaptionStore {
         finalizedChunks.map(\.text).joined(separator: "\n")
     }
 
+    public var fullTranscript: String {
+        visibleCaptionLines().map(\.text).joined(separator: "\n")
+    }
+
     public func visibleCaptionLines(recentLimit: Int? = nil) -> [CaptionLine] {
         let visibleFinalizedChunks: ArraySlice<TranscriptChunk>
         if let recentLimit {

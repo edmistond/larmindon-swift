@@ -1,6 +1,10 @@
 import LarmindonKit
 import SwiftUI
 
+#if os(macOS)
+import AppKit
+#endif
+
 @main
 struct LarmindonApp: App {
     @State private var session = CaptionSession()
@@ -9,6 +13,11 @@ struct LarmindonApp: App {
         WindowGroup {
             LarmindonRootView(session: session)
         }
+        #if os(macOS)
+        .commands {
+            TranscriptCommands(session: session)
+        }
+        #endif
 
         #if os(macOS)
         Window("Debug", id: LarmindonWindowID.debug) {
@@ -24,3 +33,22 @@ struct LarmindonApp: App {
         #endif
     }
 }
+
+#if os(macOS)
+private struct TranscriptCommands: Commands {
+    let session: CaptionSession
+
+    var body: some Commands {
+        CommandGroup(after: .pasteboard) {
+            Divider()
+
+            Button("Copy Full Transcript to Clipboard") {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(session.store.fullTranscript, forType: .string)
+            }
+            .disabled(session.store.fullTranscript.isEmpty)
+        }
+    }
+}
+#endif

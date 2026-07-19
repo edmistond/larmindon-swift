@@ -43,6 +43,16 @@ final class CaptionStoreTests: XCTestCase {
         XCTAssertEqual(store.fullFinalizedTranscript, "first\nsecond")
     }
 
+    func testFullTranscriptIncludesVolatileTail() {
+        let store = CaptionStore()
+
+        store.appendFinalized("first")
+        store.appendFinalized("second")
+        store.replaceVolatile("still in progress")
+
+        XCTAssertEqual(store.fullTranscript, "first\nsecond\nstill in progress")
+    }
+
     func testVisibleCaptionTextUsesRecentChunksPlusVolatileTail() {
         let store = CaptionStore()
 
