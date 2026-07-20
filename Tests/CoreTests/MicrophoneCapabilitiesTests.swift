@@ -68,5 +68,36 @@ final class MicrophoneCapabilitiesTests: XCTestCase {
 
         XCTAssertTrue(monitor.snapshot != nil || monitor.lastError != nil)
     }
+
+    @MainActor
+    func testMacAudioDeviceChangeKeepsSelectedInputByStableUID() {
+        let selectedInput = AudioRoutePort(
+            id: "selected-device-uid",
+            name: "Selected microphone",
+            kind: "CoreAudio",
+            systemDeviceID: 42
+        )
+
+        XCTAssertEqual(
+            AudioRouteManager.availabilityChange(
+                selectedInputID: selectedInput.id,
+                selectedInputName: selectedInput.name,
+                availableInputs: [selectedInput]
+            ),
+            .selectedInputRemainsAvailable
+        )
+    }
+
+    @MainActor
+    func testMacAudioDeviceChangeReportsSelectedInputDisconnection() {
+        XCTAssertEqual(
+            AudioRouteManager.availabilityChange(
+                selectedInputID: "missing-device-uid",
+                selectedInputName: "Hearing aid",
+                availableInputs: []
+            ),
+            .selectedInputUnavailable(name: "Hearing aid")
+        )
+    }
     #endif
 }

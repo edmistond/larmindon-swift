@@ -24,6 +24,7 @@ public final class CaptionSession {
     private var vadSensitivity: VADSensitivity
     private var audioBufferFrameCount: Int
     private var profanityFilterEnabled: Bool
+    private var audioRouteRecoveryTask: Task<Void, Never>?
 
     public init(
         store: CaptionStore = CaptionStore(),
@@ -40,6 +41,12 @@ public final class CaptionSession {
         self.vadSensitivity = vadSensitivity
         self.audioBufferFrameCount = AudioCaptureBufferFrames.clamped(audioBufferFrameCount)
         self.profanityFilterEnabled = profanityFilterEnabled
+
+        #if os(macOS)
+        routeManager.onInputAvailabilityChange = { [weak self] change in
+            self?.handleAudioInputAvailabilityChange(change)
+        }
+        #endif
     }
 
     public func start(
@@ -105,6 +112,14 @@ public final class CaptionSession {
     }
 
     public func stop() async {
+        await stop(cancelAudioRouteRecovery: true)
+    }
+
+    private func stop(cancelAudioRouteRecovery: Bool) async {
+        if cancelAudioRouteRecovery {
+            audioRouteRecoveryTask?.cancel()
+            audioRouteRecoveryTask = nil
+        }
         resultTask?.cancel()
         resultTask = nil
         levelTask?.cancel()
@@ -233,6 +248,28 @@ public final class CaptionSession {
             store.appendFinalized(text)
         }
     }
+
+    #if os(macOS)
+    private func handleAudioInputAvailabilityChange(_ change: AudioInputAvailabilityChange) {
+        guard store.isRunning, selectedSourceKind == .live else { return }
+
+        audioRouteRecoveryTask?.cancel()
+        audioRouteRecoveryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            switch change {
+            case .selectedInputRemainsAvailable:
+                let sourceKind = selectedSourceKind
+                await stop(cancelAudioRouteRecovery: false)
+                guard !Task.isCancelled else { return }
+                start(kind: sourceKind)
+            case .selectedInputUnavailable(let name):
+                await stop(cancelAudioRouteRecovery: false)
+                lastError = "The selected audio input “\(name)” disconnected. Captions stopped."
+                speechAnalyzerState = "Input disconnected"
+            }
+        }
+    }
+    #endif
 
 }
 

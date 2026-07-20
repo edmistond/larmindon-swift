@@ -20,15 +20,27 @@ public struct AudioRoutePort: Identifiable, Equatable, Sendable {
     }
 }
 
+public enum AudioInputAvailabilityChange: Equatable, Sendable {
+    case selectedInputRemainsAvailable
+    case selectedInputUnavailable(name: String)
+}
+
 @MainActor
 @Observable
 public final class AudioRouteManager {
     public private(set) var currentInputName = "Unknown"
+    public private(set) var preferredInputID: String?
     public private(set) var preferredInputName: String?
     public private(set) var preferredInputDeviceID: UInt32?
     public private(set) var availableInputs: [AudioRoutePort] = []
     public private(set) var currentRouteInputs: [AudioRoutePort] = []
     public private(set) var currentRouteOutputs: [AudioRoutePort] = []
+    public var onInputAvailabilityChange: (@MainActor @Sendable (AudioInputAvailabilityChange) -> Void)?
+
+    #if os(macOS)
+    private var deviceObservation: MacAudioDeviceObservation?
+    private var deviceListRefreshTask: Task<Void, Never>?
+    #endif
 
     public init() {
         refresh()
@@ -58,6 +70,12 @@ public final class AudioRouteManager {
         }
         #endif
         refresh()
+
+        #if os(macOS)
+        if preferredInputID != nil, preferredInputDeviceID == nil {
+            throw MacAudioRouteConfigurationError.selectedInputUnavailable
+        }
+        #endif
     }
 
     #if os(iOS)
@@ -120,12 +138,18 @@ public final class AudioRouteManager {
         let inputs = MacAudioDeviceProvider.inputDevices()
         let defaultInput = MacAudioDeviceProvider.defaultInputDevice()
         availableInputs = inputs
-        if let preferredInputDeviceID,
-           let preferredInput = inputs.first(where: { $0.systemDeviceID == preferredInputDeviceID }) {
+        if let preferredInputID,
+           let preferredInput = inputs.first(where: { $0.id == preferredInputID }) {
+            preferredInputDeviceID = preferredInput.systemDeviceID
             preferredInputName = preferredInput.name
             currentInputName = preferredInput.name
             currentRouteInputs = [preferredInput]
+        } else if preferredInputID != nil {
+            preferredInputDeviceID = nil
+            currentInputName = "Unavailable"
+            currentRouteInputs = []
         } else {
+            preferredInputID = defaultInput?.id
             preferredInputDeviceID = defaultInput?.systemDeviceID
             preferredInputName = defaultInput?.name
             currentInputName = defaultInput?.name ?? "Unknown"
@@ -152,6 +176,7 @@ public final class AudioRouteManager {
         guard let input = availableInputs.first(where: { $0.id == id }) else {
             return
         }
+        preferredInputID = input.id
         preferredInputName = input.name
         preferredInputDeviceID = input.systemDeviceID
         currentInputName = input.name
@@ -180,8 +205,53 @@ public final class AudioRouteManager {
                 self?.refresh()
             }
         }
+        #elseif os(macOS)
+        deviceObservation = MacAudioDeviceObservation { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.scheduleDeviceListRefresh()
+            }
+        }
         #endif
     }
+
+    #if os(macOS)
+    private func scheduleDeviceListRefresh() {
+        deviceListRefreshTask?.cancel()
+        deviceListRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self else { return }
+            handleDeviceListChange()
+        }
+    }
+
+    private func handleDeviceListChange() {
+        let selectedInputID = preferredInputID
+        let selectedInputName = preferredInputName ?? "Unknown"
+        let inputs = MacAudioDeviceProvider.inputDevices()
+        let change = Self.availabilityChange(
+            selectedInputID: selectedInputID,
+            selectedInputName: selectedInputName,
+            availableInputs: inputs
+        )
+
+        refresh()
+        if let change {
+            onInputAvailabilityChange?(change)
+        }
+    }
+
+    static func availabilityChange(
+        selectedInputID: String?,
+        selectedInputName: String,
+        availableInputs: [AudioRoutePort]
+    ) -> AudioInputAvailabilityChange? {
+        guard let selectedInputID else { return nil }
+        if availableInputs.contains(where: { $0.id == selectedInputID }) {
+            return .selectedInputRemainsAvailable
+        }
+        return .selectedInputUnavailable(name: selectedInputName)
+    }
+    #endif
 }
 
 #if os(iOS)
@@ -227,15 +297,55 @@ private extension AudioRoutePort {
 #endif
 
 #if os(macOS)
+private final class MacAudioDeviceObservation: @unchecked Sendable {
+    private let listener: AudioObjectPropertyListenerBlock
+
+    init(onChange: @escaping @Sendable () -> Void) {
+        listener = { _, _ in onChange() }
+        var address = MacAudioDeviceProvider.devicesPropertyAddress
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            .main,
+            listener
+        )
+        if status != noErr {
+            print("Failed to observe macOS audio device changes: \(status)")
+        }
+    }
+
+    deinit {
+        var address = MacAudioDeviceProvider.devicesPropertyAddress
+        AudioObjectRemovePropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            .main,
+            listener
+        )
+    }
+}
+
+private enum MacAudioRouteConfigurationError: LocalizedError {
+    case selectedInputUnavailable
+
+    var errorDescription: String? {
+        "The selected macOS audio input is no longer available. Choose an available input before starting captions."
+    }
+}
+
 private enum MacAudioDeviceProvider {
     private static let systemObjectID = AudioObjectID(kAudioObjectSystemObject)
 
-    static func inputDevices() -> [AudioRoutePort] {
-        var address = AudioObjectPropertyAddress(
+    static var devicesPropertyAddress: AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
+    }
+
+    static func inputDevices() -> [AudioRoutePort] {
+        var address = devicesPropertyAddress
         var dataSize: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(systemObjectID, &address, 0, nil, &dataSize) == noErr else {
             return []
