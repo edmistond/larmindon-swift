@@ -5,6 +5,7 @@ public struct LarmindonRootView: View {
 
     #if os(iOS)
     @State private var showDebugPanel = false
+    @State private var showMicrophonePanel = false
     @State private var showSettings = false
     #else
     @Environment(\.openSettings) private var openSettings
@@ -54,6 +55,12 @@ public struct LarmindonRootView: View {
                     }
 
                     Button {
+                        presentMicrophonePanel()
+                    } label: {
+                        Label("Microphone", systemImage: "microphone.and.signal.meter")
+                    }
+
+                    Button {
                         presentDebugPanel()
                     } label: {
                         Label("Debug", systemImage: "sidebar.trailing")
@@ -66,6 +73,9 @@ public struct LarmindonRootView: View {
             }
             .sheet(isPresented: $showDebugPanel) {
                 debugPanelSheet
+            }
+            .sheet(isPresented: $showMicrophonePanel) {
+                microphonePanelSheet
             }
             .onAppear {
                 showDebugPanel = persistedShowDebugPanel
@@ -93,6 +103,14 @@ public struct LarmindonRootView: View {
         showDebugPanel.toggle()
         #else
         openWindow(id: LarmindonWindowID.debug)
+        #endif
+    }
+
+    private func presentMicrophonePanel() {
+        #if os(iOS)
+        showMicrophonePanel = true
+        #else
+        openWindow(id: LarmindonWindowID.microphone)
         #endif
     }
 
@@ -262,6 +280,14 @@ public struct LarmindonRootView: View {
             .presentationDetents([.medium, .large])
     }
 
+    private var microphonePanelSheet: some View {
+        MicrophonePanelView(
+            monitor: session.microphoneCapabilities,
+            routeManager: session.routeManager
+        )
+        .presentationDetents([.medium, .large])
+    }
+
     private var settingsSheet: some View {
         PreferencesView()
             .presentationDetents([.medium, .large])
@@ -299,6 +325,7 @@ public struct LarmindonRootView: View {
 
 public enum LarmindonWindowID {
     public static let debug = "debug"
+    public static let microphone = "microphone"
 }
 
 private let comfortableControlHeight: CGFloat = {

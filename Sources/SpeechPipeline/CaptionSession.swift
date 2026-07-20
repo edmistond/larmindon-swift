@@ -6,6 +6,7 @@ import Observation
 public final class CaptionSession {
     public let store: CaptionStore
     public let routeManager: AudioRouteManager
+    public let microphoneCapabilities: MicrophoneCapabilityMonitor
 
     public private(set) var selectedSourceKind: TranscriptionSourceKind
     public private(set) var speechAnalyzerState = "Idle"
@@ -31,6 +32,7 @@ public final class CaptionSession {
     ) {
         self.store = store
         self.routeManager = routeManager
+        self.microphoneCapabilities = MicrophoneCapabilityMonitor(routeManager: routeManager)
         self.selectedSourceKind = selectedSourceKind
         self.vadSensitivity = vadSensitivity
         self.audioBufferFrameCount = AudioCaptureBufferFrames.clamped(audioBufferFrameCount)
@@ -81,6 +83,7 @@ public final class CaptionSession {
                 try await routeManager.configureForCapture()
                 try await source.start()
                 speechAnalyzerState = "Running \(source.name)"
+                microphoneCapabilities.refresh()
             } catch {
                 lastError = error.localizedDescription
                 speechAnalyzerState = "Error"
@@ -92,6 +95,7 @@ public final class CaptionSession {
                 resultTask = nil
                 levelTask?.cancel()
                 levelTask = nil
+                microphoneCapabilities.refresh()
             }
         }
     }
@@ -110,6 +114,7 @@ public final class CaptionSession {
         store.isRunning = false
         speechAnalyzerState = "Stopped"
         audioLevels = AudioLevelSnapshot()
+        microphoneCapabilities.refresh()
     }
 
     public func clear() {
