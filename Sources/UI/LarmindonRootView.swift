@@ -249,19 +249,8 @@ public struct LarmindonRootView: View {
     @ViewBuilder
     private var inputPicker: some View {
         #if os(iOS)
-        HStack(spacing: 6) {
-            SystemInputPickerButton(routeManager: session.routeManager)
-                .fixedSize()
-
-            InputSelectionMenu(
-                routeManager: session.routeManager,
-                labelTitle: "Input options",
-                systemImage: "ellipsis.circle"
-            )
-            .labelStyle(.iconOnly)
-            .frame(width: comfortableControlHeight, height: comfortableControlHeight)
-            .contentShape(Rectangle())
-        }
+        SystemInputPickerButton(routeManager: session.routeManager)
+            .fixedSize()
         #else
         InputSelectionMenu(routeManager: session.routeManager)
         #endif
