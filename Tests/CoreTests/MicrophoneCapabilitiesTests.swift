@@ -44,6 +44,20 @@ final class MicrophoneCapabilitiesTests: XCTestCase {
         XCTAssertEqual(source.displayName, "Built-in Microphone — Upper, Front")
     }
 
+    func testMicrophoneConfigurationRoundTripsThroughPersistenceEncoding() throws {
+        let configuration = MicrophoneCaptureConfiguration(
+            inputPortID: "built-in",
+            dataSourceID: "front",
+            polarPatternID: "cardioid",
+            stereoOrientation: .landscapeLeft
+        )
+
+        let data = try JSONEncoder().encode(configuration)
+        let decoded = try JSONDecoder().decode(MicrophoneCaptureConfiguration.self, from: data)
+
+        XCTAssertEqual(decoded, configuration)
+    }
+
     #if os(macOS)
     @MainActor
     func testRefreshingConnectedMacMicrophoneCapabilitiesDoesNotCrash() {

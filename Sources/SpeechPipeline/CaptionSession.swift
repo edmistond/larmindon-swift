@@ -84,6 +84,7 @@ public final class CaptionSession {
 
             do {
                 try await routeManager.configureForCapture(configuration: microphoneConfiguration)
+                try await restoreMicrophoneConfigurationForCurrentInput()
                 try await source.start()
                 speechAnalyzerState = "Running \(source.name)"
                 microphoneCapabilities.refresh()
@@ -137,6 +138,7 @@ public final class CaptionSession {
 
         do {
             try await routeManager.configureForInputSelection(configuration: microphoneConfiguration)
+            try await restoreMicrophoneConfigurationForCurrentInput()
             microphoneConfigurationError = nil
         } catch {
             microphoneConfigurationError = error.localizedDescription
@@ -168,6 +170,7 @@ public final class CaptionSession {
         do {
             try await routeManager.configureForInputSelection(configuration: resolvedConfiguration)
             microphoneConfiguration = resolvedConfiguration
+            saveMicrophoneConfiguration(resolvedConfiguration)
             microphoneCapabilities.refresh()
 
             if shouldRestart {
@@ -200,6 +203,27 @@ public final class CaptionSession {
         }
     }
 
+    private func restoreMicrophoneConfigurationForCurrentInput() async throws {
+        #if os(iOS)
+        routeManager.refresh()
+        guard let inputPortID = routeManager.currentRouteInputs.first?.id else { return }
+
+        let configuration = MicrophoneConfigurationStore.load(inputPortID: inputPortID)
+            ?? MicrophoneCaptureConfiguration(inputPortID: inputPortID)
+        guard configuration != microphoneConfiguration else { return }
+
+        try await routeManager.configureForInputSelection(configuration: configuration)
+        microphoneConfiguration = configuration
+        #endif
+    }
+
+    private func saveMicrophoneConfiguration(_ configuration: MicrophoneCaptureConfiguration) {
+        #if os(iOS)
+        guard let inputPortID = configuration.inputPortID else { return }
+        MicrophoneConfigurationStore.save(configuration, inputPortID: inputPortID)
+        #endif
+    }
+
     private func handle(_ result: CaptionResult) {
         switch result {
         case .volatile(let text):
@@ -211,3 +235,36 @@ public final class CaptionSession {
     }
 
 }
+
+#if os(iOS)
+private enum MicrophoneConfigurationStore {
+    private static let storageKey = "microphoneCaptureConfigurations"
+
+    static func load(inputPortID: String) -> MicrophoneCaptureConfiguration? {
+        guard let data = UserDefaults.standard.data(forKey: storageKey),
+              let configurations = try? JSONDecoder().decode(
+                [String: MicrophoneCaptureConfiguration].self,
+                from: data
+              ) else {
+            return nil
+        }
+        return configurations[inputPortID]
+    }
+
+    static func save(_ configuration: MicrophoneCaptureConfiguration, inputPortID: String) {
+        var configurations: [String: MicrophoneCaptureConfiguration] = [:]
+        if let data = UserDefaults.standard.data(forKey: storageKey),
+           let stored = try? JSONDecoder().decode(
+            [String: MicrophoneCaptureConfiguration].self,
+            from: data
+           ) {
+            configurations = stored
+        }
+        configurations[inputPortID] = configuration
+
+        if let data = try? JSONEncoder().encode(configurations) {
+            UserDefaults.standard.set(data, forKey: storageKey)
+        }
+    }
+}
+#endif

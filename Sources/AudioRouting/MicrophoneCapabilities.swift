@@ -91,7 +91,7 @@ public struct MicrophoneDataSourceOption: Identifiable, Equatable, Sendable {
     }
 }
 
-public enum MicrophoneStereoOrientation: String, CaseIterable, Identifiable, Equatable, Sendable {
+public enum MicrophoneStereoOrientation: String, CaseIterable, Codable, Identifiable, Equatable, Sendable {
     case portrait
     case portraitUpsideDown
     case landscapeLeft
@@ -109,7 +109,7 @@ public enum MicrophoneStereoOrientation: String, CaseIterable, Identifiable, Equ
     }
 }
 
-public struct MicrophoneCaptureConfiguration: Equatable, Sendable {
+public struct MicrophoneCaptureConfiguration: Codable, Equatable, Sendable {
     public var inputPortID: String?
     public var dataSourceID: String?
     public var polarPatternID: String?
