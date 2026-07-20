@@ -23,4 +23,16 @@ final class MicrophoneCapabilitiesTests: XCTestCase {
 
         XCTAssertEqual(section.id, "Channels")
     }
+
+    #if os(macOS)
+    @MainActor
+    func testRefreshingConnectedMacMicrophoneCapabilitiesDoesNotCrash() {
+        let routeManager = AudioRouteManager()
+        let monitor = MicrophoneCapabilityMonitor(routeManager: routeManager)
+
+        monitor.refresh()
+
+        XCTAssertTrue(monitor.snapshot != nil || monitor.lastError != nil)
+    }
+    #endif
 }

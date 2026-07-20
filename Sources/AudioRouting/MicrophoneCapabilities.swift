@@ -451,7 +451,7 @@ private extension MicrophoneCapabilityMonitor {
             selector: kAudioDevicePropertyDataSources,
             scope: kAudioDevicePropertyScopeInput
         )
-        let active = uint32Property(
+        let activeDataSources = uint32ArrayProperty(
             deviceID: deviceID,
             selector: kAudioDevicePropertyDataSource,
             scope: kAudioDevicePropertyScopeInput
@@ -462,33 +462,44 @@ private extension MicrophoneCapabilityMonitor {
             return MicrophoneCapabilityItem(
                 id: "source-\(sourceID)",
                 label: name,
-                value: sourceID == active ? "Active" : "Available"
+                value: activeDataSources.contains(sourceID) ? "Active" : "Available"
             )
         }
     }
 
     static func dataSourceName(deviceID: AudioDeviceID, sourceID: UInt32) -> String? {
-        var qualifier = sourceID
-        var result: Unmanaged<CFString>?
-        var resultSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDataSourceNameForIDCFString,
             mScope: kAudioDevicePropertyScopeInput,
             mElement: kAudioObjectPropertyElementMain
         )
-        guard AudioObjectHasProperty(deviceID, &address),
-              AudioObjectGetPropertyData(
-                deviceID,
-                &address,
-                UInt32(MemoryLayout<UInt32>.size),
-                &qualifier,
-                &resultSize,
-                &result
-              ) == noErr,
-              let result else {
+        guard AudioObjectHasProperty(deviceID, &address) else {
             return nil
         }
-        return result.takeUnretainedValue() as String
+
+        var mutableSourceID = sourceID
+        var result: Unmanaged<CFString>?
+        let status = withUnsafeMutablePointer(to: &mutableSourceID) { sourceIDPointer in
+            withUnsafeMutablePointer(to: &result) { resultPointer in
+                var translation = AudioValueTranslation(
+                    mInputData: UnsafeMutableRawPointer(sourceIDPointer),
+                    mInputDataSize: UInt32(MemoryLayout<UInt32>.size),
+                    mOutputData: UnsafeMutableRawPointer(resultPointer),
+                    mOutputDataSize: UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+                )
+                var translationSize = UInt32(MemoryLayout<AudioValueTranslation>.size)
+                return AudioObjectGetPropertyData(
+                    deviceID,
+                    &address,
+                    0,
+                    nil,
+                    &translationSize,
+                    &translation
+                )
+            }
+        }
+        guard status == noErr, let result else { return nil }
+        return result.takeRetainedValue() as String
     }
 
     static func inputChannelCount(deviceID: AudioDeviceID) -> Int {
@@ -542,7 +553,7 @@ private extension MicrophoneCapabilityMonitor {
               let result else {
             return nil
         }
-        return result.takeUnretainedValue() as String
+        return result.takeRetainedValue() as String
     }
 
     static func booleanProperty(
