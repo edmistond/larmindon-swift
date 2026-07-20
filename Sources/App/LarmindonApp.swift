@@ -27,10 +27,7 @@ struct LarmindonApp: App {
         .defaultSize(width: 640, height: 720)
 
         Window("Microphone", id: LarmindonWindowID.microphone) {
-            MicrophonePanelView(
-                monitor: session.microphoneCapabilities,
-                routeManager: session.routeManager
-            )
+            MicrophonePanelView(session: session)
             .frame(minWidth: 560, idealWidth: 640, minHeight: 620, idealHeight: 760)
         }
         .defaultSize(width: 640, height: 760)

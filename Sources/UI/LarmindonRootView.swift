@@ -281,10 +281,7 @@ public struct LarmindonRootView: View {
     }
 
     private var microphonePanelSheet: some View {
-        MicrophonePanelView(
-            monitor: session.microphoneCapabilities,
-            routeManager: session.routeManager
-        )
+        MicrophonePanelView(session: session)
         .presentationDetents([.medium, .large])
     }
 

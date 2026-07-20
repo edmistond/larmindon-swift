@@ -49,12 +49,96 @@ public enum MicrophonePolarPattern: String, Equatable, Sendable {
     }
 }
 
+public struct MicrophonePolarPatternOption: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let pattern: MicrophonePolarPattern
+
+    public init(id: String, name: String, pattern: MicrophonePolarPattern) {
+        self.id = id
+        self.name = name
+        self.pattern = pattern
+    }
+}
+
+public struct MicrophoneDataSourceOption: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let location: String?
+    public let orientation: String?
+    public let supportedPatterns: [MicrophonePolarPatternOption]
+
+    public init(
+        id: String,
+        name: String,
+        location: String? = nil,
+        orientation: String? = nil,
+        supportedPatterns: [MicrophonePolarPatternOption] = []
+    ) {
+        self.id = id
+        self.name = name
+        self.location = location
+        self.orientation = orientation
+        self.supportedPatterns = supportedPatterns
+    }
+
+    public var displayName: String {
+        let position = [location, orientation]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+        return position.isEmpty ? name : "\(name) — \(position)"
+    }
+}
+
+public enum MicrophoneStereoOrientation: String, CaseIterable, Identifiable, Equatable, Sendable {
+    case portrait
+    case portraitUpsideDown
+    case landscapeLeft
+    case landscapeRight
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .portrait: "Portrait"
+        case .portraitUpsideDown: "Portrait upside down"
+        case .landscapeLeft: "Landscape left"
+        case .landscapeRight: "Landscape right"
+        }
+    }
+}
+
+public struct MicrophoneCaptureConfiguration: Equatable, Sendable {
+    public var inputPortID: String?
+    public var dataSourceID: String?
+    public var polarPatternID: String?
+    public var stereoOrientation: MicrophoneStereoOrientation
+
+    public init(
+        inputPortID: String? = nil,
+        dataSourceID: String? = nil,
+        polarPatternID: String? = nil,
+        stereoOrientation: MicrophoneStereoOrientation = .portrait
+    ) {
+        self.inputPortID = inputPortID
+        self.dataSourceID = dataSourceID
+        self.polarPatternID = dataSourceID == nil ? nil : polarPatternID
+        self.stereoOrientation = stereoOrientation
+    }
+}
+
 public struct MicrophoneCapabilitySnapshot: Equatable, Sendable {
     public let inputName: String
     public let inputKind: String
     public let orientation: String?
     public let selectedPattern: MicrophonePolarPattern?
     public let selectedPatternName: String?
+    public let dataSources: [MicrophoneDataSourceOption]
+    public let activeDataSourceID: String?
+    public let requestedDataSourceID: String?
+    public let requestedPatternName: String?
+    public let activeStereoOrientation: MicrophoneStereoOrientation?
     public let sections: [MicrophoneCapabilitySection]
     public let guidance: String
 
@@ -64,6 +148,11 @@ public struct MicrophoneCapabilitySnapshot: Equatable, Sendable {
         orientation: String? = nil,
         selectedPattern: MicrophonePolarPattern? = nil,
         selectedPatternName: String? = nil,
+        dataSources: [MicrophoneDataSourceOption] = [],
+        activeDataSourceID: String? = nil,
+        requestedDataSourceID: String? = nil,
+        requestedPatternName: String? = nil,
+        activeStereoOrientation: MicrophoneStereoOrientation? = nil,
         sections: [MicrophoneCapabilitySection],
         guidance: String
     ) {
@@ -72,6 +161,11 @@ public struct MicrophoneCapabilitySnapshot: Equatable, Sendable {
         self.orientation = orientation
         self.selectedPattern = selectedPattern
         self.selectedPatternName = selectedPatternName
+        self.dataSources = dataSources
+        self.activeDataSourceID = activeDataSourceID
+        self.requestedDataSourceID = requestedDataSourceID
+        self.requestedPatternName = requestedPatternName
+        self.activeStereoOrientation = activeStereoOrientation
         self.sections = sections
         self.guidance = guidance
     }
@@ -119,6 +213,7 @@ private extension MicrophoneCapabilityMonitor {
         let selectedDataSource = input?.selectedDataSource ?? session.inputDataSource
         let preferredDataSource = input?.preferredDataSource
         let selectedPatternName = selectedDataSource?.selectedPolarPattern?.rawValue
+        let structuredDataSources = dataSources.map(dataSourceOption)
 
         var routeItems = [
             MicrophoneCapabilityItem(label: "Current input", value: input?.portName ?? "No active input"),
@@ -219,6 +314,11 @@ private extension MicrophoneCapabilityMonitor {
             orientation: orientation,
             selectedPattern: polarPattern(from: selectedPatternName),
             selectedPatternName: selectedPatternName,
+            dataSources: structuredDataSources,
+            activeDataSourceID: selectedDataSource?.dataSourceID.stringValue,
+            requestedDataSourceID: preferredDataSource?.dataSourceID.stringValue,
+            requestedPatternName: preferredDataSource?.preferredPolarPattern?.rawValue,
+            activeStereoOrientation: microphoneStereoOrientation(from: session.inputOrientation),
             sections: [
                 MicrophoneCapabilitySection(title: "Route", items: routeItems),
                 MicrophoneCapabilitySection(title: "Microphone Data Sources", items: dataSourceItems),
@@ -279,6 +379,22 @@ private extension MicrophoneCapabilityMonitor {
         return "\(location), \(orientation)"
     }
 
+    static func dataSourceOption(_ source: AVAudioSessionDataSourceDescription) -> MicrophoneDataSourceOption {
+        MicrophoneDataSourceOption(
+            id: source.dataSourceID.stringValue,
+            name: source.dataSourceName,
+            location: source.location?.rawValue,
+            orientation: source.orientation?.rawValue,
+            supportedPatterns: (source.supportedPolarPatterns ?? []).map { pattern in
+                MicrophonePolarPatternOption(
+                    id: pattern.rawValue,
+                    name: polarPattern(from: pattern.rawValue)?.title ?? pattern.rawValue,
+                    pattern: polarPattern(from: pattern.rawValue) ?? .unknown
+                )
+            }
+        )
+    }
+
     static func patternList(_ patterns: [AVAudioSession.PolarPattern]?) -> String {
         guard let patterns, !patterns.isEmpty else { return "Not configurable" }
         return patterns.map(\.rawValue).joined(separator: ", ")
@@ -302,6 +418,18 @@ private extension MicrophoneCapabilityMonitor {
         case .landscapeRight: "Landscape right"
         case .landscapeLeft: "Landscape left"
         default: "Unknown (\(orientation.rawValue))"
+        }
+    }
+
+    static func microphoneStereoOrientation(
+        from orientation: AVAudioSession.StereoOrientation
+    ) -> MicrophoneStereoOrientation? {
+        switch orientation {
+        case .portrait: .portrait
+        case .portraitUpsideDown: .portraitUpsideDown
+        case .landscapeLeft: .landscapeLeft
+        case .landscapeRight: .landscapeRight
+        default: nil
         }
     }
 

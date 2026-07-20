@@ -24,6 +24,26 @@ final class MicrophoneCapabilitiesTests: XCTestCase {
         XCTAssertEqual(section.id, "Channels")
     }
 
+    func testAutomaticDataSourceAlsoClearsPolarPatternPreference() {
+        let configuration = MicrophoneCaptureConfiguration(
+            dataSourceID: nil,
+            polarPatternID: "Cardioid"
+        )
+
+        XCTAssertNil(configuration.polarPatternID)
+    }
+
+    func testDataSourceDisplayNameIncludesReportedPosition() {
+        let source = MicrophoneDataSourceOption(
+            id: "1",
+            name: "Built-in Microphone",
+            location: "Upper",
+            orientation: "Front"
+        )
+
+        XCTAssertEqual(source.displayName, "Built-in Microphone — Upper, Front")
+    }
+
     #if os(macOS)
     @MainActor
     func testRefreshingConnectedMacMicrophoneCapabilitiesDoesNotCrash() {

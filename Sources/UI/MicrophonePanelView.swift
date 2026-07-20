@@ -1,22 +1,23 @@
 import SwiftUI
 
 public struct MicrophonePanelView: View {
-    @Bindable private var monitor: MicrophoneCapabilityMonitor
-    @Bindable private var routeManager: AudioRouteManager
+    @Bindable private var session: CaptionSession
+    @State private var draftConfiguration = MicrophoneCaptureConfiguration()
+    @State private var hasEditedConfiguration = false
 
-    public init(
-        monitor: MicrophoneCapabilityMonitor,
-        routeManager: AudioRouteManager
-    ) {
-        self.monitor = monitor
-        self.routeManager = routeManager
+    public init(session: CaptionSession) {
+        self.session = session
     }
 
     public var body: some View {
         NavigationStack {
             List {
-                if let snapshot = monitor.snapshot {
+                if let snapshot = session.microphoneCapabilities.snapshot {
                     summary(snapshot)
+
+                    #if os(iOS)
+                    configurationControls(snapshot)
+                    #endif
 
                     ForEach(snapshot.sections) { section in
                         Section(section.title) {
@@ -30,7 +31,7 @@ public struct MicrophonePanelView: View {
                         Label(snapshot.guidance, systemImage: "info.circle")
                             .foregroundStyle(.secondary)
                     }
-                } else if let lastError = monitor.lastError {
+                } else if let lastError = session.microphoneCapabilities.lastError {
                     ContentUnavailableView(
                         "Microphone Unavailable",
                         systemImage: "microphone.slash",
@@ -45,7 +46,7 @@ public struct MicrophonePanelView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        monitor.refresh()
+                        session.microphoneCapabilities.refresh()
                     } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
@@ -53,10 +54,17 @@ public struct MicrophonePanelView: View {
             }
         }
         .task {
-            monitor.refresh()
+            await session.prepareMicrophoneControls()
+            synchronizeDraft()
         }
-        .onChange(of: routeManager.currentInputName) {
-            monitor.refresh()
+        .onChange(of: session.routeManager.currentInputName) {
+            session.microphoneCapabilities.refresh()
+            #if os(iOS)
+            draftConfiguration = MicrophoneCaptureConfiguration(
+                inputPortID: session.routeManager.currentRouteInputs.first?.id
+            )
+            hasEditedConfiguration = true
+            #endif
         }
     }
 
@@ -79,11 +87,11 @@ public struct MicrophonePanelView: View {
                     }
                 }
 
-                if let pattern = snapshot.selectedPattern {
+                if let diagram = diagramConfiguration(snapshot) {
                     MicrophonePatternDiagram(
-                        pattern: pattern,
-                        patternName: snapshot.selectedPatternName ?? pattern.title,
-                        orientation: snapshot.orientation
+                        pattern: diagram.pattern,
+                        patternName: diagram.name,
+                        orientation: diagram.orientation
                     )
                     .frame(maxWidth: .infinity)
                 } else {
@@ -97,6 +105,169 @@ public struct MicrophonePanelView: View {
             }
             .padding(.vertical, 6)
         }
+    }
+
+    #if os(iOS)
+    private func configurationControls(_ snapshot: MicrophoneCapabilitySnapshot) -> some View {
+        Section("Controls") {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Input device")
+                    Text(session.routeManager.currentInputName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                SystemInputPickerButton(routeManager: session.routeManager)
+                    .fixedSize()
+            }
+
+            Picker("Microphone position", selection: dataSourceSelection) {
+                Text("Automatic").tag(String?.none)
+                ForEach(snapshot.dataSources) { source in
+                    Text(source.displayName).tag(Optional(source.id))
+                }
+            }
+            .disabled(snapshot.dataSources.isEmpty || session.isApplyingMicrophoneConfiguration)
+
+            Picker("Pickup pattern", selection: patternSelection) {
+                Text("Automatic").tag(String?.none)
+                ForEach(selectedDataSource?.supportedPatterns ?? []) { pattern in
+                    Text(pattern.name).tag(Optional(pattern.id))
+                }
+            }
+            .disabled(selectedDataSource == nil || session.isApplyingMicrophoneConfiguration)
+
+            if selectedPattern?.pattern == .stereo {
+                Picker("Stereo orientation", selection: $draftConfiguration.stereoOrientation) {
+                    ForEach(MicrophoneStereoOrientation.allCases) { orientation in
+                        Text(orientation.title).tag(orientation)
+                    }
+                }
+                .onChange(of: draftConfiguration.stereoOrientation) {
+                    hasEditedConfiguration = true
+                }
+                .disabled(session.isApplyingMicrophoneConfiguration)
+            }
+
+            configurationStatus(snapshot)
+
+            if let error = session.microphoneConfigurationError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+            }
+
+            Button {
+                Task {
+                    let applied = await session.applyMicrophoneConfiguration(draftConfiguration)
+                    if applied {
+                        synchronizeDraft()
+                    }
+                }
+            } label: {
+                if session.isApplyingMicrophoneConfiguration {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Text(session.store.isRunning ? "Apply and Restart Captions" : "Apply")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!hasEditedConfiguration || session.isApplyingMicrophoneConfiguration)
+        }
+    }
+
+    private func configurationStatus(_ snapshot: MicrophoneCapabilitySnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            statusLine(
+                "Requested",
+                dataSourceName(id: snapshot.requestedDataSourceID, in: snapshot) ?? "Automatic",
+                snapshot.requestedPatternName
+            )
+            statusLine(
+                "Active",
+                dataSourceName(id: snapshot.activeDataSourceID, in: snapshot) ?? "System selected",
+                snapshot.selectedPatternName
+            )
+        }
+        .font(.caption)
+    }
+
+    private func statusLine(_ label: String, _ source: String, _ pattern: String?) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text([source, pattern].compactMap { $0 }.joined(separator: " · "))
+                .multilineTextAlignment(.trailing)
+        }
+    }
+
+    private var dataSourceSelection: Binding<String?> {
+        Binding(
+            get: { draftConfiguration.dataSourceID },
+            set: { newValue in
+                draftConfiguration.dataSourceID = newValue
+                let supportedIDs = selectedDataSource?.supportedPatterns.map(\.id) ?? []
+                if !supportedIDs.contains(draftConfiguration.polarPatternID ?? "") {
+                    draftConfiguration.polarPatternID = nil
+                }
+                hasEditedConfiguration = true
+            }
+        )
+    }
+
+    private var patternSelection: Binding<String?> {
+        Binding(
+            get: { draftConfiguration.polarPatternID },
+            set: { newValue in
+                draftConfiguration.polarPatternID = newValue
+                hasEditedConfiguration = true
+            }
+        )
+    }
+
+    private var selectedDataSource: MicrophoneDataSourceOption? {
+        session.microphoneCapabilities.snapshot?.dataSources.first {
+            $0.id == draftConfiguration.dataSourceID
+        }
+    }
+
+    private var selectedPattern: MicrophonePolarPatternOption? {
+        selectedDataSource?.supportedPatterns.first {
+            $0.id == draftConfiguration.polarPatternID
+        }
+    }
+
+    private func synchronizeDraft() {
+        let currentInputID = session.routeManager.currentRouteInputs.first?.id
+        if session.microphoneConfiguration.inputPortID == nil
+            || session.microphoneConfiguration.inputPortID == currentInputID {
+            draftConfiguration = session.microphoneConfiguration
+        } else {
+            draftConfiguration = MicrophoneCaptureConfiguration(inputPortID: currentInputID)
+        }
+        hasEditedConfiguration = false
+    }
+
+    private func dataSourceName(id: String?, in snapshot: MicrophoneCapabilitySnapshot) -> String? {
+        snapshot.dataSources.first { $0.id == id }?.name
+    }
+    #else
+    private func synchronizeDraft() {}
+    #endif
+
+    private func diagramConfiguration(
+        _ snapshot: MicrophoneCapabilitySnapshot
+    ) -> (pattern: MicrophonePolarPattern, name: String, orientation: String?)? {
+        #if os(iOS)
+        if hasEditedConfiguration, let selectedPattern {
+            return (selectedPattern.pattern, selectedPattern.name, selectedDataSource?.orientation)
+        }
+        #endif
+        guard let pattern = snapshot.selectedPattern else { return nil }
+        return (pattern, snapshot.selectedPatternName ?? pattern.title, snapshot.orientation)
     }
 
     private func capabilityRow(_ item: MicrophoneCapabilityItem) -> some View {
@@ -216,10 +387,6 @@ private struct MicrophonePatternDiagram: View {
 }
 
 #Preview {
-    let routeManager = AudioRouteManager()
-    MicrophonePanelView(
-        monitor: MicrophoneCapabilityMonitor(routeManager: routeManager),
-        routeManager: routeManager
-    )
+    MicrophonePanelView(session: CaptionSession())
     .frame(width: 640, height: 760)
 }

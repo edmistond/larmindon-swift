@@ -56,10 +56,6 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     }
 
     public func start() async throws {
-        #if os(iOS)
-        try configureIOSAudioSession()
-        #endif
-
         try await startSpeechAnalyzerPipeline()
     }
 
@@ -84,21 +80,6 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             self.reservedLocale = nil
         }
     }
-
-    #if os(iOS)
-    private func configureIOSAudioSession() throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(
-            .playAndRecord,
-            mode: .voiceChat,
-            options: [.allowBluetoothHFP, .defaultToSpeaker]
-        )
-        if session.isInputGainSettable {
-            try? session.setInputGain(1)
-        }
-        try session.setActive(true, options: [])
-    }
-    #endif
 
     private func startSpeechAnalyzerPipeline() async throws {
         let inputNode = audioEngine.inputNode

@@ -14,6 +14,9 @@ public final class CaptionSession {
     public private(set) var lastVolatileResult: String = ""
     public private(set) var audioLevels = AudioLevelSnapshot()
     public private(set) var activeAudioBufferFrameCount: Int?
+    public private(set) var microphoneConfiguration = MicrophoneCaptureConfiguration()
+    public private(set) var isApplyingMicrophoneConfiguration = false
+    public private(set) var microphoneConfigurationError: String?
 
     private var activeSource: TranscriptionSource?
     private var resultTask: Task<Void, Never>?
@@ -80,7 +83,7 @@ public final class CaptionSession {
             }
 
             do {
-                try await routeManager.configureForCapture()
+                try await routeManager.configureForCapture(configuration: microphoneConfiguration)
                 try await source.start()
                 speechAnalyzerState = "Running \(source.name)"
                 microphoneCapabilities.refresh()
@@ -124,6 +127,63 @@ public final class CaptionSession {
 
     public func dumpRouteInfoToConsole() {
         routeManager.dumpRouteInfoToConsole()
+    }
+
+    public func prepareMicrophoneControls() async {
+        guard !store.isRunning else {
+            microphoneCapabilities.refresh()
+            return
+        }
+
+        do {
+            try await routeManager.configureForInputSelection(configuration: microphoneConfiguration)
+            microphoneConfigurationError = nil
+        } catch {
+            microphoneConfigurationError = error.localizedDescription
+        }
+        microphoneCapabilities.refresh()
+    }
+
+    @discardableResult
+    public func applyMicrophoneConfiguration(
+        _ configuration: MicrophoneCaptureConfiguration
+    ) async -> Bool {
+        guard !isApplyingMicrophoneConfiguration else { return false }
+
+        var resolvedConfiguration = configuration
+        if resolvedConfiguration.inputPortID == nil {
+            resolvedConfiguration.inputPortID = routeManager.currentRouteInputs.first?.id
+        }
+
+        let shouldRestart = store.isRunning
+        let previousConfiguration = microphoneConfiguration
+        isApplyingMicrophoneConfiguration = true
+        microphoneConfigurationError = nil
+        defer { isApplyingMicrophoneConfiguration = false }
+
+        if shouldRestart {
+            await stop()
+        }
+
+        do {
+            try await routeManager.configureForInputSelection(configuration: resolvedConfiguration)
+            microphoneConfiguration = resolvedConfiguration
+            microphoneCapabilities.refresh()
+
+            if shouldRestart {
+                start(kind: selectedSourceKind)
+            }
+            return true
+        } catch {
+            microphoneConfigurationError = error.localizedDescription
+            try? await routeManager.configureForInputSelection(configuration: previousConfiguration)
+            microphoneCapabilities.refresh()
+
+            if shouldRestart {
+                start(kind: selectedSourceKind)
+            }
+            return false
+        }
     }
 
     private func makeSource(kind: TranscriptionSourceKind) -> TranscriptionSource {

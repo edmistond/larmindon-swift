@@ -35,11 +35,15 @@ public final class AudioRouteManager {
         observeRouteChanges()
     }
 
-    public func configureForCapture() async throws {
-        try await configureForInputSelection()
+    public func configureForCapture(
+        configuration: MicrophoneCaptureConfiguration = MicrophoneCaptureConfiguration()
+    ) async throws {
+        try await configureForInputSelection(configuration: configuration)
     }
 
-    public func configureForInputSelection() async throws {
+    public func configureForInputSelection(
+        configuration: MicrophoneCaptureConfiguration = MicrophoneCaptureConfiguration()
+    ) async throws {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(
@@ -48,9 +52,60 @@ public final class AudioRouteManager {
             options: [.allowBluetoothHFP, .defaultToSpeaker]
         )
         try session.setActive(true, options: [])
+        try apply(configuration, to: session)
+        if session.isInputGainSettable {
+            try? session.setInputGain(1)
+        }
         #endif
         refresh()
     }
+
+    #if os(iOS)
+    private func apply(
+        _ configuration: MicrophoneCaptureConfiguration,
+        to session: AVAudioSession
+    ) throws {
+        let availableInputs = session.availableInputs ?? []
+        let input = session.currentRoute.inputs.first ?? session.preferredInput ?? availableInputs.first
+
+        guard let input else {
+            if configuration.dataSourceID != nil {
+                throw AudioRouteConfigurationError.inputUnavailable
+            }
+            return
+        }
+
+        if let configuredPortID = configuration.inputPortID,
+           configuredPortID != input.uid {
+            return
+        }
+
+        guard let dataSourceID = configuration.dataSourceID else {
+            if input.dataSources != nil {
+                try input.setPreferredDataSource(nil)
+            }
+            return
+        }
+        guard let source = input.dataSources?.first(where: { $0.dataSourceID.stringValue == dataSourceID }) else {
+            throw AudioRouteConfigurationError.dataSourceUnavailable
+        }
+
+        if let polarPatternID = configuration.polarPatternID {
+            let pattern = AVAudioSession.PolarPattern(rawValue: polarPatternID)
+            guard source.supportedPolarPatterns?.contains(pattern) == true else {
+                throw AudioRouteConfigurationError.polarPatternUnavailable
+            }
+            if pattern == .stereo {
+                try session.setPreferredInputOrientation(configuration.stereoOrientation.audioSessionValue)
+            }
+            try source.setPreferredPolarPattern(pattern)
+        } else if source.supportedPolarPatterns != nil {
+            try source.setPreferredPolarPattern(nil)
+        }
+
+        try input.setPreferredDataSource(source)
+    }
+    #endif
 
     public func refresh() {
         #if os(iOS)
@@ -128,6 +183,36 @@ public final class AudioRouteManager {
         #endif
     }
 }
+
+#if os(iOS)
+private enum AudioRouteConfigurationError: LocalizedError {
+    case inputUnavailable
+    case dataSourceUnavailable
+    case polarPatternUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .inputUnavailable:
+            "No audio input is available for the requested microphone configuration."
+        case .dataSourceUnavailable:
+            "The requested microphone position is unavailable for this input."
+        case .polarPatternUnavailable:
+            "The requested pickup pattern is unavailable for this microphone."
+        }
+    }
+}
+
+private extension MicrophoneStereoOrientation {
+    var audioSessionValue: AVAudioSession.StereoOrientation {
+        switch self {
+        case .portrait: .portrait
+        case .portraitUpsideDown: .portraitUpsideDown
+        case .landscapeLeft: .landscapeLeft
+        case .landscapeRight: .landscapeRight
+        }
+    }
+}
+#endif
 
 #if os(iOS)
 private extension AudioRoutePort {
