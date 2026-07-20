@@ -46,6 +46,15 @@ If more than one physical iOS device is connected, pass its name or UDID:
 ./scripts/redeploy-device.sh "My iPhone"
 ```
 
+## Install a macOS Release Build
+
+Build the macOS app in Release configuration and replace the copy installed at
+`~/Larmindon_macOS.app`:
+
+```bash
+./scripts/deploy-macos-release.sh
+```
+
 ## Live Transcription Mode
 
 The default transcription source is `Live`. Press **Start Captions** in the app to capture microphone audio and feed it through Apple's on-device SpeechAnalyzer pipeline.
