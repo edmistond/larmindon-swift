@@ -46,6 +46,18 @@ If more than one physical iOS device is connected, pass its name or UDID:
 ./scripts/redeploy-device.sh "My iPhone"
 ```
 
+To force Xcode to issue a new development provisioning profile before the
+redeploy, move the matching cached profile into a private local backup and
+build with automatic provisioning:
+
+```bash
+./scripts/redeploy-device.sh --refresh-profile
+```
+
+Profile refresh requires an Apple account to be signed in under Xcode Settings
+> Accounts so `xcodebuild` can request the replacement from Apple. If issuance
+or the build fails, the script restores the previous cached profile.
+
 ## Install a macOS Release Build
 
 Build the macOS app in Release configuration and replace the copy installed at
