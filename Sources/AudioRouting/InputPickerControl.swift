@@ -7,13 +7,21 @@ import UIKit
 
 public struct SystemInputPickerButton: UIViewRepresentable {
     @Bindable private var routeManager: AudioRouteManager
+    private let releaseAudioSessionWhenDismissed: Bool
 
-    public init(routeManager: AudioRouteManager) {
+    public init(
+        routeManager: AudioRouteManager,
+        releaseAudioSessionWhenDismissed: Bool = false
+    ) {
         self.routeManager = routeManager
+        self.releaseAudioSessionWhenDismissed = releaseAudioSessionWhenDismissed
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(routeManager: routeManager)
+        Coordinator(
+            routeManager: routeManager,
+            releaseAudioSessionWhenDismissed: releaseAudioSessionWhenDismissed
+        )
     }
 
     public func makeUIView(context: Context) -> UIButton {
@@ -41,6 +49,7 @@ public struct SystemInputPickerButton: UIViewRepresentable {
 
     public func updateUIView(_ uiView: UIButton, context: Context) {
         context.coordinator.routeManager = routeManager
+        context.coordinator.releaseAudioSessionWhenDismissed = releaseAudioSessionWhenDismissed
         uiView.configuration = buttonConfiguration()
     }
 
@@ -70,9 +79,14 @@ public struct SystemInputPickerButton: UIViewRepresentable {
     public final class Coordinator: NSObject, @preconcurrency AVInputPickerInteraction.Delegate {
         var routeManager: AudioRouteManager
         var inputPickerInteraction: AVInputPickerInteraction?
+        var releaseAudioSessionWhenDismissed: Bool
 
-        init(routeManager: AudioRouteManager) {
+        init(
+            routeManager: AudioRouteManager,
+            releaseAudioSessionWhenDismissed: Bool
+        ) {
             self.routeManager = routeManager
+            self.releaseAudioSessionWhenDismissed = releaseAudioSessionWhenDismissed
         }
 
         @objc func presentInputPicker(_ sender: UIButton) {
@@ -93,8 +107,13 @@ public struct SystemInputPickerButton: UIViewRepresentable {
         }
 
         public func inputPickerInteractionDidEndDismissing(_ inputPickerInteraction: AVInputPickerInteraction) {
+            let shouldReleaseAudioSession = releaseAudioSessionWhenDismissed
             Task { @MainActor [routeManager] in
-                routeManager.refresh()
+                if shouldReleaseAudioSession {
+                    routeManager.releaseAudioSession()
+                } else {
+                    routeManager.refresh()
+                }
             }
         }
 

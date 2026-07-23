@@ -1,6 +1,10 @@
 import XCTest
 @testable import LarmindonKit
 
+#if os(iOS)
+import AVFAudio
+#endif
+
 final class MicrophoneCapabilitiesTests: XCTestCase {
     func testKnownPolarPatternsHaveReadableTitles() {
         XCTAssertEqual(MicrophonePolarPattern.omnidirectional.title, "Omnidirectional")
@@ -57,6 +61,28 @@ final class MicrophoneCapabilitiesTests: XCTestCase {
 
         XCTAssertEqual(decoded, configuration)
     }
+
+    #if os(iOS)
+    func testBuiltInCapturePolicyDoesNotOpenAnOutputOrBluetoothHFPRoute() {
+        let policy = IOSAudioSessionCapturePolicy(
+            inputKind: AVAudioSession.Port.builtInMic.rawValue
+        )
+
+        XCTAssertEqual(policy.category, .record)
+        XCTAssertEqual(policy.mode, .measurement)
+        XCTAssertFalse(policy.options.contains(.allowBluetoothHFP))
+    }
+
+    func testBluetoothHFPCapturePolicyKeepsBluetoothInputAvailable() {
+        let policy = IOSAudioSessionCapturePolicy(
+            inputKind: AVAudioSession.Port.bluetoothHFP.rawValue
+        )
+
+        XCTAssertEqual(policy.category, .record)
+        XCTAssertEqual(policy.mode, .voiceChat)
+        XCTAssertTrue(policy.options.contains(.allowBluetoothHFP))
+    }
+    #endif
 
     #if os(macOS)
     @MainActor

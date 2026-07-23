@@ -57,6 +57,9 @@ public struct MicrophonePanelView: View {
             await session.prepareMicrophoneControls()
             synchronizeDraft()
         }
+        .onDisappear {
+            session.releaseMicrophoneControls()
+        }
         .onChange(of: session.routeManager.currentInputName) {
             session.microphoneCapabilities.refresh()
             #if os(iOS)

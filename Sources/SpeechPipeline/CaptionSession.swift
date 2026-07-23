@@ -90,8 +90,10 @@ public final class CaptionSession {
             }
 
             do {
-                try await routeManager.configureForCapture(configuration: microphoneConfiguration)
-                try await restoreMicrophoneConfigurationForCurrentInput()
+                if sourceKind == .live {
+                    try await routeManager.configureForCapture(configuration: microphoneConfiguration)
+                    try await restoreMicrophoneConfigurationForCurrentInput(forCapture: true)
+                }
                 try await source.start()
                 speechAnalyzerState = "Running \(source.name)"
                 microphoneCapabilities.refresh()
@@ -100,6 +102,7 @@ public final class CaptionSession {
                 speechAnalyzerState = "Error"
                 store.isRunning = false
                 await source.stop()
+                routeManager.releaseAudioSession()
                 activeSource = nil
                 activeAudioBufferFrameCount = nil
                 resultTask?.cancel()
@@ -128,6 +131,7 @@ public final class CaptionSession {
         if let activeSource {
             await activeSource.stop()
         }
+        routeManager.releaseAudioSession()
         activeSource = nil
         activeAudioBufferFrameCount = nil
         store.isRunning = false
@@ -158,6 +162,12 @@ public final class CaptionSession {
         } catch {
             microphoneConfigurationError = error.localizedDescription
         }
+        microphoneCapabilities.refresh()
+    }
+
+    public func releaseMicrophoneControls() {
+        guard !store.isRunning else { return }
+        routeManager.releaseAudioSession()
         microphoneCapabilities.refresh()
     }
 
@@ -218,7 +228,9 @@ public final class CaptionSession {
         }
     }
 
-    private func restoreMicrophoneConfigurationForCurrentInput() async throws {
+    private func restoreMicrophoneConfigurationForCurrentInput(
+        forCapture: Bool = false
+    ) async throws {
         #if os(iOS)
         routeManager.refresh()
         guard let inputPortID = routeManager.currentRouteInputs.first?.id else { return }
@@ -227,7 +239,11 @@ public final class CaptionSession {
             ?? MicrophoneCaptureConfiguration(inputPortID: inputPortID)
         guard configuration != microphoneConfiguration else { return }
 
-        try await routeManager.configureForInputSelection(configuration: configuration)
+        if forCapture {
+            try await routeManager.configureForCapture(configuration: configuration)
+        } else {
+            try await routeManager.configureForInputSelection(configuration: configuration)
+        }
         microphoneConfiguration = configuration
         #endif
     }

@@ -50,7 +50,28 @@ public final class AudioRouteManager {
     public func configureForCapture(
         configuration: MicrophoneCaptureConfiguration = MicrophoneCaptureConfiguration()
     ) async throws {
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        let requestedInputKind = configuration.inputPortID.flatMap { inputPortID in
+            availableInputs.first(where: { $0.id == inputPortID })?.kind
+        } ?? session.preferredInput?.portType.rawValue
+            ?? session.currentRoute.inputs.first?.portType.rawValue
+        let policy = IOSAudioSessionCapturePolicy(inputKind: requestedInputKind)
+
+        try session.setCategory(
+            policy.category,
+            mode: policy.mode,
+            options: policy.options
+        )
+        try session.setActive(true, options: [])
+        try apply(configuration, to: session)
+        if session.isInputGainSettable {
+            try? session.setInputGain(1)
+        }
+        refresh()
+        #else
         try await configureForInputSelection(configuration: configuration)
+        #endif
     }
 
     public func configureForInputSelection(
@@ -78,23 +99,41 @@ public final class AudioRouteManager {
         #endif
     }
 
+    public func releaseAudioSession() {
+        #if os(iOS)
+        do {
+            try AVAudioSession.sharedInstance().setActive(
+                false,
+                options: .notifyOthersOnDeactivation
+            )
+        } catch {
+            print("Failed to deactivate audio session: \(error.localizedDescription)")
+        }
+        #endif
+        refresh()
+    }
+
     #if os(iOS)
     private func apply(
         _ configuration: MicrophoneCaptureConfiguration,
         to session: AVAudioSession
     ) throws {
         let availableInputs = session.availableInputs ?? []
-        let input = session.currentRoute.inputs.first ?? session.preferredInput ?? availableInputs.first
+        let input: AVAudioSessionPortDescription?
+        if let configuredPortID = configuration.inputPortID {
+            guard let configuredInput = availableInputs.first(where: { $0.uid == configuredPortID }) else {
+                throw AudioRouteConfigurationError.inputUnavailable
+            }
+            try session.setPreferredInput(configuredInput)
+            input = configuredInput
+        } else {
+            input = session.currentRoute.inputs.first ?? session.preferredInput ?? availableInputs.first
+        }
 
         guard let input else {
             if configuration.dataSourceID != nil {
                 throw AudioRouteConfigurationError.inputUnavailable
             }
-            return
-        }
-
-        if let configuredPortID = configuration.inputPortID,
-           configuredPortID != input.uid {
             return
         }
 
@@ -255,6 +294,24 @@ public final class AudioRouteManager {
 }
 
 #if os(iOS)
+struct IOSAudioSessionCapturePolicy: Equatable {
+    let category: AVAudioSession.Category
+    let mode: AVAudioSession.Mode
+    let options: AVAudioSession.CategoryOptions
+
+    init(inputKind: String?) {
+        if inputKind == AVAudioSession.Port.bluetoothHFP.rawValue {
+            category = .record
+            mode = .voiceChat
+            options = [.allowBluetoothHFP]
+        } else {
+            category = .record
+            mode = .measurement
+            options = []
+        }
+    }
+}
+
 private enum AudioRouteConfigurationError: LocalizedError {
     case inputUnavailable
     case dataSourceUnavailable
