@@ -3,6 +3,8 @@ import SwiftUI
 public struct DebugPanelView: View {
     @Bindable private var session: CaptionSession
     @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
+    @AppStorage(VoiceProcessingPreference.storageKey)
+    private var voiceProcessingEnabled = VoiceProcessingPreference.defaultValue
 
     public init(session: CaptionSession) {
         self.session = session
@@ -16,6 +18,15 @@ public struct DebugPanelView: View {
                     row("Source", session.selectedSourceKind.title)
                     row("Speech", session.speechAnalyzerState)
                     row("VAD", session.audioLevels.vadState)
+                    row(
+                        "Voice processing requested",
+                        session.requestedVoiceProcessingEnabled ? "Enabled" : "Disabled"
+                    )
+                    row(
+                        "Voice processing active",
+                        session.activeVoiceProcessingEnabled.map { $0 ? "Enabled" : "Disabled" }
+                            ?? "Not capturing"
+                    )
                     row("Last error", session.lastError ?? "None")
                 }
 
@@ -29,7 +40,7 @@ public struct DebugPanelView: View {
 
                 Section("Levels") {
                     row("Raw input", session.audioLevels.rawInputLevel.formatted(.number.precision(.fractionLength(2))))
-                    row("Processed", session.audioLevels.processedInputLevel.formatted(.number.precision(.fractionLength(2))))
+                    row("VAD-gated display", session.audioLevels.processedInputLevel.formatted(.number.precision(.fractionLength(2))))
                     row("VAD active", session.audioLevels.speechDetected ? "Yes" : "No")
                     row("Configured buffer", "\(audioBufferFrameCount) frames")
                     row("Active buffer", session.activeAudioBufferFrameCount.map { "\($0) frames" } ?? "None")
@@ -57,7 +68,8 @@ public struct DebugPanelView: View {
                     Button("Start live transcription source") {
                         session.start(
                             kind: .live,
-                            audioBufferFrameCount: audioBufferFrameCount
+                            audioBufferFrameCount: audioBufferFrameCount,
+                            voiceProcessingEnabled: voiceProcessingEnabled
                         )
                     }
 
@@ -71,6 +83,12 @@ public struct DebugPanelView: View {
                 }
             }
             .navigationTitle("Debug")
+        }
+        .onAppear {
+            session.setVoiceProcessingPreference(voiceProcessingEnabled)
+        }
+        .onChange(of: voiceProcessingEnabled) { _, newValue in
+            session.setVoiceProcessingPreference(newValue)
         }
     }
 

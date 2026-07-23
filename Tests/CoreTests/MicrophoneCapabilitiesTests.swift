@@ -83,7 +83,8 @@ final class MicrophoneCapabilitiesTests: XCTestCase {
     #if os(iOS)
     func testBuiltInCapturePolicyDoesNotOpenAnOutputOrBluetoothHFPRoute() {
         let policy = IOSAudioSessionCapturePolicy(
-            inputKind: AVAudioSession.Port.builtInMic.rawValue
+            inputKind: AVAudioSession.Port.builtInMic.rawValue,
+            voiceProcessingEnabled: false
         )
 
         XCTAssertEqual(policy.category, .record)
@@ -93,14 +94,40 @@ final class MicrophoneCapabilitiesTests: XCTestCase {
 
     func testBluetoothHFPCapturePolicyKeepsBluetoothInputAvailable() {
         let policy = IOSAudioSessionCapturePolicy(
-            inputKind: AVAudioSession.Port.bluetoothHFP.rawValue
+            inputKind: AVAudioSession.Port.bluetoothHFP.rawValue,
+            voiceProcessingEnabled: false
         )
 
         XCTAssertEqual(policy.category, .playAndRecord)
         XCTAssertEqual(policy.mode, .voiceChat)
         XCTAssertTrue(policy.options.contains(.allowBluetoothHFP))
     }
+
+    func testVoiceProcessingUsesFullDuplexVoiceChatPolicy() {
+        let policy = IOSAudioSessionCapturePolicy(
+            inputKind: AVAudioSession.Port.builtInMic.rawValue,
+            voiceProcessingEnabled: true
+        )
+
+        XCTAssertEqual(policy.category, .playAndRecord)
+        XCTAssertEqual(policy.mode, .voiceChat)
+        XCTAssertTrue(policy.options.contains(.allowBluetoothHFP))
+        XCTAssertTrue(policy.options.contains(.defaultToSpeaker))
+    }
     #endif
+
+    @MainActor
+    func testCaptionSessionTracksRequestedVoiceProcessingPreference() {
+        let session = CaptionSession(voiceProcessingEnabled: true)
+
+        XCTAssertTrue(session.requestedVoiceProcessingEnabled)
+        XCTAssertNil(session.activeVoiceProcessingEnabled)
+
+        session.setVoiceProcessingPreference(false)
+
+        XCTAssertFalse(session.requestedVoiceProcessingEnabled)
+        XCTAssertNil(session.activeVoiceProcessingEnabled)
+    }
 
     #if os(macOS)
     @MainActor

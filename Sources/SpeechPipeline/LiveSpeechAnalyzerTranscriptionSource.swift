@@ -18,6 +18,8 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     private let sensitivity: VADSensitivity
     private let inputDeviceID: UInt32?
     private let bufferFrameCount: AVAudioFrameCount
+    public let requestedVoiceProcessingEnabled: Bool
+    public private(set) var activeVoiceProcessingEnabled: Bool?
     private let profanityFilterEnabled: Bool
     private let audioEngine = AVAudioEngine()
     private let audioState = LiveAudioState()
@@ -33,6 +35,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         sensitivity: VADSensitivity = .medium,
         inputDeviceID: UInt32? = nil,
         bufferFrameCount: Int = AudioCaptureBufferFrames.defaultValue,
+        voiceProcessingEnabled: Bool = VoiceProcessingPreference.defaultValue,
         profanityFilterEnabled: Bool = false
     ) {
         self.sensitivity = sensitivity
@@ -40,6 +43,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         self.bufferFrameCount = AVAudioFrameCount(
             AudioCaptureBufferFrames.clamped(bufferFrameCount)
         )
+        self.requestedVoiceProcessingEnabled = voiceProcessingEnabled
         self.profanityFilterEnabled = profanityFilterEnabled
 
         var capturedContinuation: AsyncStream<CaptionResult>.Continuation!
@@ -83,6 +87,9 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
 
     private func startSpeechAnalyzerPipeline() async throws {
         let inputNode = audioEngine.inputNode
+        try inputNode.setVoiceProcessingEnabled(requestedVoiceProcessingEnabled)
+        activeVoiceProcessingEnabled = inputNode.isVoiceProcessingEnabled
+
         let captureFormat: AVAudioFormat
 
         #if os(macOS)

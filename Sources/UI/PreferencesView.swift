@@ -6,7 +6,8 @@ public struct PreferencesView: View {
     @AppStorage("transcriptionSourceKind") private var sourceKindRaw = TranscriptionSourceKind.live.rawValue
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
     @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
-    @AppStorage("voiceProcessingEnabled") private var voiceProcessingEnabled = true
+    @AppStorage(VoiceProcessingPreference.storageKey)
+    private var voiceProcessingEnabled = VoiceProcessingPreference.defaultValue
     @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
 
     #if os(iOS)
@@ -74,6 +75,9 @@ public struct PreferencesView: View {
                 }
 
                 Toggle("Voice processing", isOn: $voiceProcessingEnabled)
+                Text("Uses Apple Voice Processing I/O, including system-managed gain correction. Takes effect the next time capture starts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 Toggle("Filter profanity", isOn: $profanityFilterEnabled)
                 Text("Replaces profane words with a milder form. Takes effect the next time captioning starts.")

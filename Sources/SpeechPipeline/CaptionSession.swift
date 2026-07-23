@@ -14,6 +14,8 @@ public final class CaptionSession {
     public private(set) var lastVolatileResult: String = ""
     public private(set) var audioLevels = AudioLevelSnapshot()
     public private(set) var activeAudioBufferFrameCount: Int?
+    public private(set) var requestedVoiceProcessingEnabled: Bool
+    public private(set) var activeVoiceProcessingEnabled: Bool?
     public private(set) var microphoneConfiguration = MicrophoneCaptureConfiguration()
     public private(set) var isApplyingMicrophoneConfiguration = false
     public private(set) var microphoneConfigurationError: String?
@@ -32,6 +34,7 @@ public final class CaptionSession {
         selectedSourceKind: TranscriptionSourceKind = .live,
         vadSensitivity: VADSensitivity = .medium,
         audioBufferFrameCount: Int = AudioCaptureBufferFrames.defaultValue,
+        voiceProcessingEnabled: Bool = VoiceProcessingPreference.defaultValue,
         profanityFilterEnabled: Bool = false
     ) {
         self.store = store
@@ -40,6 +43,7 @@ public final class CaptionSession {
         self.selectedSourceKind = selectedSourceKind
         self.vadSensitivity = vadSensitivity
         self.audioBufferFrameCount = AudioCaptureBufferFrames.clamped(audioBufferFrameCount)
+        self.requestedVoiceProcessingEnabled = voiceProcessingEnabled
         self.profanityFilterEnabled = profanityFilterEnabled
 
         #if os(macOS)
@@ -53,6 +57,7 @@ public final class CaptionSession {
         kind: TranscriptionSourceKind? = nil,
         vadSensitivity: VADSensitivity? = nil,
         audioBufferFrameCount: Int? = nil,
+        voiceProcessingEnabled: Bool? = nil,
         profanityFilterEnabled: Bool? = nil
     ) {
         let sourceKind = kind ?? selectedSourceKind
@@ -62,6 +67,9 @@ public final class CaptionSession {
         }
         if let audioBufferFrameCount {
             self.audioBufferFrameCount = AudioCaptureBufferFrames.clamped(audioBufferFrameCount)
+        }
+        if let voiceProcessingEnabled {
+            requestedVoiceProcessingEnabled = voiceProcessingEnabled
         }
         if let profanityFilterEnabled {
             self.profanityFilterEnabled = profanityFilterEnabled
@@ -92,9 +100,15 @@ public final class CaptionSession {
             do {
                 if sourceKind == .live {
                     adoptMicrophoneConfigurationForCurrentInput()
-                    try await routeManager.configureForCapture(configuration: microphoneConfiguration)
+                    try await routeManager.configureForCapture(
+                        configuration: microphoneConfiguration,
+                        voiceProcessingEnabled: requestedVoiceProcessingEnabled
+                    )
                 }
                 try await source.start()
+                if let source = source as? LiveSpeechAnalyzerTranscriptionSource {
+                    activeVoiceProcessingEnabled = source.activeVoiceProcessingEnabled
+                }
                 speechAnalyzerState = "Running \(source.name)"
                 microphoneCapabilities.refresh()
             } catch {
@@ -105,6 +119,7 @@ public final class CaptionSession {
                 routeManager.releaseAudioSession()
                 activeSource = nil
                 activeAudioBufferFrameCount = nil
+                activeVoiceProcessingEnabled = nil
                 resultTask?.cancel()
                 resultTask = nil
                 levelTask?.cancel()
@@ -134,6 +149,7 @@ public final class CaptionSession {
         routeManager.releaseAudioSession()
         activeSource = nil
         activeAudioBufferFrameCount = nil
+        activeVoiceProcessingEnabled = nil
         store.isRunning = false
         speechAnalyzerState = "Stopped"
         audioLevels = AudioLevelSnapshot()
@@ -148,6 +164,10 @@ public final class CaptionSession {
         if store.isRunning, selectedSourceKind == .live {
             start(kind: selectedSourceKind)
         }
+    }
+
+    public func setVoiceProcessingPreference(_ enabled: Bool) {
+        requestedVoiceProcessingEnabled = enabled
     }
 
     public func clear() {
@@ -233,6 +253,7 @@ public final class CaptionSession {
                 sensitivity: vadSensitivity,
                 inputDeviceID: routeManager.preferredInputDeviceID,
                 bufferFrameCount: audioBufferFrameCount,
+                voiceProcessingEnabled: requestedVoiceProcessingEnabled,
                 profanityFilterEnabled: profanityFilterEnabled
             )
         }

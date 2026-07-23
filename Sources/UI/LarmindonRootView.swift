@@ -23,6 +23,8 @@ public struct LarmindonRootView: View {
     @AppStorage("transcriptionSourceKind") private var sourceKindRaw = TranscriptionSourceKind.live.rawValue
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
     @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
+    @AppStorage(VoiceProcessingPreference.storageKey)
+    private var voiceProcessingEnabled = VoiceProcessingPreference.defaultValue
     @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
 
     #if os(iOS)
@@ -88,6 +90,12 @@ public struct LarmindonRootView: View {
             .tint(appearancePreference.tintColor)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            session.setVoiceProcessingPreference(voiceProcessingEnabled)
+        }
+        .onChange(of: voiceProcessingEnabled) { _, newValue in
+            session.setVoiceProcessingPreference(newValue)
+        }
     }
 
     private func presentSettings() {
@@ -239,6 +247,7 @@ public struct LarmindonRootView: View {
                     kind: sourceKind,
                     vadSensitivity: vadSensitivity,
                     audioBufferFrameCount: audioBufferFrameCount,
+                    voiceProcessingEnabled: voiceProcessingEnabled,
                     profanityFilterEnabled: profanityFilterEnabled
                 )
             }

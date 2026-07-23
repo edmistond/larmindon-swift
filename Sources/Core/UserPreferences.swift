@@ -118,3 +118,8 @@ public enum AudioCaptureBufferFrames {
         Swift.min(max, Swift.max(min, value))
     }
 }
+
+public enum VoiceProcessingPreference {
+    public static let storageKey = "voiceProcessingEnabled"
+    public static let defaultValue = true
+}

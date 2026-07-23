@@ -48,7 +48,8 @@ public final class AudioRouteManager {
     }
 
     public func configureForCapture(
-        configuration: MicrophoneCaptureConfiguration = MicrophoneCaptureConfiguration()
+        configuration: MicrophoneCaptureConfiguration = MicrophoneCaptureConfiguration(),
+        voiceProcessingEnabled: Bool = false
     ) async throws {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
@@ -56,7 +57,10 @@ public final class AudioRouteManager {
             availableInputs.first(where: { $0.id == inputPortID })?.kind
         } ?? session.preferredInput?.portType.rawValue
             ?? session.currentRoute.inputs.first?.portType.rawValue
-        let policy = IOSAudioSessionCapturePolicy(inputKind: requestedInputKind)
+        let policy = IOSAudioSessionCapturePolicy(
+            inputKind: requestedInputKind,
+            voiceProcessingEnabled: voiceProcessingEnabled
+        )
 
         try session.setCategory(
             policy.category,
@@ -65,9 +69,6 @@ public final class AudioRouteManager {
         )
         try session.setActive(true, options: [])
         try apply(configuration, to: session)
-        if session.isInputGainSettable {
-            try? session.setInputGain(1)
-        }
         refresh()
         #else
         try await configureForInputSelection(configuration: configuration)
@@ -86,9 +87,6 @@ public final class AudioRouteManager {
         )
         try session.setActive(true, options: [])
         try apply(configuration, to: session)
-        if session.isInputGainSettable {
-            try? session.setInputGain(1)
-        }
         #endif
         refresh()
 
@@ -300,8 +298,12 @@ struct IOSAudioSessionCapturePolicy: Equatable {
     let mode: AVAudioSession.Mode
     let options: AVAudioSession.CategoryOptions
 
-    init(inputKind: String?) {
-        if inputKind == AVAudioSession.Port.bluetoothHFP.rawValue {
+    init(inputKind: String?, voiceProcessingEnabled: Bool = false) {
+        if voiceProcessingEnabled {
+            category = .playAndRecord
+            mode = .voiceChat
+            options = [.allowBluetoothHFP, .defaultToSpeaker]
+        } else if inputKind == AVAudioSession.Port.bluetoothHFP.rawValue {
             category = .playAndRecord
             mode = .voiceChat
             options = [.allowBluetoothHFP, .defaultToSpeaker]

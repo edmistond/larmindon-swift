@@ -12,6 +12,8 @@ public struct MicrophonePanelView: View {
     public var body: some View {
         NavigationStack {
             List {
+                voiceProcessingStatus
+
                 if let snapshot = session.microphoneCapabilities.snapshot {
                     summary(snapshot)
 
@@ -71,6 +73,27 @@ public struct MicrophonePanelView: View {
         }
         .onChange(of: session.microphoneConfiguration) {
             synchronizeDraft()
+        }
+    }
+
+    private var voiceProcessingStatus: some View {
+        Section("Voice Processing") {
+            capabilityRow(
+                MicrophoneCapabilityItem(
+                    label: "Requested",
+                    value: session.requestedVoiceProcessingEnabled ? "Enabled" : "Disabled"
+                )
+            )
+            capabilityRow(
+                MicrophoneCapabilityItem(
+                    label: "Active",
+                    value: session.activeVoiceProcessingEnabled.map { $0 ? "Enabled" : "Disabled" }
+                        ?? "Not capturing"
+                )
+            )
+            Text("Apple Voice Processing I/O runs before VAD and transcription. Changes take effect when capture restarts.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
