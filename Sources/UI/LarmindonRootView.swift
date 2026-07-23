@@ -269,7 +269,10 @@ public struct LarmindonRootView: View {
         #if os(iOS)
         SystemInputPickerButton(
             routeManager: session.routeManager,
-            releaseAudioSessionWhenDismissed: !session.store.isRunning
+            releaseAudioSessionWhenDismissed: !session.store.isRunning,
+            onInputSelectionChanged: {
+                session.inputSelectionDidChange()
+            }
         )
             .fixedSize()
         #else

@@ -8,19 +8,23 @@ import UIKit
 public struct SystemInputPickerButton: UIViewRepresentable {
     @Bindable private var routeManager: AudioRouteManager
     private let releaseAudioSessionWhenDismissed: Bool
+    private let onInputSelectionChanged: @MainActor @Sendable () -> Void
 
     public init(
         routeManager: AudioRouteManager,
-        releaseAudioSessionWhenDismissed: Bool = false
+        releaseAudioSessionWhenDismissed: Bool = false,
+        onInputSelectionChanged: @escaping @MainActor @Sendable () -> Void = {}
     ) {
         self.routeManager = routeManager
         self.releaseAudioSessionWhenDismissed = releaseAudioSessionWhenDismissed
+        self.onInputSelectionChanged = onInputSelectionChanged
     }
 
     public func makeCoordinator() -> Coordinator {
         Coordinator(
             routeManager: routeManager,
-            releaseAudioSessionWhenDismissed: releaseAudioSessionWhenDismissed
+            releaseAudioSessionWhenDismissed: releaseAudioSessionWhenDismissed,
+            onInputSelectionChanged: onInputSelectionChanged
         )
     }
 
@@ -50,6 +54,7 @@ public struct SystemInputPickerButton: UIViewRepresentable {
     public func updateUIView(_ uiView: UIButton, context: Context) {
         context.coordinator.routeManager = routeManager
         context.coordinator.releaseAudioSessionWhenDismissed = releaseAudioSessionWhenDismissed
+        context.coordinator.onInputSelectionChanged = onInputSelectionChanged
         uiView.configuration = buttonConfiguration()
     }
 
@@ -80,13 +85,16 @@ public struct SystemInputPickerButton: UIViewRepresentable {
         var routeManager: AudioRouteManager
         var inputPickerInteraction: AVInputPickerInteraction?
         var releaseAudioSessionWhenDismissed: Bool
+        var onInputSelectionChanged: @MainActor @Sendable () -> Void
 
         init(
             routeManager: AudioRouteManager,
-            releaseAudioSessionWhenDismissed: Bool
+            releaseAudioSessionWhenDismissed: Bool,
+            onInputSelectionChanged: @escaping @MainActor @Sendable () -> Void
         ) {
             self.routeManager = routeManager
             self.releaseAudioSessionWhenDismissed = releaseAudioSessionWhenDismissed
+            self.onInputSelectionChanged = onInputSelectionChanged
         }
 
         @objc func presentInputPicker(_ sender: UIButton) {
@@ -108,11 +116,12 @@ public struct SystemInputPickerButton: UIViewRepresentable {
 
         public func inputPickerInteractionDidEndDismissing(_ inputPickerInteraction: AVInputPickerInteraction) {
             let shouldReleaseAudioSession = releaseAudioSessionWhenDismissed
+            let selectionChanged = onInputSelectionChanged
             Task { @MainActor [routeManager] in
+                routeManager.refresh()
+                selectionChanged()
                 if shouldReleaseAudioSession {
                     routeManager.releaseAudioSession()
-                } else {
-                    routeManager.refresh()
                 }
             }
         }

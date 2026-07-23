@@ -170,9 +170,10 @@ public final class AudioRouteManager {
         availableInputs = (session.availableInputs ?? []).map(AudioRoutePort.init(portDescription:))
         currentRouteInputs = session.currentRoute.inputs.map(AudioRoutePort.init(portDescription:))
         currentRouteOutputs = session.currentRoute.outputs.map(AudioRoutePort.init(portDescription:))
+        preferredInputID = session.preferredInput?.uid
         preferredInputName = session.preferredInput?.portName
         preferredInputDeviceID = nil
-        currentInputName = currentRouteInputs.first?.name ?? "Unknown"
+        currentInputName = currentRouteInputs.first?.name ?? preferredInputName ?? "Unknown"
         #elseif os(macOS)
         let inputs = MacAudioDeviceProvider.inputDevices()
         let defaultInput = MacAudioDeviceProvider.defaultInputDevice()
@@ -301,9 +302,9 @@ struct IOSAudioSessionCapturePolicy: Equatable {
 
     init(inputKind: String?) {
         if inputKind == AVAudioSession.Port.bluetoothHFP.rawValue {
-            category = .record
+            category = .playAndRecord
             mode = .voiceChat
-            options = [.allowBluetoothHFP]
+            options = [.allowBluetoothHFP, .defaultToSpeaker]
         } else {
             category = .record
             mode = .measurement

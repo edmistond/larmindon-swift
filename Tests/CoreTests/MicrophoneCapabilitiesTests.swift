@@ -62,6 +62,24 @@ final class MicrophoneCapabilitiesTests: XCTestCase {
         XCTAssertEqual(decoded, configuration)
     }
 
+    @MainActor
+    func testNewlySelectedInputReplacesAStaleCaptureInput() {
+        let staleConfiguration = MicrophoneCaptureConfiguration(
+            inputPortID: "built-in",
+            dataSourceID: "front",
+            polarPatternID: "cardioid"
+        )
+
+        let resolvedConfiguration = CaptionSession.resolvedMicrophoneConfiguration(
+            inputPortID: "hearing-aid",
+            storedConfiguration: staleConfiguration
+        )
+
+        XCTAssertEqual(resolvedConfiguration.inputPortID, "hearing-aid")
+        XCTAssertNil(resolvedConfiguration.dataSourceID)
+        XCTAssertNil(resolvedConfiguration.polarPatternID)
+    }
+
     #if os(iOS)
     func testBuiltInCapturePolicyDoesNotOpenAnOutputOrBluetoothHFPRoute() {
         let policy = IOSAudioSessionCapturePolicy(
@@ -78,7 +96,7 @@ final class MicrophoneCapabilitiesTests: XCTestCase {
             inputKind: AVAudioSession.Port.bluetoothHFP.rawValue
         )
 
-        XCTAssertEqual(policy.category, .record)
+        XCTAssertEqual(policy.category, .playAndRecord)
         XCTAssertEqual(policy.mode, .voiceChat)
         XCTAssertTrue(policy.options.contains(.allowBluetoothHFP))
     }

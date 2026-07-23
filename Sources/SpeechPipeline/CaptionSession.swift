@@ -91,8 +91,8 @@ public final class CaptionSession {
 
             do {
                 if sourceKind == .live {
+                    adoptMicrophoneConfigurationForCurrentInput()
                     try await routeManager.configureForCapture(configuration: microphoneConfiguration)
-                    try await restoreMicrophoneConfigurationForCurrentInput(forCapture: true)
                 }
                 try await source.start()
                 speechAnalyzerState = "Running \(source.name)"
@@ -138,6 +138,16 @@ public final class CaptionSession {
         speechAnalyzerState = "Stopped"
         audioLevels = AudioLevelSnapshot()
         microphoneCapabilities.refresh()
+    }
+
+    public func inputSelectionDidChange() {
+        adoptMicrophoneConfigurationForCurrentInput()
+        microphoneConfigurationError = nil
+        microphoneCapabilities.refresh()
+
+        if store.isRunning, selectedSourceKind == .live {
+            start(kind: selectedSourceKind)
+        }
     }
 
     public func clear() {
@@ -228,24 +238,40 @@ public final class CaptionSession {
         }
     }
 
-    private func restoreMicrophoneConfigurationForCurrentInput(
-        forCapture: Bool = false
-    ) async throws {
+    private func restoreMicrophoneConfigurationForCurrentInput() async throws {
+        #if os(iOS)
+        let previousConfiguration = microphoneConfiguration
+        adoptMicrophoneConfigurationForCurrentInput()
+        guard microphoneConfiguration != previousConfiguration else { return }
+
+        try await routeManager.configureForInputSelection(configuration: microphoneConfiguration)
+        #endif
+    }
+
+    private func adoptMicrophoneConfigurationForCurrentInput() {
         #if os(iOS)
         routeManager.refresh()
-        guard let inputPortID = routeManager.currentRouteInputs.first?.id else { return }
-
-        let configuration = MicrophoneConfigurationStore.load(inputPortID: inputPortID)
-            ?? MicrophoneCaptureConfiguration(inputPortID: inputPortID)
-        guard configuration != microphoneConfiguration else { return }
-
-        if forCapture {
-            try await routeManager.configureForCapture(configuration: configuration)
-        } else {
-            try await routeManager.configureForInputSelection(configuration: configuration)
+        guard let inputPortID = routeManager.preferredInputID
+            ?? routeManager.currentRouteInputs.first?.id else {
+            return
         }
-        microphoneConfiguration = configuration
+
+        microphoneConfiguration = Self.resolvedMicrophoneConfiguration(
+            inputPortID: inputPortID,
+            storedConfiguration: MicrophoneConfigurationStore.load(inputPortID: inputPortID)
+        )
         #endif
+    }
+
+    static func resolvedMicrophoneConfiguration(
+        inputPortID: String,
+        storedConfiguration: MicrophoneCaptureConfiguration?
+    ) -> MicrophoneCaptureConfiguration {
+        guard let storedConfiguration,
+              storedConfiguration.inputPortID == inputPortID else {
+            return MicrophoneCaptureConfiguration(inputPortID: inputPortID)
+        }
+        return storedConfiguration
     }
 
     private func saveMicrophoneConfiguration(_ configuration: MicrophoneCaptureConfiguration) {

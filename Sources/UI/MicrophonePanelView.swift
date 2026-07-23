@@ -69,6 +69,9 @@ public struct MicrophonePanelView: View {
             hasEditedConfiguration = true
             #endif
         }
+        .onChange(of: session.microphoneConfiguration) {
+            synchronizeDraft()
+        }
     }
 
     private func summary(_ snapshot: MicrophoneCapabilitySnapshot) -> some View {
@@ -121,7 +124,12 @@ public struct MicrophonePanelView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                SystemInputPickerButton(routeManager: session.routeManager)
+                SystemInputPickerButton(
+                    routeManager: session.routeManager,
+                    onInputSelectionChanged: {
+                        session.inputSelectionDidChange()
+                    }
+                )
                     .fixedSize()
             }
 
