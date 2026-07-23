@@ -139,15 +139,18 @@ public struct InputSelectionMenu: View {
     @Bindable private var routeManager: AudioRouteManager
     private let labelTitle: String
     private let systemImage: String
+    private let onInputSelectionChanged: @MainActor @Sendable () -> Void
 
     public init(
         routeManager: AudioRouteManager,
         labelTitle: String = "Input",
-        systemImage: String = "mic.badge.plus"
+        systemImage: String = "mic.badge.plus",
+        onInputSelectionChanged: @escaping @MainActor @Sendable () -> Void = {}
     ) {
         self.routeManager = routeManager
         self.labelTitle = labelTitle
         self.systemImage = systemImage
+        self.onInputSelectionChanged = onInputSelectionChanged
     }
 
     public var body: some View {
@@ -165,7 +168,11 @@ public struct InputSelectionMenu: View {
             } else {
                 ForEach(routeManager.availableInputs) { input in
                     Button {
+                        guard routeManager.preferredInputID != input.id else {
+                            return
+                        }
                         routeManager.setPreferredInput(id: input.id)
+                        onInputSelectionChanged()
                     } label: {
                         if input.name == routeManager.currentInputName {
                             Label(input.name, systemImage: "checkmark")

@@ -285,7 +285,12 @@ public struct LarmindonRootView: View {
         )
             .fixedSize()
         #else
-        InputSelectionMenu(routeManager: session.routeManager)
+        InputSelectionMenu(
+            routeManager: session.routeManager,
+            onInputSelectionChanged: {
+                session.inputSelectionDidChange()
+            }
+        )
         #endif
     }
 

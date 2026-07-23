@@ -30,6 +30,11 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     private var detectorTask: Task<Void, Never>?
     private var stopPipeline: (() async -> Void)?
     private var reservedLocale: Locale?
+    private var isAudioEngineTapInstalled = false
+
+    #if os(macOS)
+    private var directAudioDeviceCapture: MacOSDirectAudioDeviceCapture?
+    #endif
 
     public init(
         sensitivity: VADSensitivity = .medium,
@@ -64,7 +69,15 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     }
 
     public func stop() async {
-        audioEngine.inputNode.removeTap(onBus: 0)
+        #if os(macOS)
+        directAudioDeviceCapture?.stop()
+        directAudioDeviceCapture = nil
+        #endif
+
+        if isAudioEngineTapInstalled {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            isAudioEngineTapInstalled = false
+        }
         audioEngine.stop()
 
         transcriberTask?.cancel()
@@ -87,19 +100,30 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
 
     private func startSpeechAnalyzerPipeline() async throws {
         let inputNode = audioEngine.inputNode
-        try inputNode.setVoiceProcessingEnabled(requestedVoiceProcessingEnabled)
-        activeVoiceProcessingEnabled = inputNode.isVoiceProcessingEnabled
-
         let captureFormat: AVAudioFormat
+        var usesDirectMacOSCapture = false
 
         #if os(macOS)
-        if let inputDeviceID {
-            try configureMacOSInputDevice(inputDeviceID, on: inputNode)
-            captureFormat = try macOSInputDeviceCaptureFormat(deviceID: AudioDeviceID(inputDeviceID))
+        if let inputDeviceID,
+           MacOSAudioCaptureStrategy.forDevice(AudioDeviceID(inputDeviceID)) == .coreAudioDevice {
+            usesDirectMacOSCapture = true
+            activeVoiceProcessingEnabled = false
+            captureFormat = try MacOSDirectAudioDeviceCapture.captureFormat(
+                deviceID: AudioDeviceID(inputDeviceID)
+            )
         } else {
-            captureFormat = inputNode.outputFormat(forBus: 0)
+            try inputNode.setVoiceProcessingEnabled(requestedVoiceProcessingEnabled)
+            activeVoiceProcessingEnabled = inputNode.isVoiceProcessingEnabled
+            if let inputDeviceID {
+                try configureMacOSInputDevice(inputDeviceID, on: inputNode)
+                captureFormat = try macOSInputDeviceCaptureFormat(deviceID: AudioDeviceID(inputDeviceID))
+            } else {
+                captureFormat = inputNode.outputFormat(forBus: 0)
+            }
         }
         #else
+        try inputNode.setVoiceProcessingEnabled(requestedVoiceProcessingEnabled)
+        activeVoiceProcessingEnabled = inputNode.isVoiceProcessingEnabled
         captureFormat = inputNode.outputFormat(forBus: 0)
         #endif
 
@@ -218,21 +242,41 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             }
         }
 
-        let tapHandler = makeAudioTapHandler(
-            sink: AudioTapSink(
-                levelContinuation: levelContinuation,
-                audioState: audioState,
-                captureContinuation: captureContinuation
-            )
+        let audioSink = AudioTapSink(
+            levelContinuation: levelContinuation,
+            audioState: audioState,
+            captureContinuation: captureContinuation
         )
+
+        #if os(macOS)
+        if usesDirectMacOSCapture, let inputDeviceID {
+            let capture = try MacOSDirectAudioDeviceCapture(
+                deviceID: AudioDeviceID(inputDeviceID),
+                captureFormat: captureFormat,
+                sink: audioSink
+            )
+            directAudioDeviceCapture = capture
+            try capture.start()
+        } else {
+            inputNode.installTap(
+                onBus: 0,
+                bufferSize: bufferFrameCount,
+                format: captureFormat,
+                block: makeAudioTapHandler(sink: audioSink)
+            )
+            isAudioEngineTapInstalled = true
+            try audioEngine.start()
+        }
+        #else
         inputNode.installTap(
             onBus: 0,
             bufferSize: bufferFrameCount,
             format: captureFormat,
-            block: tapHandler
+            block: makeAudioTapHandler(sink: audioSink)
         )
-
+        isAudioEngineTapInstalled = true
         try audioEngine.start()
+        #endif
     }
 
     private func prepareTranscriberLocale() async throws -> Locale {
@@ -279,6 +323,42 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
 }
 
 #if os(macOS)
+enum MacOSAudioCaptureStrategy: Equatable {
+    case audioEngine
+    case coreAudioDevice
+
+    static func forTransportType(_ transportType: UInt32) -> Self {
+        switch transportType {
+        case kAudioDeviceTransportTypeAggregate, kAudioDeviceTransportTypeVirtual:
+            .coreAudioDevice
+        default:
+            .audioEngine
+        }
+    }
+
+    static func forDevice(_ deviceID: AudioDeviceID) -> Self {
+        var transportType = UInt32(0)
+        var dataSize = UInt32(MemoryLayout<UInt32>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = AudioObjectGetPropertyData(
+            deviceID,
+            &address,
+            0,
+            nil,
+            &dataSize,
+            &transportType
+        )
+        guard status == noErr else {
+            return .audioEngine
+        }
+        return forTransportType(transportType)
+    }
+}
+
 @available(macOS 26.0, *)
 private func configureMacOSInputDevice(_ deviceID: UInt32, on inputNode: AVAudioInputNode) throws {
     guard let audioUnit = inputNode.audioUnit else {
@@ -299,6 +379,239 @@ private func configureMacOSInputDevice(_ deviceID: UInt32, on inputNode: AVAudio
             "Could not open selected macOS input device \(deviceID): \(status)"
         )
     }
+}
+
+private final class MacOSDirectAudioDeviceCapture: @unchecked Sendable {
+    private let deviceID: AudioDeviceID
+    private let captureFormat: AVAudioFormat
+    private let sink: AudioTapSink
+    private let ioQueue = DispatchQueue(
+        label: "com.davidedmiston.larmindon.core-audio-input",
+        qos: .userInteractive
+    )
+
+    private var ioProcID: AudioDeviceIOProcID?
+    private var isRunning = false
+
+    init(
+        deviceID: AudioDeviceID,
+        captureFormat: AVAudioFormat,
+        sink: AudioTapSink
+    ) throws {
+        try Self.validateInputStreamFormats(deviceID: deviceID)
+        self.deviceID = deviceID
+        self.captureFormat = captureFormat
+        self.sink = sink
+    }
+
+    deinit {
+        stop()
+    }
+
+    static func captureFormat(deviceID: AudioDeviceID) throws -> AVAudioFormat {
+        try validateInputStreamFormats(deviceID: deviceID)
+        let sampleRate = try macOSInputDeviceNominalSampleRate(deviceID: deviceID)
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sampleRate,
+            channels: 1,
+            interleaved: false
+        ) else {
+            throw TranscriptionSourceError.unavailable(
+                "Could not build direct Core Audio format for macOS audio device \(deviceID)"
+            )
+        }
+        return format
+    }
+
+    func start() throws {
+        guard ioProcID == nil else {
+            return
+        }
+
+        var newProcID: AudioDeviceIOProcID?
+        let createStatus = AudioDeviceCreateIOProcIDWithBlock(
+            &newProcID,
+            deviceID,
+            ioQueue
+        ) { [captureFormat, sink] _, inputData, _, _, _ in
+            guard let buffer = Self.makeMonoBuffer(
+                from: inputData,
+                format: captureFormat
+            ) else {
+                return
+            }
+            sink.handle(buffer: buffer)
+        }
+
+        guard createStatus == noErr, let newProcID else {
+            throw TranscriptionSourceError.unavailable(
+                "Could not create direct Core Audio capture for macOS audio device \(deviceID): \(createStatus)"
+            )
+        }
+        ioProcID = newProcID
+
+        let startStatus = AudioDeviceStart(deviceID, newProcID)
+        guard startStatus == noErr else {
+            AudioDeviceDestroyIOProcID(deviceID, newProcID)
+            ioProcID = nil
+            throw TranscriptionSourceError.unavailable(
+                "Could not start direct Core Audio capture for macOS audio device \(deviceID): \(startStatus)"
+            )
+        }
+        isRunning = true
+    }
+
+    func stop() {
+        guard let ioProcID else {
+            return
+        }
+        if isRunning {
+            AudioDeviceStop(deviceID, ioProcID)
+            isRunning = false
+        }
+        AudioDeviceDestroyIOProcID(deviceID, ioProcID)
+        self.ioProcID = nil
+    }
+
+    private static func validateInputStreamFormats(deviceID: AudioDeviceID) throws {
+        let streamIDs = try inputStreamIDs(deviceID: deviceID)
+        guard !streamIDs.isEmpty else {
+            throw TranscriptionSourceError.unavailable(
+                "The selected macOS audio device \(deviceID) has no input streams"
+            )
+        }
+
+        for streamID in streamIDs {
+            var format = AudioStreamBasicDescription()
+            var dataSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioStreamPropertyVirtualFormat,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let status = AudioObjectGetPropertyData(
+                streamID,
+                &address,
+                0,
+                nil,
+                &dataSize,
+                &format
+            )
+            guard status == noErr else {
+                throw TranscriptionSourceError.unavailable(
+                    "Could not read the Core Audio stream format for macOS audio device \(deviceID): \(status)"
+                )
+            }
+
+            let requiredFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked
+            guard format.mFormatID == kAudioFormatLinearPCM,
+                  format.mBitsPerChannel == 32,
+                  format.mFormatFlags & requiredFlags == requiredFlags else {
+                throw TranscriptionSourceError.unavailable(
+                    "Direct Core Audio capture requires 32-bit float PCM input for macOS audio device \(deviceID)"
+                )
+            }
+        }
+    }
+
+    private static func inputStreamIDs(deviceID: AudioDeviceID) throws -> [AudioStreamID] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        let sizeStatus = AudioObjectGetPropertyDataSize(
+            deviceID,
+            &address,
+            0,
+            nil,
+            &dataSize
+        )
+        guard sizeStatus == noErr else {
+            throw TranscriptionSourceError.unavailable(
+                "Could not read input streams for macOS audio device \(deviceID): \(sizeStatus)"
+            )
+        }
+
+        let streamCount = Int(dataSize) / MemoryLayout<AudioStreamID>.size
+        guard streamCount > 0 else {
+            return []
+        }
+
+        var streamIDs = [AudioStreamID](repeating: 0, count: streamCount)
+        let dataStatus = AudioObjectGetPropertyData(
+            deviceID,
+            &address,
+            0,
+            nil,
+            &dataSize,
+            &streamIDs
+        )
+        guard dataStatus == noErr else {
+            throw TranscriptionSourceError.unavailable(
+                "Could not read input streams for macOS audio device \(deviceID): \(dataStatus)"
+            )
+        }
+        return streamIDs
+    }
+
+    private static func makeMonoBuffer(
+        from inputData: UnsafePointer<AudioBufferList>,
+        format: AVAudioFormat
+    ) -> AVAudioPCMBuffer? {
+        let buffers = UnsafeMutableAudioBufferListPointer(
+            UnsafeMutablePointer(mutating: inputData)
+        )
+        let sources = buffers.compactMap { buffer -> MacOSFloatInputStream? in
+            guard let data = buffer.mData, buffer.mNumberChannels > 0 else {
+                return nil
+            }
+            let channelCount = Int(buffer.mNumberChannels)
+            let bytesPerFrame = MemoryLayout<Float>.size * channelCount
+            let frameCount = Int(buffer.mDataByteSize) / bytesPerFrame
+            guard frameCount > 0 else {
+                return nil
+            }
+            return MacOSFloatInputStream(
+                samples: data.assumingMemoryBound(to: Float.self),
+                channelCount: channelCount,
+                frameCount: frameCount
+            )
+        }
+        guard let frameCount = sources.map(\.frameCount).min(),
+              frameCount > 0,
+              frameCount <= Int(UInt32.max),
+              let outputBuffer = AVAudioPCMBuffer(
+                  pcmFormat: format,
+                  frameCapacity: AVAudioFrameCount(frameCount)
+              ),
+              let output = outputBuffer.floatChannelData?[0] else {
+            return nil
+        }
+
+        outputBuffer.frameLength = AVAudioFrameCount(frameCount)
+        for frame in 0..<frameCount {
+            var mixedSample = Float(0)
+            for source in sources {
+                var streamSample = Float(0)
+                let frameOffset = frame * source.channelCount
+                for channel in 0..<source.channelCount {
+                    streamSample += source.samples[frameOffset + channel]
+                }
+                mixedSample += streamSample / Float(source.channelCount)
+            }
+            output[frame] = min(1, max(-1, mixedSample))
+        }
+        return outputBuffer
+    }
+}
+
+private struct MacOSFloatInputStream {
+    let samples: UnsafePointer<Float>
+    let channelCount: Int
+    let frameCount: Int
 }
 
 private func macOSInputDeviceCaptureFormat(deviceID: AudioDeviceID) throws -> AVAudioFormat {
@@ -388,7 +701,7 @@ private struct AudioTapSink: @unchecked Sendable {
     let audioState: LiveAudioState
     let captureContinuation: AsyncStream<CapturedAudioBuffer>.Continuation
 
-    func handle(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
+    func handle(buffer: AVAudioPCMBuffer) {
         let rawLevel = AudioLevelMeter.normalizedRMS(from: buffer)
         levelContinuation.yield(
             audioState.updateRawLevel(
@@ -408,8 +721,8 @@ private struct AudioTapSink: @unchecked Sendable {
 private func makeAudioTapHandler(
     sink: AudioTapSink
 ) -> (AVAudioPCMBuffer, AVAudioTime) -> Void {
-    { buffer, time in
-        sink.handle(buffer: buffer, time: time)
+    { buffer, _ in
+        sink.handle(buffer: buffer)
     }
 }
 

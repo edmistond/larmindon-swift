@@ -96,7 +96,7 @@ The live source configures capture, runs an `AVAudioEngine` input tap with a 768
 
 On iOS/iPadOS, the app configures `AVAudioSession` for voice capture, allows Bluetooth HFP, tracks actual route inputs/outputs, and provides both a system input picker host and a fallback menu for available inputs. The main UI always displays the actual current route input, while preferred input details are shown in the debug panel.
 
-On macOS, route information is a first-pass read-only placeholder so the shared UI and macOS target can build while platform-specific input selection is designed.
+On macOS, the input menu tracks devices by stable Core Audio UID and restarts live capture when the selection changes. Built-in and external hardware microphones use `AVAudioEngine`; virtual and aggregate devices use a direct Core Audio IOProc so Loopback-style and multi-stream devices are captured from the selected device instead of silently falling back through the engine input node.
 
 ## Real-Device Testing Still Needed
 

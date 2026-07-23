@@ -3,6 +3,8 @@ import XCTest
 
 #if os(iOS)
 import AVFAudio
+#elseif os(macOS)
+import CoreAudio
 #endif
 
 final class MicrophoneCapabilitiesTests: XCTestCase {
@@ -168,6 +170,28 @@ final class MicrophoneCapabilitiesTests: XCTestCase {
                 availableInputs: []
             ),
             .selectedInputUnavailable(name: "Hearing aid")
+        )
+    }
+
+    func testAggregateAndVirtualDevicesUseDirectCoreAudioCapture() {
+        XCTAssertEqual(
+            MacOSAudioCaptureStrategy.forTransportType(kAudioDeviceTransportTypeAggregate),
+            .coreAudioDevice
+        )
+        XCTAssertEqual(
+            MacOSAudioCaptureStrategy.forTransportType(kAudioDeviceTransportTypeVirtual),
+            .coreAudioDevice
+        )
+    }
+
+    func testPhysicalDevicesKeepAudioEngineCapture() {
+        XCTAssertEqual(
+            MacOSAudioCaptureStrategy.forTransportType(kAudioDeviceTransportTypeBuiltIn),
+            .audioEngine
+        )
+        XCTAssertEqual(
+            MacOSAudioCaptureStrategy.forTransportType(kAudioDeviceTransportTypeUSB),
+            .audioEngine
         )
     }
     #endif
