@@ -108,7 +108,8 @@ public final class AudioCaptureSession {
         let sink = SharedAudioCaptureSink(
             frameContinuation: frameContinuation,
             levelContinuation: levelContinuation,
-            telemetry: telemetry
+            telemetry: telemetry,
+            levelReporter: ServerAudioLevelReporter()
         )
 
         #if os(macOS)
@@ -196,18 +197,16 @@ private struct SharedAudioCaptureSink: @unchecked Sendable {
     let frameContinuation: AsyncStream<CapturedAudioFrame>.Continuation
     let levelContinuation: AsyncStream<AudioLevelSnapshot>.Continuation
     let telemetry: AudioCaptureTelemetry
+    let levelReporter: ServerAudioLevelReporter
 
     func handle(_ buffer: AVAudioPCMBuffer) {
         let rawLevel = AudioLevelMeter.normalizedRMS(from: buffer)
-        levelContinuation.yield(
-            AudioLevelSnapshot(
-                rawInputLevel: rawLevel,
-                processedInputLevel: rawLevel,
-                speechDetected: rawLevel > 0.01,
-                vadState: "Server stream",
-                observedCallbackFrameLength: Int(buffer.frameLength)
-            )
-        )
+        if let snapshot = levelReporter.update(
+            rawLevel: rawLevel,
+            observedCallbackFrameLength: Int(buffer.frameLength)
+        ) {
+            levelContinuation.yield(snapshot)
+        }
 
         guard let copied = buffer.copyPCMBuffer() else {
             telemetry.record(
@@ -230,6 +229,49 @@ private struct SharedAudioCaptureSink: @unchecked Sendable {
                 dropped: false
             )
         }
+    }
+}
+
+final class ServerAudioLevelReporter: @unchecked Sendable {
+    static let defaultUpdateInterval: TimeInterval = 0.25
+
+    private let lock = NSLock()
+    private let updateInterval: TimeInterval
+    private var smoothedLevel = 0.0
+    private var lastPublishedAt: TimeInterval?
+
+    init(updateInterval: TimeInterval = defaultUpdateInterval) {
+        self.updateInterval = max(0, updateInterval)
+    }
+
+    func update(
+        rawLevel: Double,
+        observedCallbackFrameLength: Int,
+        at timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> AudioLevelSnapshot? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        smoothedLevel = AudioLevelMeter.smooth(
+            previous: smoothedLevel,
+            next: rawLevel
+        )
+
+        if let lastPublishedAt {
+            let elapsed = timestamp - lastPublishedAt
+            guard elapsed < 0 || elapsed >= updateInterval else {
+                return nil
+            }
+        }
+        lastPublishedAt = timestamp
+
+        return AudioLevelSnapshot(
+            rawInputLevel: smoothedLevel,
+            processedInputLevel: smoothedLevel,
+            speechDetected: smoothedLevel > 0.01,
+            vadState: "Server stream",
+            observedCallbackFrameLength: observedCallbackFrameLength
+        )
     }
 }
 
