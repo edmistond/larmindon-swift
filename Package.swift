@@ -20,7 +20,8 @@ let package = Package(
         .testTarget(
             name: "CoreTests",
             dependencies: ["LarmindonKit"],
-            path: "Tests/CoreTests"
+            path: "Tests/CoreTests",
+            resources: [.process("Fixtures")]
         ),
     ]
 )

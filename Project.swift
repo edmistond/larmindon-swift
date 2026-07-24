@@ -46,6 +46,7 @@ let project = Project(
             sources: [
                 "Sources/Core/**",
                 "Sources/SpeechPipeline/**",
+                "Sources/Networking/**",
                 "Sources/AudioRouting/**",
                 "Sources/UI/**",
                 "Sources/Debug/**",
@@ -85,7 +86,8 @@ let project = Project(
             bundleId: "com.davidedmiston.larmindon.coretests",
             deploymentTargets: .multiplatform(iOS: "26.0", macOS: "26.0"),
             infoPlist: .default,
-            sources: ["Tests/CoreTests/**"],
+            sources: ["Tests/CoreTests/**/*.swift"],
+            resources: ["Tests/CoreTests/Fixtures/**"],
             dependencies: [.target(name: "LarmindonKit")]
         ),
     ]

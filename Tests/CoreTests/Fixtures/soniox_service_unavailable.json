@@ -1,0 +1,8 @@
+{
+  "tokens": [],
+  "error_code": 503,
+  "error_type": "service_unavailable",
+  "error_message": "Cannot continue request. Please restart the request.",
+  "more_info": "https://soniox.com/docs/api-reference/errors#service-unavailable",
+  "request_id": "3d37a3bd-5078-47ee-a369-b204e3bbedda"
+}
