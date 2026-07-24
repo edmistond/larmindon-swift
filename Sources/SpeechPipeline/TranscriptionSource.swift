@@ -3,6 +3,8 @@ import Foundation
 public enum CaptionResult: Equatable, Sendable {
     case volatile(String)
     case finalized(String)
+    case volatileSegments([CaptionSegment])
+    case finalizedSegments([CaptionSegment])
     case failure(String)
 }
 

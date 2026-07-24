@@ -460,6 +460,11 @@ public final class CaptionSession {
             store.replaceVolatile(text)
         case .finalized(let text):
             store.appendFinalized(text)
+        case .volatileSegments(let segments):
+            lastVolatileResult = segments.map(\.text).joined(separator: "\n")
+            store.replaceVolatile(segments)
+        case .finalizedSegments(let segments):
+            store.appendFinalized(segments)
         case .failure(let message):
             lastError = message
             speechAnalyzerState = "Error"

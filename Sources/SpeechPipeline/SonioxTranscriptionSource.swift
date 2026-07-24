@@ -72,18 +72,18 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
                 for try await event in events {
                     switch event {
                     case .transcript(let update):
-                        let finalizedText =
-                            SonioxSpeakerLabelFormatter.format(
+                        let finalizedSegments =
+                            SonioxSpeakerSegmentFormatter.segments(
                                 tokens: update.newlyFinalizedTokens
                             )
-                        if !finalizedText.isEmpty {
+                        if !finalizedSegments.isEmpty {
                             continuation.yield(
-                                .finalized(finalizedText)
+                                .finalizedSegments(finalizedSegments)
                             )
                         }
                         continuation.yield(
-                            .volatile(
-                                SonioxSpeakerLabelFormatter.format(
+                            .volatileSegments(
+                                SonioxSpeakerSegmentFormatter.segments(
                                     tokens: update.nonFinalTokens
                                 )
                             )
@@ -242,29 +242,45 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
     }
 }
 
-struct SonioxSpeakerLabelFormatter {
-    static func format(tokens: [SonioxToken]) -> String {
+struct SonioxSpeakerSegmentFormatter {
+    static func segments(tokens: [SonioxToken]) -> [CaptionSegment] {
+        var segments: [CaptionSegment] = []
         var text = ""
         var currentSpeaker: String?
 
         for token in tokens {
             let speaker = normalizedSpeaker(token.speaker)
             if let speaker, speaker != currentSpeaker {
-                if !text.trimmingCharacters(
-                    in: .whitespacesAndNewlines
-                ).isEmpty {
-                    text.append("\n")
-                }
-                text.append("[Speaker \(speaker)]")
-                if token.text.first?.isWhitespace != true {
-                    text.append(" ")
-                }
+                appendSegment(
+                    text: &text,
+                    speakerID: currentSpeaker,
+                    to: &segments
+                )
                 currentSpeaker = speaker
             }
             text.append(token.text)
         }
 
-        return text
+        appendSegment(
+            text: &text,
+            speakerID: currentSpeaker,
+            to: &segments
+        )
+        return segments
+    }
+
+    private static func appendSegment(
+        text: inout String,
+        speakerID: String?,
+        to segments: inout [CaptionSegment]
+    ) {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleaned.isEmpty {
+            segments.append(
+                CaptionSegment(text: cleaned, speakerID: speakerID)
+            )
+        }
+        text = ""
     }
 
     private static func normalizedSpeaker(_ speaker: String?) -> String? {

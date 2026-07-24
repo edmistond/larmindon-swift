@@ -4,6 +4,7 @@ public struct CaptionDisplayView: View {
     public let lines: [CaptionLine]
     public let fontSize: Double
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var isPinnedToBottom = true
 
     private let bottomSentinelID = "caption-bottom-sentinel"
@@ -30,7 +31,16 @@ public struct CaptionDisplayView: View {
                                     .foregroundStyle(line.isVolatile ? .secondary : .primary)
                                     .font(.system(size: fontSize, weight: .regular, design: .default))
                                     .textSelection(.enabled)
+                                    .padding(
+                                        .horizontal,
+                                        line.speakerID == nil ? 0 : 10
+                                    )
                                     .frame(maxWidth: .infinity, alignment: .leading)
+                                    .overlay {
+                                        if let speakerID = line.speakerID {
+                                            speakerBars(for: speakerID)
+                                        }
+                                    }
                                     .id(line.id)
                             }
                         }
@@ -113,6 +123,62 @@ public struct CaptionDisplayView: View {
             }
         }
     }
+
+    private func speakerBars(for speakerID: String) -> some View {
+        HStack(spacing: 0) {
+            speakerBar(for: speakerID)
+            Spacer(minLength: 0)
+            speakerBar(for: speakerID)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func speakerBar(for speakerID: String) -> some View {
+        RoundedRectangle(cornerRadius: 2)
+            .fill(SpeakerColor.color(for: speakerID, scheme: colorScheme))
+            .frame(width: 3)
+            .padding(.vertical, 2)
+    }
+}
+
+private enum SpeakerColor {
+    static func color(for speakerID: String, scheme: ColorScheme) -> Color {
+        let palette =
+            scheme == .dark
+            ? [
+                Color(red: 0.35, green: 0.65, blue: 1.00),
+                Color(red: 1.00, green: 0.58, blue: 0.24),
+                Color(red: 0.35, green: 0.80, blue: 0.48),
+                Color(red: 1.00, green: 0.42, blue: 0.70),
+                Color(red: 0.70, green: 0.55, blue: 1.00),
+                Color(red: 0.25, green: 0.80, blue: 0.82),
+            ]
+            : [
+                Color(red: 0.08, green: 0.42, blue: 0.82),
+                Color(red: 0.85, green: 0.36, blue: 0.04),
+                Color(red: 0.08, green: 0.55, blue: 0.25),
+                Color(red: 0.72, green: 0.15, blue: 0.48),
+                Color(red: 0.42, green: 0.25, blue: 0.78),
+                Color(red: 0.00, green: 0.50, blue: 0.52),
+            ]
+
+        return palette[paletteIndex(for: speakerID, count: palette.count)]
+    }
+
+    private static func paletteIndex(
+        for speakerID: String,
+        count: Int
+    ) -> Int {
+        if let numericID = Int(speakerID), numericID > 0 {
+            return (numericID - 1) % count
+        }
+
+        let stableHash = speakerID.unicodeScalars.reduce(0) {
+            (($0 * 31) + Int($1.value)) % count
+        }
+        return stableHash
+    }
 }
 
 private struct CaptionScrollSignature: Equatable {
@@ -138,9 +204,24 @@ private struct CaptionScrollGeometry: Equatable {
 #Preview("Captions") {
     CaptionDisplayView(
         lines: [
-            .finalized(TranscriptChunk(text: "Welcome to the meeting, everyone.")),
-            .finalized(TranscriptChunk(text: "Today we're covering the quarterly results and the roadmap.")),
-            .volatile(VolatileCaption(text: "And then we'll move on to the open questions…")),
+            .finalized(
+                TranscriptChunk(
+                    text: "Welcome to the meeting, everyone.",
+                    speakerID: "1"
+                )
+            ),
+            .finalized(
+                TranscriptChunk(
+                    text: "Today we're covering the quarterly results and the roadmap.",
+                    speakerID: "2"
+                )
+            ),
+            .volatile(
+                VolatileCaption(
+                    text: "And then we'll move on to the open questions…",
+                    speakerID: "1"
+                )
+            ),
         ],
         fontSize: 30
     )

@@ -80,4 +80,31 @@ final class CaptionStoreTests: XCTestCase {
         XCTAssertEqual(lines.first?.text, "caption 0")
         XCTAssertEqual(lines.last?.text, "caption 39")
     }
+
+    func testSpeakerSegmentsRetainMetadataForFinalAndVolatileLines() {
+        let store = CaptionStore()
+
+        store.appendFinalized([
+            CaptionSegment(text: "First speaker", speakerID: "1"),
+            CaptionSegment(text: "Second speaker", speakerID: "2"),
+        ])
+        store.replaceVolatile([
+            CaptionSegment(text: "Live first speaker", speakerID: "1"),
+            CaptionSegment(text: "Live second speaker", speakerID: "2"),
+        ])
+
+        let lines = store.visibleCaptionLines()
+
+        XCTAssertEqual(
+            lines.map(\.text),
+            [
+                "First speaker",
+                "Second speaker",
+                "Live first speaker",
+                "Live second speaker",
+            ]
+        )
+        XCTAssertEqual(lines.map(\.speakerID), ["1", "2", "1", "2"])
+        XCTAssertEqual(lines.map(\.isVolatile), [false, false, true, true])
+    }
 }

@@ -5,7 +5,7 @@ import Observation
 @Observable
 public final class CaptionStore {
     public private(set) var finalizedChunks: [TranscriptChunk]
-    public private(set) var volatileTail: VolatileCaption?
+    public private(set) var volatileCaptions: [VolatileCaption]
     public var isRunning: Bool
 
     public init(
@@ -14,29 +14,52 @@ public final class CaptionStore {
         isRunning: Bool = false
     ) {
         self.finalizedChunks = finalizedChunks
-        self.volatileTail = volatileTail
+        self.volatileCaptions = volatileTail.map { [$0] } ?? []
         self.isRunning = isRunning
+    }
+
+    public var volatileTail: VolatileCaption? {
+        volatileCaptions.last
     }
 
     public func clear() {
         finalizedChunks.removeAll()
-        volatileTail = nil
+        volatileCaptions.removeAll()
     }
 
     public func replaceVolatile(_ text: String) {
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        volatileTail = cleaned.isEmpty ? nil : VolatileCaption(text: cleaned)
+        replaceVolatile([CaptionSegment(text: text)])
+    }
+
+    public func replaceVolatile(_ segments: [CaptionSegment]) {
+        volatileCaptions = cleanedSegments(segments).enumerated().map {
+            index,
+            segment in
+            VolatileCaption(
+                id: "volatile-\(index)",
+                text: segment.text,
+                speakerID: segment.speakerID
+            )
+        }
     }
 
     public func appendFinalized(_ text: String) {
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        appendFinalized([CaptionSegment(text: text)])
+    }
+
+    public func appendFinalized(_ segments: [CaptionSegment]) {
+        let cleaned = cleanedSegments(segments)
         guard !cleaned.isEmpty else {
-            volatileTail = nil
+            volatileCaptions.removeAll()
             return
         }
 
-        finalizedChunks.append(TranscriptChunk(text: cleaned))
-        volatileTail = nil
+        finalizedChunks.append(
+            contentsOf: cleaned.map {
+                TranscriptChunk(text: $0.text, speakerID: $0.speakerID)
+            }
+        )
+        volatileCaptions.removeAll()
     }
 
     public var fullFinalizedTranscript: String {
@@ -56,9 +79,21 @@ public final class CaptionStore {
         }
 
         let finalized = visibleFinalizedChunks.map(CaptionLine.finalized)
-        if let volatileTail {
-            return finalized + [.volatile(volatileTail)]
+        return finalized + volatileCaptions.map(CaptionLine.volatile)
+    }
+
+    private func cleanedSegments(
+        _ segments: [CaptionSegment]
+    ) -> [CaptionSegment] {
+        segments.compactMap { segment in
+            let cleaned = segment.text.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            guard !cleaned.isEmpty else { return nil }
+            return CaptionSegment(
+                text: cleaned,
+                speakerID: segment.speakerID
+            )
         }
-        return Array(finalized)
     }
 }

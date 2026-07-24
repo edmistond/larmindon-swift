@@ -38,7 +38,12 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
             )
         )
         let result = await resultIterator.next()
-        XCTAssertEqual(result, .finalized("[Speaker 1] Hello"))
+        XCTAssertEqual(
+            result,
+            .finalizedSegments([
+                CaptionSegment(text: "Hello", speakerID: "1")
+            ])
+        )
 
         frameContinuation.finish()
         let stopTask = Task {
@@ -60,7 +65,7 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         XCTAssertEqual(closeCodes.last, .normalClosure)
     }
 
-    func testSpeakerLabelsFollowTokenSpeakerBoundaries() throws {
+    func testSpeakerSegmentsFollowTokenSpeakerBoundaries() throws {
         let tokens = try decodeTokens(
             """
             [
@@ -74,15 +79,18 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            SonioxSpeakerLabelFormatter.format(tokens: tokens),
-            """
-            [Speaker 1] Hello there.
-            [Speaker 2] Hi again. Unassigned.
-            """
+            SonioxSpeakerSegmentFormatter.segments(tokens: tokens),
+            [
+                CaptionSegment(text: "Hello there.", speakerID: "1"),
+                CaptionSegment(
+                    text: "Hi again. Unassigned.",
+                    speakerID: "2"
+                ),
+            ]
         )
     }
 
-    func testSpeakerLabelFormatterLeavesUndiarizedTextUnchanged() throws {
+    func testSpeakerSegmentFormatterLeavesUndiarizedTextUnchanged() throws {
         let tokens = try decodeTokens(
             """
             [
@@ -94,12 +102,12 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            SonioxSpeakerLabelFormatter.format(tokens: tokens),
-            "No speaker metadata"
+            SonioxSpeakerSegmentFormatter.segments(tokens: tokens),
+            [CaptionSegment(text: "No speaker metadata")]
         )
     }
 
-    func testSpeakerLabelFormatterNormalizesProviderSpeakerID() throws {
+    func testSpeakerSegmentFormatterNormalizesProviderSpeakerID() throws {
         let tokens = try decodeTokens(
             """
             [
@@ -109,8 +117,8 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            SonioxSpeakerLabelFormatter.format(tokens: tokens),
-            "[Speaker 7] Hello"
+            SonioxSpeakerSegmentFormatter.segments(tokens: tokens),
+            [CaptionSegment(text: "Hello", speakerID: "7")]
         )
     }
 
