@@ -1,3 +1,4 @@
+import AVFAudio
 import Foundation
 import Observation
 
@@ -7,8 +8,12 @@ public final class CaptionSession {
     public let store: CaptionStore
     public let routeManager: AudioRouteManager
     public let microphoneCapabilities: MicrophoneCapabilityMonitor
+    public let diagnostics: DiagnosticRecorder
 
     public private(set) var selectedSourceKind: TranscriptionSourceKind
+    public private(set) var requestedMode: TranscriptionMode
+    public private(set) var activeMode: TranscriptionMode?
+    public private(set) var activeServerProvider: ServerProviderID?
     public private(set) var speechAnalyzerState = "Idle"
     public private(set) var lastError: String?
     public private(set) var lastVolatileResult: String = ""
@@ -21,30 +26,53 @@ public final class CaptionSession {
     public private(set) var microphoneConfigurationError: String?
 
     private var activeSource: TranscriptionSource?
+    private var activeCapture: AudioCaptureSession?
     private var resultTask: Task<Void, Never>?
     private var levelTask: Task<Void, Never>?
+    private var captureLevelTask: Task<Void, Never>?
     private var vadSensitivity: VADSensitivity
     private var audioBufferFrameCount: Int
     private var profanityFilterEnabled: Bool
     private var audioRouteRecoveryTask: Task<Void, Never>?
+    private var transitionTask: Task<Void, Never>?
+    private var transitionGeneration = 0
+    private let credentialStore: any ProviderCredentialStore
+    private let networkPathMonitor: NetworkPathDiagnosticMonitor
 
     public init(
         store: CaptionStore = CaptionStore(),
         routeManager: AudioRouteManager = AudioRouteManager(),
         selectedSourceKind: TranscriptionSourceKind = .live,
+        requestedMode: TranscriptionMode = .onDevice,
         vadSensitivity: VADSensitivity = .medium,
         audioBufferFrameCount: Int = AudioCaptureBufferFrames.defaultValue,
         voiceProcessingEnabled: Bool = VoiceProcessingPreference.defaultValue,
-        profanityFilterEnabled: Bool = false
+        profanityFilterEnabled: Bool = false,
+        diagnostics: DiagnosticRecorder = .shared,
+        credentialStore: any ProviderCredentialStore =
+            KeychainProviderCredentialStore()
     ) {
         self.store = store
         self.routeManager = routeManager
+        self.diagnostics = diagnostics
+        self.credentialStore = credentialStore
+        self.networkPathMonitor = NetworkPathDiagnosticMonitor(
+            recorder: diagnostics
+        )
         self.microphoneCapabilities = MicrophoneCapabilityMonitor(routeManager: routeManager)
         self.selectedSourceKind = selectedSourceKind
+        self.requestedMode = requestedMode
         self.vadSensitivity = vadSensitivity
         self.audioBufferFrameCount = AudioCaptureBufferFrames.clamped(audioBufferFrameCount)
         self.requestedVoiceProcessingEnabled = voiceProcessingEnabled
         self.profanityFilterEnabled = profanityFilterEnabled
+
+        routeManager.onRouteChange = { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                await self.recordCurrentAudioRoute(reason: "route_change")
+            }
+        }
 
         #if os(macOS)
         routeManager.onInputAvailabilityChange = { [weak self] change in
@@ -55,13 +83,16 @@ public final class CaptionSession {
 
     public func start(
         kind: TranscriptionSourceKind? = nil,
+        mode: TranscriptionMode? = nil,
         vadSensitivity: VADSensitivity? = nil,
         audioBufferFrameCount: Int? = nil,
         voiceProcessingEnabled: Bool? = nil,
         profanityFilterEnabled: Bool? = nil
     ) {
         let sourceKind = kind ?? selectedSourceKind
+        let requestedMode = mode ?? self.requestedMode
         selectedSourceKind = sourceKind
+        self.requestedMode = requestedMode
         if let vadSensitivity {
             self.vadSensitivity = vadSensitivity
         }
@@ -75,15 +106,48 @@ public final class CaptionSession {
             self.profanityFilterEnabled = profanityFilterEnabled
         }
 
-        Task {
-            await stop()
+        transitionGeneration += 1
+        let generation = transitionGeneration
+        transitionTask?.cancel()
+        transitionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await performStart(
+                sourceKind: sourceKind,
+                mode: requestedMode,
+                generation: generation
+            )
+        }
+    }
 
-            let source: TranscriptionSource = makeSource(kind: sourceKind)
+    private func performStart(
+        sourceKind: TranscriptionSourceKind,
+        mode: TranscriptionMode,
+        generation: Int
+    ) async {
+        await stopActive(cancelAudioRouteRecovery: true)
+        guard generation == transitionGeneration, !Task.isCancelled else {
+            return
+        }
+
+        do {
+            let source = try makeSource(kind: sourceKind, mode: mode)
             activeSource = source
             activeAudioBufferFrameCount = sourceKind == .live ? self.audioBufferFrameCount : nil
             store.isRunning = true
             lastError = nil
             speechAnalyzerState = "Starting \(source.name)"
+            activeMode = nil
+            activeServerProvider = nil
+
+            await diagnostics.record(
+                category: "state",
+                name: "transcription_starting",
+                fields: [
+                    "requested_mode": mode.rawValue,
+                    "source": source.name,
+                    "generation": String(generation),
+                ]
+            )
 
             resultTask = Task { @MainActor [weak self, source] in
                 for await result in source.results {
@@ -97,63 +161,132 @@ public final class CaptionSession {
                 }
             }
 
-            do {
-                if sourceKind == .live {
-                    adoptMicrophoneConfigurationForCurrentInput()
-                    try await routeManager.configureForCapture(
-                        configuration: microphoneConfiguration,
-                        voiceProcessingEnabled: requestedVoiceProcessingEnabled
-                    )
+            if sourceKind == .live {
+                adoptMicrophoneConfigurationForCurrentInput()
+                try await routeManager.configureForCapture(
+                    configuration: microphoneConfiguration,
+                    voiceProcessingEnabled: requestedVoiceProcessingEnabled
+                )
+                await recordCurrentAudioRoute(reason: "capture_start")
+            }
+
+            if sourceKind == .live, mode == .server,
+               let sonioxSource = source as? SonioxTranscriptionSource {
+                let capture = AudioCaptureSession(
+                    inputDeviceID: routeManager.preferredInputDeviceID,
+                    bufferFrameCount: audioBufferFrameCount,
+                    voiceProcessingEnabled: requestedVoiceProcessingEnabled,
+                    diagnostics: diagnostics
+                )
+                activeCapture = capture
+                captureLevelTask = Task {
+                    for await snapshot in capture.levelUpdates {
+                        self.audioLevels = snapshot
+                    }
                 }
+                try await sonioxSource.start(
+                    audioFrames: capture.frames
+                )
+                guard generation == transitionGeneration,
+                      !Task.isCancelled else {
+                    await sonioxSource.stop()
+                    return
+                }
+                try await capture.start()
+                activeVoiceProcessingEnabled =
+                    capture.activeVoiceProcessingEnabled
+                activeServerProvider = .soniox
+            } else {
                 try await source.start()
                 if let source = source as? LiveSpeechAnalyzerTranscriptionSource {
                     activeVoiceProcessingEnabled = source.activeVoiceProcessingEnabled
                 }
-                speechAnalyzerState = "Running \(source.name)"
-                microphoneCapabilities.refresh()
-            } catch {
-                lastError = error.localizedDescription
-                speechAnalyzerState = "Error"
-                store.isRunning = false
-                await source.stop()
-                routeManager.releaseAudioSession()
-                activeSource = nil
-                activeAudioBufferFrameCount = nil
-                activeVoiceProcessingEnabled = nil
-                resultTask?.cancel()
-                resultTask = nil
-                levelTask?.cancel()
-                levelTask = nil
-                microphoneCapabilities.refresh()
             }
+
+            guard generation == transitionGeneration,
+                  !Task.isCancelled else {
+                await stopActive(cancelAudioRouteRecovery: true)
+                return
+            }
+            activeMode = mode
+            speechAnalyzerState = "Running \(source.name)"
+            microphoneCapabilities.refresh()
+            await diagnostics.record(
+                category: "state",
+                name: "transcription_running",
+                fields: [
+                    "active_mode": mode.rawValue,
+                    "provider":
+                        activeServerProvider?.rawValue ?? "apple",
+                ]
+            )
+        } catch {
+            lastError = error.localizedDescription
+            speechAnalyzerState = "Error"
+            await diagnostics.record(
+                category: "error",
+                name: "transcription_start_failed",
+                fields: [
+                    "requested_mode": mode.rawValue,
+                    "message": error.localizedDescription,
+                ]
+            )
+            await stopActive(cancelAudioRouteRecovery: true)
+            requestedMode = mode
+            speechAnalyzerState = "Error"
+            lastError = error.localizedDescription
         }
     }
 
     public func stop() async {
-        await stop(cancelAudioRouteRecovery: true)
+        transitionGeneration += 1
+        transitionTask?.cancel()
+        transitionTask = nil
+        await stopActive(cancelAudioRouteRecovery: true)
     }
 
-    private func stop(cancelAudioRouteRecovery: Bool) async {
+    private func stopActive(cancelAudioRouteRecovery: Bool) async {
         if cancelAudioRouteRecovery {
             audioRouteRecoveryTask?.cancel()
             audioRouteRecoveryTask = nil
+        }
+        captureLevelTask?.cancel()
+        captureLevelTask = nil
+
+        if let activeCapture {
+            await activeCapture.stop()
+        }
+        activeCapture = nil
+        if let activeSource {
+            await activeSource.stop()
         }
         resultTask?.cancel()
         resultTask = nil
         levelTask?.cancel()
         levelTask = nil
-
-        if let activeSource {
-            await activeSource.stop()
-        }
         routeManager.releaseAudioSession()
         activeSource = nil
         activeAudioBufferFrameCount = nil
         activeVoiceProcessingEnabled = nil
+        activeMode = nil
+        activeServerProvider = nil
         store.isRunning = false
         speechAnalyzerState = "Stopped"
         audioLevels = AudioLevelSnapshot()
         microphoneCapabilities.refresh()
+        await diagnostics.record(
+            category: "state",
+            name: "transcription_stopped",
+            fields: ["requested_mode": requestedMode.rawValue]
+        )
+    }
+
+    public func requestMode(_ mode: TranscriptionMode) {
+        let didChange = requestedMode != mode
+        requestedMode = mode
+        if store.isRunning, didChange || activeMode != mode {
+            start(kind: selectedSourceKind, mode: mode)
+        }
     }
 
     public func inputSelectionDidChange() {
@@ -162,7 +295,7 @@ public final class CaptionSession {
         microphoneCapabilities.refresh()
 
         if store.isRunning, selectedSourceKind == .live {
-            start(kind: selectedSourceKind)
+            start(kind: selectedSourceKind, mode: requestedMode)
         }
     }
 
@@ -229,7 +362,7 @@ public final class CaptionSession {
             microphoneCapabilities.refresh()
 
             if shouldRestart {
-                start(kind: selectedSourceKind)
+                start(kind: selectedSourceKind, mode: requestedMode)
             }
             return true
         } catch {
@@ -238,24 +371,42 @@ public final class CaptionSession {
             microphoneCapabilities.refresh()
 
             if shouldRestart {
-                start(kind: selectedSourceKind)
+                start(kind: selectedSourceKind, mode: requestedMode)
             }
             return false
         }
     }
 
-    private func makeSource(kind: TranscriptionSourceKind) -> TranscriptionSource {
+    private func makeSource(
+        kind: TranscriptionSourceKind,
+        mode: TranscriptionMode
+    ) throws -> TranscriptionSource {
         switch kind {
         case .fake:
             return FakeTranscriptionSource()
         case .live:
-            return LiveSpeechAnalyzerTranscriptionSource(
-                sensitivity: vadSensitivity,
-                inputDeviceID: routeManager.preferredInputDeviceID,
-                bufferFrameCount: audioBufferFrameCount,
-                voiceProcessingEnabled: requestedVoiceProcessingEnabled,
-                profanityFilterEnabled: profanityFilterEnabled
-            )
+            switch mode {
+            case .onDevice:
+                return LiveSpeechAnalyzerTranscriptionSource(
+                    sensitivity: vadSensitivity,
+                    inputDeviceID: routeManager.preferredInputDeviceID,
+                    bufferFrameCount: audioBufferFrameCount,
+                    voiceProcessingEnabled: requestedVoiceProcessingEnabled,
+                    profanityFilterEnabled: profanityFilterEnabled
+                )
+            case .server:
+                guard let key = try credentialStore.credential(
+                    for: .soniox
+                ), !key.isEmpty else {
+                    throw TranscriptionSourceError.unavailable(
+                        "Soniox API key not configured. Add it in Settings."
+                    )
+                }
+                return SonioxTranscriptionSource(
+                    apiKey: key,
+                    diagnostics: diagnostics
+                )
+            }
         }
     }
 
@@ -309,7 +460,67 @@ public final class CaptionSession {
             store.replaceVolatile(text)
         case .finalized(let text):
             store.appendFinalized(text)
+        case .failure(let message):
+            lastError = message
+            speechAnalyzerState = "Error"
+            scheduleFailureStop()
         }
+    }
+
+    private func scheduleFailureStop() {
+        transitionGeneration += 1
+        transitionTask?.cancel()
+        transitionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await stopActive(cancelAudioRouteRecovery: true)
+            speechAnalyzerState = "Error"
+        }
+    }
+
+    private func recordCurrentAudioRoute(reason: String) async {
+        routeManager.refresh()
+        var fields = [
+            "requested_input":
+                DiagnosticRedaction.identifier(
+                    microphoneConfiguration.inputPortID
+                ),
+            "preferred_input":
+                DiagnosticRedaction.identifier(
+                    routeManager.preferredInputID
+                ),
+            "active_input":
+                DiagnosticRedaction.identifier(
+                    routeManager.currentRouteInputs.first?.id
+                ),
+            "active_input_kind":
+                routeManager.currentRouteInputs.first?.kind ?? "none",
+            "outputs": routeManager.currentRouteOutputs
+                .map {
+                    "\(DiagnosticRedaction.identifier($0.id)):\($0.kind)"
+                }
+                .joined(separator: ","),
+            "reason": reason,
+            "mismatch": String(
+                microphoneConfiguration.inputPortID != nil
+                    && microphoneConfiguration.inputPortID
+                        != routeManager.currentRouteInputs.first?.id
+            ),
+        ]
+        #if os(iOS)
+        let audioSession = AVAudioSession.sharedInstance()
+        fields["category"] = audioSession.category.rawValue
+        fields["mode"] = audioSession.mode.rawValue
+        fields["category_options"] =
+            String(audioSession.categoryOptions.rawValue)
+        fields["sample_rate"] = String(audioSession.sampleRate)
+        fields["io_buffer_duration"] =
+            String(audioSession.ioBufferDuration)
+        #endif
+        await diagnostics.record(
+            category: "audio_route",
+            name: "capture_route",
+            fields: fields
+        )
     }
 
     #if os(macOS)
@@ -322,11 +533,11 @@ public final class CaptionSession {
             switch change {
             case .selectedInputRemainsAvailable:
                 let sourceKind = selectedSourceKind
-                await stop(cancelAudioRouteRecovery: false)
+                await stopActive(cancelAudioRouteRecovery: false)
                 guard !Task.isCancelled else { return }
-                start(kind: sourceKind)
+                start(kind: sourceKind, mode: requestedMode)
             case .selectedInputUnavailable(let name):
-                await stop(cancelAudioRouteRecovery: false)
+                await stopActive(cancelAudioRouteRecovery: false)
                 lastError = "The selected audio input “\(name)” disconnected. Captions stopped."
                 speechAnalyzerState = "Input disconnected"
             }

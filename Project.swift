@@ -11,7 +11,7 @@ let appSettings: SettingsDictionary = [
 
 let sharedPrivacyPlist: [String: Plist.Value] = [
     "CFBundleDisplayName": "Larmindon",
-    "NSMicrophoneUsageDescription": "Larmindon uses the microphone to generate on-device live captions.",
+    "NSMicrophoneUsageDescription": "Larmindon captures microphone audio for live captions. Audio stays on device in On-device mode and is sent to the selected provider only in Server mode.",
     "NSSpeechRecognitionUsageDescription": "Larmindon uses Apple Speech APIs to transcribe live microphone audio on device.",
 ]
 
@@ -54,6 +54,8 @@ let project = Project(
             dependencies: [
                 .sdk(name: "AVFAudio", type: .framework),
                 .sdk(name: "AVKit", type: .framework),
+                .sdk(name: "Network", type: .framework),
+                .sdk(name: "Security", type: .framework),
                 .sdk(name: "Speech", type: .framework),
             ]
         ),

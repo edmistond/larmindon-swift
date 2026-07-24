@@ -36,6 +36,7 @@ public final class AudioRouteManager {
     public private(set) var currentRouteInputs: [AudioRoutePort] = []
     public private(set) var currentRouteOutputs: [AudioRoutePort] = []
     public var onInputAvailabilityChange: (@MainActor @Sendable (AudioInputAvailabilityChange) -> Void)?
+    public var onRouteChange: (@MainActor @Sendable () -> Void)?
 
     #if os(macOS)
     private var deviceObservation: MacAudioDeviceObservation?
@@ -241,6 +242,7 @@ public final class AudioRouteManager {
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.refresh()
+                self?.onRouteChange?()
             }
         }
         #elseif os(macOS)
@@ -273,6 +275,7 @@ public final class AudioRouteManager {
         )
 
         refresh()
+        onRouteChange?()
         if let change {
             onInputAvailabilityChange?(change)
         }

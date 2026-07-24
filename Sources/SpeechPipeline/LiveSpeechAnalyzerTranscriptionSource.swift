@@ -920,7 +920,7 @@ private extension CMTimeRange {
     }
 }
 
-private extension AVAudioPCMBuffer {
+extension AVAudioPCMBuffer {
     func copyPCMBuffer() -> AVAudioPCMBuffer? {
         guard let copy = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameLength) else {
             return nil

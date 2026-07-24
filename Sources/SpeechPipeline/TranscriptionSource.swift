@@ -3,6 +3,7 @@ import Foundation
 public enum CaptionResult: Equatable, Sendable {
     case volatile(String)
     case finalized(String)
+    case failure(String)
 }
 
 @MainActor

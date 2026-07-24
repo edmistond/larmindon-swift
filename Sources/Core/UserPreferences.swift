@@ -88,6 +88,40 @@ public enum TranscriptionSourceKind: String, CaseIterable, Identifiable {
     }
 }
 
+public enum TranscriptionMode: String, CaseIterable, Identifiable, Codable, Sendable {
+    case onDevice
+    case server
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .onDevice:
+            return "On-device"
+        case .server:
+            return "Soniox"
+        }
+    }
+}
+
+public enum ServerProviderID: String, CaseIterable, Identifiable, Codable, Sendable {
+    case soniox
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .soniox:
+            return "Soniox"
+        }
+    }
+}
+
+public enum TranscriptionPreference {
+    public static let modeStorageKey = "transcriptionMode"
+    public static let activeServerProviderStorageKey = "activeServerProvider"
+}
+
 public enum VADSensitivity: String, CaseIterable, Identifiable {
     case low
     case medium

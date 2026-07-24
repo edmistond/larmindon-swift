@@ -20,7 +20,8 @@ public struct LarmindonRootView: View {
         #endif
     }()
     @AppStorage("appearancePreference") private var appearancePreferenceRaw = AppearancePreference.system.rawValue
-    @AppStorage("transcriptionSourceKind") private var sourceKindRaw = TranscriptionSourceKind.live.rawValue
+    @AppStorage(TranscriptionPreference.modeStorageKey)
+    private var transcriptionModeRaw = TranscriptionMode.onDevice.rawValue
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
     @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
     @AppStorage(VoiceProcessingPreference.storageKey)
@@ -44,11 +45,22 @@ public struct LarmindonRootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(rootBackground)
             }
-            .navigationTitle("Larmindon")
+            .navigationTitle("")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Picker("Transcription mode", selection: $transcriptionModeRaw) {
+                        ForEach(TranscriptionMode.allCases) { mode in
+                            Text(mode.title).tag(mode.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 260)
+                    .accessibilityLabel("Transcription mode")
+                }
+
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button {
                         presentSettings()
@@ -92,9 +104,13 @@ public struct LarmindonRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             session.setVoiceProcessingPreference(voiceProcessingEnabled)
+            session.requestMode(transcriptionMode)
         }
         .onChange(of: voiceProcessingEnabled) { _, newValue in
             session.setVoiceProcessingPreference(newValue)
+        }
+        .onChange(of: transcriptionModeRaw) {
+            session.requestMode(transcriptionMode)
         }
     }
 
@@ -177,12 +193,12 @@ public struct LarmindonRootView: View {
                     .fill(session.store.isRunning ? Color.green : Color.secondary.opacity(0.45))
                     .frame(width: 8, height: 8)
 
-                Text(session.store.isRunning ? "Listening" : "Ready")
+                Text(modeStatusText)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(session.store.isRunning ? "Captioning is active" : "Captioning is ready")
+            .accessibilityLabel(modeStatusText)
 
             AudioLevelBar(
                 level: session.audioLevels.rawInputLevel,
@@ -244,7 +260,8 @@ public struct LarmindonRootView: View {
                 Task { await session.stop() }
             } else {
                 session.start(
-                    kind: sourceKind,
+                    kind: .live,
+                    mode: transcriptionMode,
                     vadSensitivity: vadSensitivity,
                     audioBufferFrameCount: audioBufferFrameCount,
                     voiceProcessingEnabled: voiceProcessingEnabled,
@@ -259,6 +276,9 @@ public struct LarmindonRootView: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(session.store.isRunning ? .red : appearancePreference.tintColor)
+        .disabled(
+            !session.store.isRunning && !isSelectedModeConfigured
+        )
     }
 
     private var clearButton: some View {
@@ -315,8 +335,30 @@ public struct LarmindonRootView: View {
         AppearancePreference(rawValue: appearancePreferenceRaw) ?? .system
     }
 
-    private var sourceKind: TranscriptionSourceKind {
-        TranscriptionSourceKind(rawValue: sourceKindRaw) ?? .fake
+    private var transcriptionMode: TranscriptionMode {
+        TranscriptionMode(rawValue: transcriptionModeRaw) ?? .onDevice
+    }
+
+    private var modeStatusText: String {
+        if session.store.isRunning {
+            if let activeMode = session.activeMode {
+                return "Listening · \(activeMode.title)"
+            }
+            return "Switching to \(session.requestedMode.title)…"
+        }
+        if session.speechAnalyzerState == "Error" {
+            return "Stopped · \(session.requestedMode.title)"
+        }
+        if !isSelectedModeConfigured {
+            return "Soniox key required"
+        }
+        return "Ready · \(session.requestedMode.title)"
+    }
+
+    private var isSelectedModeConfigured: Bool {
+        transcriptionMode != .server
+            || KeychainProviderCredentialStore()
+                .hasCredential(for: .soniox)
     }
 
     private var vadSensitivity: VADSensitivity {

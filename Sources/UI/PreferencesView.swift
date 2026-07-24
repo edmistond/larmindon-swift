@@ -3,12 +3,18 @@ import SwiftUI
 public struct PreferencesView: View {
     @AppStorage("captionFontSize") private var captionFontSize = defaultCaptionFontSize
     @AppStorage("appearancePreference") private var appearancePreferenceRaw = AppearancePreference.system.rawValue
-    @AppStorage("transcriptionSourceKind") private var sourceKindRaw = TranscriptionSourceKind.live.rawValue
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
     @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
     @AppStorage(VoiceProcessingPreference.storageKey)
     private var voiceProcessingEnabled = VoiceProcessingPreference.defaultValue
     @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
+    @AppStorage(TranscriptionPreference.activeServerProviderStorageKey)
+    private var activeServerProviderRaw = ServerProviderID.soniox.rawValue
+
+    @State private var sonioxAPIKey = ""
+    @State private var hasSonioxCredential = false
+    @State private var credentialMessage: String?
+    private let credentialStore = KeychainProviderCredentialStore()
 
     #if os(iOS)
     @AppStorage("showDebugPanel") private var showDebugPanel = false
@@ -38,13 +44,7 @@ public struct PreferencesView: View {
             }
 
             Section("Transcription") {
-                Picker("Source", selection: $sourceKindRaw) {
-                    ForEach(TranscriptionSourceKind.allCases) { source in
-                        Text(source.title).tag(source.rawValue)
-                    }
-                }
-
-                Picker("VAD sensitivity", selection: $vadSensitivityRaw) {
+                Picker("On-device VAD sensitivity", selection: $vadSensitivityRaw) {
                     ForEach(VADSensitivity.allCases) { sensitivity in
                         Text(sensitivity.title).tag(sensitivity.rawValue)
                     }
@@ -79,8 +79,8 @@ public struct PreferencesView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Toggle("Filter profanity", isOn: $profanityFilterEnabled)
-                Text("Replaces profane words with a milder form. Takes effect the next time captioning starts.")
+                Toggle("Filter profanity on device", isOn: $profanityFilterEnabled)
+                Text("Replaces profane words in Apple’s on-device results. Takes effect the next time on-device captioning starts.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -88,14 +88,99 @@ public struct PreferencesView: View {
                 Toggle("Show debug panel", isOn: $showDebugPanel)
                 #endif
             }
+
+            Section("Server Transcription") {
+                Picker("Provider", selection: $activeServerProviderRaw) {
+                    ForEach(ServerProviderID.allCases) { provider in
+                        Text(provider.title).tag(provider.rawValue)
+                    }
+                }
+
+                SecureField("Soniox API key", text: $sonioxAPIKey)
+                    .textContentType(.password)
+                    .privacySensitive()
+
+                HStack {
+                    Button(hasSonioxCredential ? "Replace Key" : "Save Key") {
+                        saveSonioxCredential()
+                    }
+                    .disabled(
+                        sonioxAPIKey.trimmingCharacters(
+                            in: .whitespacesAndNewlines
+                        ).isEmpty
+                    )
+
+                    if hasSonioxCredential {
+                        Button("Remove Key", role: .destructive) {
+                            removeSonioxCredential()
+                        }
+                    }
+                }
+
+                if let credentialMessage {
+                    Text(credentialMessage)
+                        .font(.caption)
+                        .foregroundStyle(
+                            hasSonioxCredential
+                                ? Color.secondary
+                                : Color.red
+                        )
+                } else {
+                    Text(
+                        hasSonioxCredential
+                            ? "A Soniox key is stored in Keychain. The saved value is never displayed."
+                            : "A key is required before Soniox captioning can start."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                Text(
+                    "The key is sent only in Soniox’s initial WebSocket configuration. It is not stored in UserDefaults or included in diagnostics."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .onAppear {
             normalizeAudioBufferFrameCount()
+            refreshCredentialState()
         }
         .onChange(of: audioBufferFrameCount) {
             normalizeAudioBufferFrameCount()
         }
+    }
+
+    private func saveSonioxCredential() {
+        do {
+            try credentialStore.saveCredential(
+                sonioxAPIKey,
+                for: .soniox
+            )
+            sonioxAPIKey = ""
+            hasSonioxCredential = true
+            credentialMessage =
+                "Key saved. It will be validated on the first Soniox connection."
+        } catch {
+            refreshCredentialState()
+            credentialMessage = error.localizedDescription
+        }
+    }
+
+    private func removeSonioxCredential() {
+        do {
+            try credentialStore.removeCredential(for: .soniox)
+            sonioxAPIKey = ""
+            hasSonioxCredential = false
+            credentialMessage = "Soniox key removed."
+        } catch {
+            credentialMessage = error.localizedDescription
+        }
+    }
+
+    private func refreshCredentialState() {
+        hasSonioxCredential = credentialStore.hasCredential(for: .soniox)
     }
 
     private var audioBufferFrameCountBinding: Binding<Double> {
