@@ -58,6 +58,13 @@ Profile refresh requires an Apple account to be signed in under Xcode Settings
 > Accounts so `xcodebuild` can request the replacement from Apple. If issuance
 or the build fails, the script restores the previous cached profile.
 
+Inspect the current cached profile and compare it with the profile embedded in
+the most recent device build:
+
+```bash
+./scripts/show-ios-profile.sh
+```
+
 ## Install a macOS Release Build
 
 Build the macOS app in Release configuration and replace the copy installed at
