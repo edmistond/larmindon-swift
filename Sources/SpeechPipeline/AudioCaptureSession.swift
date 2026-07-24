@@ -124,10 +124,9 @@ public final class AudioCaptureSession {
             inputNode.installTap(
                 onBus: 0,
                 bufferSize: bufferFrameCount,
-                format: captureFormat
-            ) { buffer, _ in
-                sink.handle(buffer)
-            }
+                format: captureFormat,
+                block: makeSharedAudioTapHandler(sink: sink)
+            )
             isTapInstalled = true
             try audioEngine.start()
         }
@@ -135,10 +134,9 @@ public final class AudioCaptureSession {
         inputNode.installTap(
             onBus: 0,
             bufferSize: bufferFrameCount,
-            format: captureFormat
-        ) { buffer, _ in
-            sink.handle(buffer)
-        }
+            format: captureFormat,
+            block: makeSharedAudioTapHandler(sink: sink)
+        )
         isTapInstalled = true
         try audioEngine.start()
         #endif
@@ -232,6 +230,17 @@ private struct SharedAudioCaptureSink: @unchecked Sendable {
                 dropped: false
             )
         }
+    }
+}
+
+// AVAudioEngine invokes tap blocks on a real-time audio queue. Constructing this
+// closure outside AudioCaptureSession prevents it from inheriting @MainActor
+// isolation and triggering Swift's runtime executor check on that queue.
+private func makeSharedAudioTapHandler(
+    sink: SharedAudioCaptureSink
+) -> (AVAudioPCMBuffer, AVAudioTime) -> Void {
+    { buffer, _ in
+        sink.handle(buffer)
     }
 }
 
