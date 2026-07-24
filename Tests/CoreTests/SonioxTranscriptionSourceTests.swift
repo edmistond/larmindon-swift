@@ -38,7 +38,7 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
             )
         )
         let result = await resultIterator.next()
-        XCTAssertEqual(result, .finalized("Hello"))
+        XCTAssertEqual(result, .finalized("[Speaker 1] Hello"))
 
         frameContinuation.finish()
         let stopTask = Task {
@@ -58,6 +58,67 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         XCTAssertEqual(completionFrames.last, Data())
         let closeCodes = await transport.closeCodes
         XCTAssertEqual(closeCodes.last, .normalClosure)
+    }
+
+    func testSpeakerLabelsFollowTokenSpeakerBoundaries() throws {
+        let tokens = try decodeTokens(
+            """
+            [
+              {"text":"Hello","is_final":true,"speaker":"1"},
+              {"text":" there.","is_final":true,"speaker":"1"},
+              {"text":"Hi","is_final":true,"speaker":"2"},
+              {"text":" again.","is_final":true,"speaker":"2"},
+              {"text":" Unassigned.","is_final":true}
+            ]
+            """
+        )
+
+        XCTAssertEqual(
+            SonioxSpeakerLabelFormatter.format(tokens: tokens),
+            """
+            [Speaker 1] Hello there.
+            [Speaker 2] Hi again. Unassigned.
+            """
+        )
+    }
+
+    func testSpeakerLabelFormatterLeavesUndiarizedTextUnchanged() throws {
+        let tokens = try decodeTokens(
+            """
+            [
+              {"text":"No","is_final":false},
+              {"text":" speaker","is_final":false},
+              {"text":" metadata","is_final":false}
+            ]
+            """
+        )
+
+        XCTAssertEqual(
+            SonioxSpeakerLabelFormatter.format(tokens: tokens),
+            "No speaker metadata"
+        )
+    }
+
+    func testSpeakerLabelFormatterNormalizesProviderSpeakerID() throws {
+        let tokens = try decodeTokens(
+            """
+            [
+              {"text":"Hello","is_final":false,"speaker":" 7 "}
+            ]
+            """
+        )
+
+        XCTAssertEqual(
+            SonioxSpeakerLabelFormatter.format(tokens: tokens),
+            "[Speaker 7] Hello"
+        )
+    }
+
+    private func decodeTokens(_ json: String) throws -> [SonioxToken] {
+        try JSONDecoder().decode(
+            [SonioxToken].self,
+            from: try XCTUnwrap(json.data(using: .utf8))
+        )
     }
 
     private func makeTenMillisecondBuffer() throws -> AVAudioPCMBuffer {

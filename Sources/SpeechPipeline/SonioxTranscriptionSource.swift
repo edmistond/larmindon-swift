@@ -72,13 +72,21 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
                 for try await event in events {
                     switch event {
                     case .transcript(let update):
-                        if !update.newlyFinalizedText.isEmpty {
+                        let finalizedText =
+                            SonioxSpeakerLabelFormatter.format(
+                                tokens: update.newlyFinalizedTokens
+                            )
+                        if !finalizedText.isEmpty {
                             continuation.yield(
-                                .finalized(update.newlyFinalizedText)
+                                .finalized(finalizedText)
                             )
                         }
                         continuation.yield(
-                            .volatile(update.nonFinalText)
+                            .volatile(
+                                SonioxSpeakerLabelFormatter.format(
+                                    tokens: update.nonFinalTokens
+                                )
+                            )
                         )
                         await diagnostics.record(
                             category: "transcript",
@@ -231,6 +239,40 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
         }
         eventTask = nil
         continuation.finish()
+    }
+}
+
+struct SonioxSpeakerLabelFormatter {
+    static func format(tokens: [SonioxToken]) -> String {
+        var text = ""
+        var currentSpeaker: String?
+
+        for token in tokens {
+            let speaker = normalizedSpeaker(token.speaker)
+            if let speaker, speaker != currentSpeaker {
+                if !text.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                ).isEmpty {
+                    text.append("\n")
+                }
+                text.append("[Speaker \(speaker)]")
+                if token.text.first?.isWhitespace != true {
+                    text.append(" ")
+                }
+                currentSpeaker = speaker
+            }
+            text.append(token.text)
+        }
+
+        return text
+    }
+
+    private static func normalizedSpeaker(_ speaker: String?) -> String? {
+        guard let speaker else { return nil }
+        let normalized = speaker.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return normalized.isEmpty ? nil : normalized
     }
 }
 
