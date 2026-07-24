@@ -15,6 +15,7 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
     private var eventTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var bytesSent = 0
+    private var sentenceAccumulator = SonioxSentenceAccumulator()
 
     public init(
         apiKey: String,
@@ -53,6 +54,7 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
     public func start(
         audioFrames: AsyncStream<CapturedAudioFrame>
     ) async throws {
+        sentenceAccumulator = SonioxSentenceAccumulator()
         let events = try await client.start()
         await diagnostics.record(
             category: "provider",
@@ -73,8 +75,9 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
                     switch event {
                     case .transcript(let update):
                         let finalizedSegments =
-                            SonioxSpeakerSegmentFormatter.segments(
-                                tokens: update.newlyFinalizedTokens
+                            sentenceAccumulator.consume(
+                                finalizedTokens:
+                                    update.newlyFinalizedTokens
                             )
                         if !finalizedSegments.isEmpty {
                             continuation.yield(
@@ -83,8 +86,9 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
                         }
                         continuation.yield(
                             .volatileSegments(
-                                SonioxSpeakerSegmentFormatter.segments(
-                                    tokens: update.nonFinalTokens
+                                sentenceAccumulator.preview(
+                                    nonFinalTokens:
+                                        update.nonFinalTokens
                                 )
                             )
                         )
@@ -116,6 +120,13 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
                             ]
                         )
                     case .finished(let completion):
+                        let trailingSegments =
+                            sentenceAccumulator.finish()
+                        if !trailingSegments.isEmpty {
+                            continuation.yield(
+                                .finalizedSegments(trailingSegments)
+                            )
+                        }
                         await diagnostics.record(
                             category: "provider",
                             name: "soniox_finished",
@@ -242,6 +253,166 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
     }
 }
 
+struct SonioxSentenceAccumulator {
+    private var pendingText = ""
+    private var pendingSpeakerID: String?
+
+    mutating func consume(
+        finalizedTokens: [SonioxToken]
+    ) -> [CaptionSegment] {
+        var completed: [CaptionSegment] = []
+
+        for token in finalizedTokens {
+            let speakerID =
+                SonioxSpeakerSegmentFormatter.normalizedSpeaker(
+                    token.speaker
+                )
+            if let speakerID, speakerID != pendingSpeakerID {
+                appendPending(to: &completed)
+                pendingSpeakerID = speakerID
+            }
+
+            for piece in Self.sentencePieces(in: token.text) {
+                pendingText.append(piece.text)
+                if piece.completesSentence {
+                    appendPending(to: &completed)
+                }
+            }
+        }
+
+        return completed
+    }
+
+    func preview(
+        nonFinalTokens: [SonioxToken]
+    ) -> [CaptionSegment] {
+        var segments: [CaptionSegment] = []
+        let pending = pendingText.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        if !pending.isEmpty {
+            segments.append(
+                CaptionSegment(
+                    text: pending,
+                    speakerID: pendingSpeakerID
+                )
+            )
+        }
+
+        for segment in SonioxSpeakerSegmentFormatter.segments(
+            tokens: nonFinalTokens
+        ) {
+            Self.appendCoalescing(segment, to: &segments)
+        }
+        return segments
+    }
+
+    mutating func finish() -> [CaptionSegment] {
+        var completed: [CaptionSegment] = []
+        appendPending(to: &completed)
+        return completed
+    }
+
+    private mutating func appendPending(
+        to segments: inout [CaptionSegment]
+    ) {
+        let cleaned = pendingText.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        if !cleaned.isEmpty {
+            segments.append(
+                CaptionSegment(
+                    text: cleaned,
+                    speakerID: pendingSpeakerID
+                )
+            )
+        }
+        pendingText = ""
+        pendingSpeakerID = nil
+    }
+
+    private static func appendCoalescing(
+        _ segment: CaptionSegment,
+        to segments: inout [CaptionSegment]
+    ) {
+        guard let previous = segments.last,
+              previous.speakerID == segment.speakerID else {
+            segments.append(segment)
+            return
+        }
+
+        segments[segments.count - 1] = CaptionSegment(
+            text: joined(previous.text, segment.text),
+            speakerID: segment.speakerID
+        )
+    }
+
+    private static func joined(_ first: String, _ second: String) -> String {
+        guard let firstCharacter = second.first else { return first }
+        if first.last?.isWhitespace == true
+            || firstCharacter.isWhitespace
+            || ".,!?;:)]}”’".contains(firstCharacter)
+        {
+            return first + second
+        }
+        return first + " " + second
+    }
+
+    private static func sentencePieces(
+        in text: String
+    ) -> [(text: String, completesSentence: Bool)] {
+        let characters = Array(text)
+        guard !characters.isEmpty else { return [] }
+
+        let terminators: Set<Character> = [".", "!", "?", "。", "！", "？"]
+        let closingCharacters: Set<Character> = [
+            "\"", "'", "”", "’", ")", "]", "}",
+        ]
+        var pieces: [(text: String, completesSentence: Bool)] = []
+        var pieceStart = 0
+        var index = 0
+
+        while index < characters.count {
+            guard terminators.contains(characters[index]) else {
+                index += 1
+                continue
+            }
+
+            var boundaryEnd = index + 1
+            while boundaryEnd < characters.count,
+                  closingCharacters.contains(characters[boundaryEnd]) {
+                boundaryEnd += 1
+            }
+
+            let hasSentenceBoundary =
+                boundaryEnd == characters.count
+                || characters[boundaryEnd].isWhitespace
+            if hasSentenceBoundary {
+                pieces.append(
+                    (
+                        text: String(characters[pieceStart..<boundaryEnd]),
+                        completesSentence: true
+                    )
+                )
+                pieceStart = boundaryEnd
+                index = boundaryEnd
+            } else {
+                index += 1
+            }
+        }
+
+        if pieceStart < characters.count {
+            pieces.append(
+                (
+                    text: String(characters[pieceStart...]),
+                    completesSentence: false
+                )
+            )
+        }
+        return pieces
+    }
+}
+
 struct SonioxSpeakerSegmentFormatter {
     static func segments(tokens: [SonioxToken]) -> [CaptionSegment] {
         var segments: [CaptionSegment] = []
@@ -283,7 +454,7 @@ struct SonioxSpeakerSegmentFormatter {
         text = ""
     }
 
-    private static func normalizedSpeaker(_ speaker: String?) -> String? {
+    static func normalizedSpeaker(_ speaker: String?) -> String? {
         guard let speaker else { return nil }
         let normalized = speaker.trimmingCharacters(
             in: .whitespacesAndNewlines

@@ -33,7 +33,7 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         await transport.enqueue(
             .text(
                 """
-                {"tokens":[{"text":"Hello","start_ms":0,"end_ms":100,"confidence":0.9,"is_final":true,"speaker":"1"}],"final_audio_proc_ms":100,"total_audio_proc_ms":100}
+                {"tokens":[{"text":"Hello.","start_ms":0,"end_ms":100,"confidence":0.9,"is_final":true,"speaker":"1"}],"final_audio_proc_ms":100,"total_audio_proc_ms":100}
                 """
             )
         )
@@ -41,7 +41,7 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         XCTAssertEqual(
             result,
             .finalizedSegments([
-                CaptionSegment(text: "Hello", speakerID: "1")
+                CaptionSegment(text: "Hello.", speakerID: "1")
             ])
         )
 
@@ -119,6 +119,97 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         XCTAssertEqual(
             SonioxSpeakerSegmentFormatter.segments(tokens: tokens),
             [CaptionSegment(text: "Hello", speakerID: "7")]
+        )
+    }
+
+    func testSentenceAccumulatorKeepsFinalWordsLiveUntilPunctuation()
+        throws
+    {
+        var accumulator = SonioxSentenceAccumulator()
+
+        XCTAssertEqual(
+            accumulator.consume(
+                finalizedTokens: try decodeTokens(
+                    """
+                    [{"text":"Great","is_final":true,"speaker":"1"}]
+                    """
+                )
+            ),
+            []
+        )
+        XCTAssertEqual(
+            accumulator.preview(
+                nonFinalTokens: try decodeTokens(
+                    """
+                    [{"text":" work","is_final":false,"speaker":"1"}]
+                    """
+                )
+            ),
+            [CaptionSegment(text: "Great work", speakerID: "1")]
+        )
+        XCTAssertEqual(
+            accumulator.consume(
+                finalizedTokens: try decodeTokens(
+                    """
+                    [
+                      {"text":" work","is_final":true,"speaker":"1"},
+                      {"text":".","is_final":true,"speaker":"1"}
+                    ]
+                    """
+                )
+            ),
+            [CaptionSegment(text: "Great work.", speakerID: "1")]
+        )
+        XCTAssertEqual(accumulator.preview(nonFinalTokens: []), [])
+    }
+
+    func testSentenceAccumulatorSplitsCompletedSentenceInsideBatch()
+        throws
+    {
+        var accumulator = SonioxSentenceAccumulator()
+        let completed = accumulator.consume(
+            finalizedTokens: try decodeTokens(
+                """
+                [
+                  {"text":"First","is_final":true,"speaker":"1"},
+                  {"text":".","is_final":true,"speaker":"1"},
+                  {"text":" Second","is_final":true,"speaker":"1"},
+                  {"text":" continues","is_final":true,"speaker":"1"}
+                ]
+                """
+            )
+        )
+
+        XCTAssertEqual(
+            completed,
+            [CaptionSegment(text: "First.", speakerID: "1")]
+        )
+        XCTAssertEqual(
+            accumulator.preview(nonFinalTokens: []),
+            [CaptionSegment(text: "Second continues", speakerID: "1")]
+        )
+    }
+
+    func testSentenceAccumulatorFlushesWhenSpeakerChanges() throws {
+        var accumulator = SonioxSentenceAccumulator()
+        let completed = accumulator.consume(
+            finalizedTokens: try decodeTokens(
+                """
+                [
+                  {"text":"No punctuation","is_final":true,"speaker":"1"},
+                  {"text":"New speaker","is_final":true,"speaker":"2"}
+                ]
+                """
+            )
+        )
+
+        XCTAssertEqual(
+            completed,
+            [CaptionSegment(text: "No punctuation", speakerID: "1")]
+        )
+        XCTAssertEqual(
+            accumulator.preview(nonFinalTokens: []),
+            [CaptionSegment(text: "New speaker", speakerID: "2")]
         )
     }
 

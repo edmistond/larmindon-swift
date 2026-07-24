@@ -19,11 +19,12 @@ public struct CaptionDisplayView: View {
         GeometryReader { scrollContainer in
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         if lines.isEmpty {
                             Text("Ready for captions")
                                 .foregroundStyle(.secondary)
                                 .font(.system(size: fontSize, weight: .regular, design: .default))
+                                .padding(.horizontal, 16)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
                             ForEach(lines) { line in
@@ -31,10 +32,7 @@ public struct CaptionDisplayView: View {
                                     .foregroundStyle(line.isVolatile ? .secondary : .primary)
                                     .font(.system(size: fontSize, weight: .regular, design: .default))
                                     .textSelection(.enabled)
-                                    .padding(
-                                        .horizontal,
-                                        line.speakerID == nil ? 0 : 10
-                                    )
+                                    .padding(.horizontal, 16)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .overlay {
                                         if let speakerID = line.speakerID {
@@ -49,7 +47,8 @@ public struct CaptionDisplayView: View {
                             .frame(height: 1)
                             .id(bottomSentinelID)
                     }
-                    .padding(24)
+                    .padding(.vertical, 24)
+                    .padding(.horizontal, 8)
                     .frame(maxWidth: .infinity, minHeight: scrollContainer.size.height, alignment: .topLeading)
                 }
                 .onScrollGeometryChange(for: CaptionScrollGeometry.self) { geometry in
@@ -135,10 +134,9 @@ public struct CaptionDisplayView: View {
     }
 
     private func speakerBar(for speakerID: String) -> some View {
-        RoundedRectangle(cornerRadius: 2)
+        Rectangle()
             .fill(SpeakerColor.color(for: speakerID, scheme: colorScheme))
             .frame(width: 3)
-            .padding(.vertical, 2)
     }
 }
 
