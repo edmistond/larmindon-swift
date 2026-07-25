@@ -25,6 +25,7 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
         self.diagnostics = diagnostics
         let configuration = SonioxRealtimeConfiguration(
             apiKey: apiKey,
+            languageHints: ["en"],
             speakerDiarizationEnabled: true,
             endpointDetectionEnabled: false
         )

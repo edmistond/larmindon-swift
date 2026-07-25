@@ -21,6 +21,19 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         var resultIterator = results.makeAsyncIterator()
 
         try await source.start(audioFrames: frames)
+        let configurationMessages = await transport.sentTextMessages
+        let configurationData = try XCTUnwrap(
+            configurationMessages.first?.data(using: .utf8)
+        )
+        let configurationJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: configurationData)
+                as? [String: Any]
+        )
+        XCTAssertEqual(
+            configurationJSON["language_hints"] as? [String],
+            ["en"]
+        )
+
         frameContinuation.yield(
             CapturedAudioFrame(buffer: try makeTenMillisecondBuffer())
         )
