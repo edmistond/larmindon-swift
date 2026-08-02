@@ -16,10 +16,6 @@ public struct PreferencesView: View {
     @State private var credentialMessage: String?
     private let credentialStore = KeychainProviderCredentialStore()
 
-    #if os(iOS)
-    @AppStorage("showDebugPanel") private var showDebugPanel = false
-    #endif
-
     public init() {}
 
     public var body: some View {
@@ -85,10 +81,6 @@ public struct PreferencesView: View {
                 Text("Replaces profane words in Apple’s on-device results. Takes effect the next time on-device captioning starts.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-
-                #if os(iOS)
-                Toggle("Show debug panel", isOn: $showDebugPanel)
-                #endif
             }
 
             Section("Server Transcription") {

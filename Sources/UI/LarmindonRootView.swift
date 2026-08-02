@@ -28,10 +28,6 @@ public struct LarmindonRootView: View {
     private var voiceProcessingEnabled = VoiceProcessingPreference.defaultValue
     @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
 
-    #if os(iOS)
-    @AppStorage("showDebugPanel") private var persistedShowDebugPanel = false
-    #endif
-
     public init(session: CaptionSession) {
         self.session = session
     }
@@ -90,12 +86,6 @@ public struct LarmindonRootView: View {
             }
             .sheet(isPresented: $showMicrophonePanel) {
                 microphonePanelSheet
-            }
-            .onAppear {
-                showDebugPanel = persistedShowDebugPanel
-            }
-            .onChange(of: showDebugPanel) { _, newValue in
-                persistedShowDebugPanel = newValue
             }
             #endif
             .preferredColorScheme(appearancePreference.colorScheme)
