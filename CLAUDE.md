@@ -62,3 +62,39 @@ For macOS use `-scheme Larmindon-macOS`. If `Project.swift` changes, regenerate 
 - `CaptionSession` (`@MainActor @Observable`) owns the active `TranscriptionSource`
   (`live` = `LiveSpeechAnalyzerTranscriptionSource`, `fake` = `FakeTranscriptionSource`),
   the `CaptionStore`, and the `AudioRouteManager`.
+
+### macOS audio capture — don't undo these
+
+Selecting an input **inside the app**, without touching macOS system audio settings, is a
+core feature. These constraints were established by debugging real failures; each has a
+diagnostic signature in `larmindon-diagnostics-*` bundles.
+
+- **AVAudioEngine is only used for the system default input.** Every other device is read
+  directly through a Core Audio IOProc (`MacOSDirectAudioDeviceCapture` /
+  `SharedMacOSAudioDeviceCapture`), routed by `MacOSAudioCaptureStrategy.forDevice`.
+  Setting `kAudioOutputUnitProperty_CurrentDevice` on the input node returns `noErr` but
+  does **not** re-plumb the node — it keeps the previous device's format, so the tap
+  installs at the wrong rate and `engine.start()` fails with
+  `kAudioUnitErr_FormatNotSupported` (-10868).
+- **Voice processing is never enabled on macOS.** It spans input and output as one duplex
+  unit built across whatever the default input and default output are. Those are separate
+  devices with independent sample rates, and a mismatch fails engine start with
+  `kAudioUnitErr_FailedInitialization` (-10875). It also creates an aggregate device,
+  which changes the Core Audio device list, which used to retrigger capture and loop. iOS
+  applies the same processing through the audio session category/mode instead and is
+  unaffected — keep the preference iOS-only.
+- **Install taps with a `nil` format.** A format disagreeing with the bus makes
+  `installTap` raise an Objective-C exception that Swift cannot catch, taking the app down.
+  Buffer conversion downstream is format-agnostic and handles whatever arrives.
+- **Don't restart capture on every device-list change.** `CaptionSession` tracks
+  `activeInputDeviceID` and only restarts when the captured device actually changed
+  identity, which is what happens on unplug/reconnect.
+
+### Soniox shutdown
+
+Ending a session cleanly means sending an empty WebSocket frame (`client.finish()`), then
+waiting for the server to flush remaining tokens, send `finished: true`, and close. That
+takes a couple of seconds. `SonioxTranscriptionSource.stop()` is re-entrancy-safe on
+purpose: a second stop arriving mid-finish would fall through to `cancel()` and discard
+those final tokens. `CaptionSession.stopActive` also clears user-visible state *before*
+awaiting teardown, so Stop registers on the first press.
