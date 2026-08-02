@@ -26,7 +26,7 @@ public struct CaptionDisplayView: View {
     // every line into one block and leaves the first two tiers doing the work.
     private var textLineSpacing: CGFloat { CGFloat(fontSize * 0.16) }
     private var utteranceSpacing: CGFloat { CGFloat(fontSize * 0.5) }
-    private var speakerBlockSpacing: CGFloat { CGFloat(fontSize * 0.8) }
+    private var speakerBlockSpacing: CGFloat { CGFloat(fontSize * 0.6) }
 
     public init(lines: [CaptionLine], fontSize: Double) {
         self.lines = lines
