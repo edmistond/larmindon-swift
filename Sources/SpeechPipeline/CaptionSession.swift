@@ -34,6 +34,11 @@ public final class CaptionSession {
     private var audioBufferFrameCount: Int
     private var profanityFilterEnabled: Bool
     private var audioRouteRecoveryTask: Task<Void, Never>?
+    /// Device the running capture was started against, so device-list churn can be told
+    /// apart from the selected input actually changing.
+    private var activeInputDeviceID: UInt32?
+    private var silentCaptureTask: Task<Void, Never>?
+    private var didReceiveAudioSinceStart = false
     private var transitionTask: Task<Void, Never>?
     private var transitionGeneration = 0
     private let credentialStore: any ProviderCredentialStore
@@ -155,8 +160,10 @@ public final class CaptionSession {
                 }
             }
 
+            didReceiveAudioSinceStart = false
             levelTask = Task { @MainActor [weak self, source] in
                 for await snapshot in source.levelUpdates {
+                    self?.didReceiveAudioSinceStart = true
                     self?.audioLevels = snapshot
                 }
             }
@@ -167,6 +174,7 @@ public final class CaptionSession {
                     configuration: microphoneConfiguration,
                     voiceProcessingEnabled: requestedVoiceProcessingEnabled
                 )
+                activeInputDeviceID = routeManager.preferredInputDeviceID
                 await recordCurrentAudioRoute(reason: "capture_start")
             }
 
@@ -210,6 +218,7 @@ public final class CaptionSession {
             }
             activeMode = mode
             speechAnalyzerState = "Running \(source.name)"
+            startSilentCaptureWatchdog(generation: generation)
             microphoneCapabilities.refresh()
             await diagnostics.record(
                 category: "state",
@@ -252,6 +261,8 @@ public final class CaptionSession {
         }
         captureLevelTask?.cancel()
         captureLevelTask = nil
+        silentCaptureTask?.cancel()
+        silentCaptureTask = nil
 
         if let activeCapture {
             await activeCapture.stop()
@@ -266,6 +277,7 @@ public final class CaptionSession {
         levelTask = nil
         routeManager.releaseAudioSession()
         activeSource = nil
+        activeInputDeviceID = nil
         activeAudioBufferFrameCount = nil
         activeVoiceProcessingEnabled = nil
         activeMode = nil
@@ -472,6 +484,34 @@ public final class CaptionSession {
         }
     }
 
+    /// Capture can start cleanly and still deliver no audio at all, which otherwise shows
+    /// up only as a level meter that never moves. Say so rather than looking hung.
+    private func startSilentCaptureWatchdog(generation: Int) {
+        silentCaptureTask?.cancel()
+        silentCaptureTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard let self,
+                  !Task.isCancelled,
+                  generation == transitionGeneration,
+                  store.isRunning,
+                  !didReceiveAudioSinceStart else {
+                return
+            }
+
+            let inputName = routeManager.currentInputName
+            #if os(iOS)
+            lastError = requestedVoiceProcessingEnabled
+                ? """
+                No audio is arriving from “\(inputName)”. Try turning off voice \
+                processing in Settings, then Stop and Start.
+                """
+                : "No audio is arriving from “\(inputName)”."
+            #else
+            lastError = "No audio is arriving from “\(inputName)”."
+            #endif
+        }
+    }
+
     private func scheduleFailureStop() {
         transitionGeneration += 1
         transitionTask?.cancel()
@@ -537,6 +577,14 @@ public final class CaptionSession {
             guard let self else { return }
             switch change {
             case .selectedInputRemainsAvailable:
+                // Any device-list change reaches this point, including the aggregate
+                // device that voice processing creates while starting capture. Restarting
+                // on those would recreate the aggregate and loop forever, so only restart
+                // when the device we are actually capturing from changed identity — which
+                // is what happens when an input is unplugged and reconnected.
+                guard routeManager.preferredInputDeviceID != activeInputDeviceID else {
+                    return
+                }
                 let sourceKind = selectedSourceKind
                 await stopActive(cancelAudioRouteRecovery: false)
                 guard !Task.isCancelled else { return }

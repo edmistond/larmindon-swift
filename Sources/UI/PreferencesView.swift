@@ -74,10 +74,12 @@ public struct PreferencesView: View {
                     .labelsHidden()
                 }
 
+                #if os(iOS)
                 Toggle("Voice processing", isOn: $voiceProcessingEnabled)
                 Text("Uses Apple Voice Processing I/O, including system-managed gain correction. Takes effect the next time capture starts.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                #endif
 
                 Toggle("Filter profanity on device", isOn: $profanityFilterEnabled)
                 Text("Replaces profane words in Apple’s on-device results. Takes effect the next time on-device captioning starts.")

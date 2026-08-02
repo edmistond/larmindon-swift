@@ -30,6 +30,7 @@ public final class AudioCaptureSession {
     private let telemetry: AudioCaptureTelemetry
     private var isTapInstalled = false
     private var isRunning = false
+    private var stallCheckTask: Task<Void, Never>?
 
     #if os(macOS)
     private var directCapture: SharedMacOSAudioDeviceCapture?
@@ -70,6 +71,7 @@ public final class AudioCaptureSession {
         let inputNode = audioEngine.inputNode
         let captureFormat: AVAudioFormat
         var strategy = "audio_engine"
+        var configuration: AudioEngineInputConfiguration?
 
         #if os(macOS)
         if let inputDeviceID,
@@ -81,28 +83,23 @@ public final class AudioCaptureSession {
                 deviceID: AudioDeviceID(inputDeviceID)
             )
         } else {
-            try inputNode.setVoiceProcessingEnabled(
-                requestedVoiceProcessingEnabled
+            let resolved = try AudioEngineInputConfigurator.configure(
+                inputNode: inputNode,
+                requestedVoiceProcessingEnabled:
+                    requestedVoiceProcessingEnabled
             )
-            activeVoiceProcessingEnabled = inputNode.isVoiceProcessingEnabled
-            if let inputDeviceID {
-                try configureSharedMacOSInputDevice(
-                    inputDeviceID,
-                    on: inputNode
-                )
-                captureFormat = try sharedMacOSInputDeviceCaptureFormat(
-                    deviceID: AudioDeviceID(inputDeviceID)
-                )
-            } else {
-                captureFormat = inputNode.outputFormat(forBus: 0)
-            }
+            configuration = resolved
+            captureFormat = resolved.nodeFormat
+            activeVoiceProcessingEnabled = resolved.activeVoiceProcessingEnabled
         }
         #else
-        try inputNode.setVoiceProcessingEnabled(
-            requestedVoiceProcessingEnabled
+        let resolved = try AudioEngineInputConfigurator.configure(
+            inputNode: inputNode,
+            requestedVoiceProcessingEnabled: requestedVoiceProcessingEnabled
         )
-        activeVoiceProcessingEnabled = inputNode.isVoiceProcessingEnabled
-        captureFormat = inputNode.outputFormat(forBus: 0)
+        configuration = resolved
+        captureFormat = resolved.nodeFormat
+        activeVoiceProcessingEnabled = resolved.activeVoiceProcessingEnabled
         #endif
 
         let sink = SharedAudioCaptureSink(
@@ -122,27 +119,25 @@ public final class AudioCaptureSession {
             directCapture = capture
             try capture.start()
         } else {
-            inputNode.installTap(
-                onBus: 0,
-                bufferSize: bufferFrameCount,
-                format: captureFormat,
-                block: makeSharedAudioTapHandler(sink: sink)
-            )
-            isTapInstalled = true
+            installEngineTap(on: inputNode, sink: sink)
             try audioEngine.start()
         }
         #else
-        inputNode.installTap(
-            onBus: 0,
-            bufferSize: bufferFrameCount,
-            format: captureFormat,
-            block: makeSharedAudioTapHandler(sink: sink)
-        )
-        isTapInstalled = true
+        installEngineTap(on: inputNode, sink: sink)
         try audioEngine.start()
         #endif
 
         isRunning = true
+        stallCheckTask = telemetry.scheduleStallCheck(
+            fields: [
+                "strategy": strategy,
+                "sample_rate": String(captureFormat.sampleRate),
+                "channels": String(captureFormat.channelCount),
+                "voice_processing_active":
+                    activeVoiceProcessingEnabled.map(String.init) ?? "false",
+            ]
+        )
+
         await diagnostics.record(
             category: "audio",
             name: "capture_started",
@@ -156,11 +151,32 @@ public final class AudioCaptureSession {
                     String(requestedVoiceProcessingEnabled),
                 "voice_processing_active":
                     activeVoiceProcessingEnabled.map(String.init) ?? "false",
+                "voice_processing_skipped":
+                    configuration?.voiceProcessingSkippedReason ?? "none",
             ]
         )
     }
 
+    /// Installs the tap with a nil format so the node's own format is used verbatim.
+    /// Passing a format that disagrees with the bus makes `installTap` raise an
+    /// Objective-C exception, which Swift cannot catch and which takes the app down.
+    private func installEngineTap(
+        on inputNode: AVAudioInputNode,
+        sink: SharedAudioCaptureSink
+    ) {
+        inputNode.installTap(
+            onBus: 0,
+            bufferSize: bufferFrameCount,
+            format: nil,
+            block: makeSharedAudioTapHandler(sink: sink)
+        )
+        isTapInstalled = true
+    }
+
     public func stop() async {
+        stallCheckTask?.cancel()
+        stallCheckTask = nil
+
         guard isRunning else {
             frameContinuation.finish()
             levelContinuation.finish()
@@ -180,15 +196,10 @@ public final class AudioCaptureSession {
         frameContinuation.finish()
         levelContinuation.finish()
 
-        let snapshot = telemetry.snapshot()
         await diagnostics.record(
             category: "audio",
             name: "capture_stopped",
-            fields: [
-                "callbacks": String(snapshot.callbacks),
-                "frames": String(snapshot.frames),
-                "dropped_buffers": String(snapshot.droppedBuffers),
-            ]
+            fields: telemetry.snapshot().diagnosticFields
         )
     }
 }
@@ -283,65 +294,6 @@ private func makeSharedAudioTapHandler(
 ) -> (AVAudioPCMBuffer, AVAudioTime) -> Void {
     { buffer, _ in
         sink.handle(buffer)
-    }
-}
-
-private final class AudioCaptureTelemetry: @unchecked Sendable {
-    struct Snapshot {
-        let callbacks: Int
-        let frames: Int
-        let droppedBuffers: Int
-    }
-
-    private let lock = NSLock()
-    private let diagnostics: DiagnosticRecorder
-    private var callbacks = 0
-    private var frames = 0
-    private var droppedBuffers = 0
-
-    init(diagnostics: DiagnosticRecorder) {
-        self.diagnostics = diagnostics
-    }
-
-    func record(frameCount: Int, dropped: Bool) {
-        lock.lock()
-        callbacks += 1
-        frames += frameCount
-        if dropped {
-            droppedBuffers += 1
-        }
-        let shouldReport = callbacks.isMultiple(of: 100)
-        let snapshot = Snapshot(
-            callbacks: callbacks,
-            frames: frames,
-            droppedBuffers: droppedBuffers
-        )
-        lock.unlock()
-
-        if shouldReport {
-            Task { [diagnostics] in
-                await diagnostics.record(
-                    category: "audio",
-                    name: "capture_aggregate",
-                    fields: [
-                        "callbacks": String(snapshot.callbacks),
-                        "frames": String(snapshot.frames),
-                        "dropped_buffers":
-                            String(snapshot.droppedBuffers),
-                    ]
-                )
-            }
-        }
-    }
-
-    func snapshot() -> Snapshot {
-        lock.lock()
-        defer { lock.unlock() }
-        return Snapshot(
-            callbacks: callbacks,
-            frames: frames,
-            droppedBuffers: droppedBuffers
-        )
     }
 }
 
@@ -575,49 +527,6 @@ private struct SharedMacOSFloatInput {
     let frameCount: Int
 }
 
-private func configureSharedMacOSInputDevice(
-    _ deviceID: UInt32,
-    on inputNode: AVAudioInputNode
-) throws {
-    guard let audioUnit = inputNode.audioUnit else {
-        throw TranscriptionSourceError.unavailable(
-            "Could not access the input audio unit."
-        )
-    }
-    var mutableDeviceID = AudioDeviceID(deviceID)
-    let status = AudioUnitSetProperty(
-        audioUnit,
-        kAudioOutputUnitProperty_CurrentDevice,
-        kAudioUnitScope_Global,
-        0,
-        &mutableDeviceID,
-        UInt32(MemoryLayout<AudioDeviceID>.size)
-    )
-    guard status == noErr else {
-        throw TranscriptionSourceError.unavailable(
-            "Could not select macOS input \(deviceID): \(status)"
-        )
-    }
-}
-
-private func sharedMacOSInputDeviceCaptureFormat(
-    deviceID: AudioDeviceID
-) throws -> AVAudioFormat {
-    let sampleRate = try sharedMacOSNominalSampleRate(deviceID: deviceID)
-    let channelCount = try sharedMacOSInputChannelCount(deviceID: deviceID)
-    guard let format = AVAudioFormat(
-        commonFormat: .pcmFormatFloat32,
-        sampleRate: sampleRate,
-        channels: channelCount,
-        interleaved: false
-    ) else {
-        throw TranscriptionSourceError.unavailable(
-            "Could not build the selected macOS input format."
-        )
-    }
-    return format
-}
-
 private func sharedMacOSNominalSampleRate(
     deviceID: AudioDeviceID
 ) throws -> Double {
@@ -644,54 +553,4 @@ private func sharedMacOSNominalSampleRate(
     return sampleRate
 }
 
-private func sharedMacOSInputChannelCount(
-    deviceID: AudioDeviceID
-) throws -> AVAudioChannelCount {
-    var address = AudioObjectPropertyAddress(
-        mSelector: kAudioDevicePropertyStreamConfiguration,
-        mScope: kAudioDevicePropertyScopeInput,
-        mElement: kAudioObjectPropertyElementMain
-    )
-    var dataSize: UInt32 = 0
-    let sizeStatus = AudioObjectGetPropertyDataSize(
-        deviceID,
-        &address,
-        0,
-        nil,
-        &dataSize
-    )
-    guard sizeStatus == noErr, dataSize > 0,
-          let allocation = malloc(Int(dataSize)) else {
-        throw TranscriptionSourceError.unavailable(
-            "Could not read the selected input channel layout."
-        )
-    }
-    defer { free(allocation) }
-
-    let list = allocation.bindMemory(
-        to: AudioBufferList.self,
-        capacity: 1
-    )
-    let status = AudioObjectGetPropertyData(
-        deviceID,
-        &address,
-        0,
-        nil,
-        &dataSize,
-        list
-    )
-    guard status == noErr else {
-        throw TranscriptionSourceError.unavailable(
-            "Could not read the selected input channels: \(status)"
-        )
-    }
-    let channels = UnsafeMutableAudioBufferListPointer(list)
-        .reduce(0) { $0 + Int($1.mNumberChannels) }
-    guard channels > 0, channels <= Int(UInt32.max) else {
-        throw TranscriptionSourceError.unavailable(
-            "The selected input has no usable channels."
-        )
-    }
-    return AVAudioChannelCount(channels)
-}
 #endif

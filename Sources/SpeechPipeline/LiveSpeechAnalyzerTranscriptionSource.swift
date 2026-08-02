@@ -23,6 +23,9 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     private let profanityFilterEnabled: Bool
     private let audioEngine = AVAudioEngine()
     private let audioState = LiveAudioState()
+    private let diagnostics: DiagnosticRecorder
+    private let telemetry: AudioCaptureTelemetry
+    private var isCaptureRunning = false
 
     private var analyzerTask: Task<Void, Never>?
     private var audioConversionTask: Task<Void, Never>?
@@ -30,6 +33,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     private var detectorTask: Task<Void, Never>?
     private var stopPipeline: (() async -> Void)?
     private var reservedLocale: Locale?
+    private var stallCheckTask: Task<Void, Never>?
     private var isAudioEngineTapInstalled = false
 
     #if os(macOS)
@@ -41,7 +45,8 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         inputDeviceID: UInt32? = nil,
         bufferFrameCount: Int = AudioCaptureBufferFrames.defaultValue,
         voiceProcessingEnabled: Bool = VoiceProcessingPreference.defaultValue,
-        profanityFilterEnabled: Bool = false
+        profanityFilterEnabled: Bool = false,
+        diagnostics: DiagnosticRecorder = .shared
     ) {
         self.sensitivity = sensitivity
         self.inputDeviceID = inputDeviceID
@@ -50,6 +55,8 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         )
         self.requestedVoiceProcessingEnabled = voiceProcessingEnabled
         self.profanityFilterEnabled = profanityFilterEnabled
+        self.diagnostics = diagnostics
+        self.telemetry = AudioCaptureTelemetry(diagnostics: diagnostics)
 
         var capturedContinuation: AsyncStream<CaptionResult>.Continuation!
         self.results = AsyncStream { continuation in
@@ -69,6 +76,9 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     }
 
     public func stop() async {
+        stallCheckTask?.cancel()
+        stallCheckTask = nil
+
         #if os(macOS)
         directAudioDeviceCapture?.stop()
         directAudioDeviceCapture = nil
@@ -96,38 +106,49 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             await AssetInventory.release(reservedLocale: reservedLocale)
             self.reservedLocale = nil
         }
+
+        if isCaptureRunning {
+            isCaptureRunning = false
+            await diagnostics.record(
+                category: "audio",
+                name: "capture_stopped",
+                fields: telemetry.snapshot().diagnosticFields
+            )
+        }
     }
 
     private func startSpeechAnalyzerPipeline() async throws {
         let inputNode = audioEngine.inputNode
-        let captureFormat: AVAudioFormat
         var usesDirectMacOSCapture = false
+        var directCaptureFormat: AVAudioFormat?
+        // macOS device format, used as the analyzer hint and as a fallback if the input
+        // node reports an unusable format once the device is selected.
+        var selectedDeviceFormat: AVAudioFormat?
 
         #if os(macOS)
         if let inputDeviceID,
            MacOSAudioCaptureStrategy.forDevice(AudioDeviceID(inputDeviceID)) == .coreAudioDevice {
             usesDirectMacOSCapture = true
-            activeVoiceProcessingEnabled = false
-            captureFormat = try MacOSDirectAudioDeviceCapture.captureFormat(
+            directCaptureFormat = try MacOSDirectAudioDeviceCapture.captureFormat(
                 deviceID: AudioDeviceID(inputDeviceID)
             )
-        } else {
-            try inputNode.setVoiceProcessingEnabled(requestedVoiceProcessingEnabled)
-            activeVoiceProcessingEnabled = inputNode.isVoiceProcessingEnabled
-            if let inputDeviceID {
-                try configureMacOSInputDevice(inputDeviceID, on: inputNode)
-                captureFormat = try macOSInputDeviceCaptureFormat(deviceID: AudioDeviceID(inputDeviceID))
-            } else {
-                captureFormat = inputNode.outputFormat(forBus: 0)
-            }
+        } else if let inputDeviceID {
+            selectedDeviceFormat = try macOSInputDeviceCaptureFormat(
+                deviceID: AudioDeviceID(inputDeviceID)
+            )
         }
-        #else
-        try inputNode.setVoiceProcessingEnabled(requestedVoiceProcessingEnabled)
-        activeVoiceProcessingEnabled = inputNode.isVoiceProcessingEnabled
-        captureFormat = inputNode.outputFormat(forBus: 0)
         #endif
 
+        // Only a hint for picking the analysis format. Everything from here to the engine
+        // block awaits, so the engine must not be mutated yet: configuring the input node
+        // and starting the engine have to stay adjacent, or an intervening HAL change
+        // invalidates the configuration and `start()` fails with -10875.
+        let hintFormat = directCaptureFormat
+            ?? selectedDeviceFormat
+            ?? inputNode.outputFormat(forBus: 0)
+
         let locale = try await prepareTranscriberLocale()
+        await recordStage("locale_reserved", fields: ["locale": locale.identifier])
 
         let transcriber = SpeechTranscriber(
             locale: locale,
@@ -144,11 +165,21 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         let analyzer = SpeechAnalyzer(modules: modules)
         let analysisFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
             compatibleWith: modules,
-            considering: captureFormat
-        ) ?? captureFormat
+            considering: hintFormat
+        ) ?? hintFormat
+        // The real capture format is resolved later and may differ from the hint; the
+        // converter re-creates itself whenever its input format changes, so conversion to
+        // `analysisFormat` holds either way.
         let bufferConverter = DynamicAudioBufferConverter(outputFormat: analysisFormat)
 
         try await analyzer.prepareToAnalyze(in: analysisFormat)
+        await recordStage(
+            "analyzer_prepared",
+            fields: [
+                "analysis_sample_rate": String(analysisFormat.sampleRate),
+                "analysis_channels": String(analysisFormat.channelCount),
+            ]
+        )
 
         var capturedInputContinuation: AsyncStream<AnalyzerInput>.Continuation!
         let inputStream = AsyncStream(
@@ -245,38 +276,136 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         let audioSink = AudioTapSink(
             levelContinuation: levelContinuation,
             audioState: audioState,
-            captureContinuation: captureContinuation
+            captureContinuation: captureContinuation,
+            telemetry: telemetry
         )
 
-        #if os(macOS)
-        if usesDirectMacOSCapture, let inputDeviceID {
-            let capture = try MacOSDirectAudioDeviceCapture(
-                deviceID: AudioDeviceID(inputDeviceID),
-                captureFormat: captureFormat,
-                sink: audioSink
+        // Engine configuration and start, with no `await` in between. See `hintFormat`.
+        let strategy: String
+        let captureFormat: AVAudioFormat
+        var configuration: AudioEngineInputConfiguration?
+
+        do {
+            #if os(macOS)
+            if usesDirectMacOSCapture, let inputDeviceID, let directCaptureFormat {
+                strategy = "core_audio_device"
+                captureFormat = directCaptureFormat
+                activeVoiceProcessingEnabled = false
+                let capture = try MacOSDirectAudioDeviceCapture(
+                    deviceID: AudioDeviceID(inputDeviceID),
+                    captureFormat: directCaptureFormat,
+                    sink: audioSink
+                )
+                directAudioDeviceCapture = capture
+                try capture.start()
+            } else {
+                strategy = "audio_engine"
+                let resolved = try AudioEngineInputConfigurator.configure(
+                    inputNode: inputNode,
+                    requestedVoiceProcessingEnabled: requestedVoiceProcessingEnabled
+                )
+                configuration = resolved
+                captureFormat = resolved.nodeFormat
+                activeVoiceProcessingEnabled = resolved.activeVoiceProcessingEnabled
+                try installEngineTap(on: inputNode, sink: audioSink)
+            }
+            #else
+            strategy = "audio_engine"
+            let resolved = try AudioEngineInputConfigurator.configure(
+                inputNode: inputNode,
+                requestedVoiceProcessingEnabled: requestedVoiceProcessingEnabled
             )
-            directAudioDeviceCapture = capture
-            try capture.start()
-        } else {
-            inputNode.installTap(
-                onBus: 0,
-                bufferSize: bufferFrameCount,
-                format: captureFormat,
-                block: makeAudioTapHandler(sink: audioSink)
-            )
-            isAudioEngineTapInstalled = true
-            try audioEngine.start()
+            configuration = resolved
+            captureFormat = resolved.nodeFormat
+            activeVoiceProcessingEnabled = resolved.activeVoiceProcessingEnabled
+            try installEngineTap(on: inputNode, sink: audioSink)
+            #endif
+        } catch {
+            await recordCaptureFailure(error, hintFormat: hintFormat)
+            throw error
         }
-        #else
+
+        isCaptureRunning = true
+        stallCheckTask = telemetry.scheduleStallCheck(
+            fields: [
+                "strategy": strategy,
+                "sample_rate": String(captureFormat.sampleRate),
+                "channels": String(captureFormat.channelCount),
+                "voice_processing_active":
+                    activeVoiceProcessingEnabled.map(String.init) ?? "false",
+            ]
+        )
+
+        await diagnostics.record(
+            category: "audio",
+            name: "capture_started",
+            fields: [
+                "strategy": strategy,
+                "sample_rate": String(captureFormat.sampleRate),
+                "channels": String(captureFormat.channelCount),
+                "format": String(describing: captureFormat.commonFormat),
+                "buffer_frames": String(bufferFrameCount),
+                "voice_processing_requested": String(requestedVoiceProcessingEnabled),
+                "voice_processing_active":
+                    activeVoiceProcessingEnabled.map(String.init) ?? "false",
+                "voice_processing_skipped":
+                    configuration?.voiceProcessingSkippedReason ?? "none",
+                "hint_sample_rate": String(hintFormat.sampleRate),
+                "hint_channels": String(hintFormat.channelCount),
+            ]
+        )
+    }
+
+    /// Installs the tap with a nil format so the node's own format is used verbatim.
+    /// Passing a format that disagrees with the bus makes `installTap` raise an
+    /// Objective-C exception, which Swift cannot catch and which takes the app down.
+    private func installEngineTap(
+        on inputNode: AVAudioInputNode,
+        sink: AudioTapSink
+    ) throws {
         inputNode.installTap(
             onBus: 0,
             bufferSize: bufferFrameCount,
-            format: captureFormat,
-            block: makeAudioTapHandler(sink: audioSink)
+            format: nil,
+            block: makeAudioTapHandler(sink: sink)
         )
         isAudioEngineTapInstalled = true
-        try audioEngine.start()
-        #endif
+
+        do {
+            try audioEngine.start()
+        } catch {
+            throw AudioEngineConfigurationFailure(step: "engine_start", underlying: error)
+        }
+    }
+
+    private func recordCaptureFailure(
+        _ error: Error,
+        hintFormat: AVAudioFormat
+    ) async {
+        let nodeFormat = audioEngine.inputNode.outputFormat(forBus: 0)
+        await diagnostics.record(
+            category: "error",
+            name: "capture_failed",
+            fields: [
+                "step": (error as? AudioEngineConfigurationFailure)?.step ?? "unknown",
+                "message": error.localizedDescription,
+                "voice_processing_requested": String(requestedVoiceProcessingEnabled),
+                "node_sample_rate": String(nodeFormat.sampleRate),
+                "node_channels": String(nodeFormat.channelCount),
+                "hint_sample_rate": String(hintFormat.sampleRate),
+                "hint_channels": String(hintFormat.channelCount),
+            ]
+        )
+    }
+
+    private func recordStage(_ stage: String, fields: [String: String] = [:]) async {
+        var fields = fields
+        fields["stage"] = stage
+        await diagnostics.record(
+            category: "state",
+            name: "speech_pipeline_stage",
+            fields: fields
+        )
     }
 
     private func prepareTranscriberLocale() async throws -> Locale {
@@ -337,6 +466,16 @@ enum MacOSAudioCaptureStrategy: Equatable {
     }
 
     static func forDevice(_ deviceID: AudioDeviceID) -> Self {
+        // AVAudioEngine only captures reliably from the system default input on macOS.
+        // Setting kAudioOutputUnitProperty_CurrentDevice returns noErr but leaves the
+        // input node on the previous device's format, so the tap installs at the wrong
+        // rate and engine start fails with kAudioUnitErr_FormatNotSupported. Read any
+        // other device directly instead.
+        if let defaultInputDeviceID = macOSDefaultInputDeviceID(),
+           deviceID != defaultInputDeviceID {
+            return .coreAudioDevice
+        }
+
         var transportType = UInt32(0)
         var dataSize = UInt32(MemoryLayout<UInt32>.size)
         var address = AudioObjectPropertyAddress(
@@ -356,28 +495,6 @@ enum MacOSAudioCaptureStrategy: Equatable {
             return .audioEngine
         }
         return forTransportType(transportType)
-    }
-}
-
-@available(macOS 26.0, *)
-private func configureMacOSInputDevice(_ deviceID: UInt32, on inputNode: AVAudioInputNode) throws {
-    guard let audioUnit = inputNode.audioUnit else {
-        throw TranscriptionSourceError.unavailable("Could not access AVAudioEngine input audio unit")
-    }
-
-    var mutableDeviceID = AudioDeviceID(deviceID)
-    let status = AudioUnitSetProperty(
-        audioUnit,
-        kAudioOutputUnitProperty_CurrentDevice,
-        kAudioUnitScope_Global,
-        0,
-        &mutableDeviceID,
-        UInt32(MemoryLayout<AudioDeviceID>.size)
-    )
-    guard status == noErr else {
-        throw TranscriptionSourceError.unavailable(
-            "Could not open selected macOS input device \(deviceID): \(status)"
-        )
     }
 }
 
@@ -700,6 +817,7 @@ private struct AudioTapSink: @unchecked Sendable {
     let levelContinuation: AsyncStream<AudioLevelSnapshot>.Continuation
     let audioState: LiveAudioState
     let captureContinuation: AsyncStream<CapturedAudioBuffer>.Continuation
+    let telemetry: AudioCaptureTelemetry
 
     func handle(buffer: AVAudioPCMBuffer) {
         let rawLevel = AudioLevelMeter.normalizedRMS(from: buffer)
@@ -710,11 +828,20 @@ private struct AudioTapSink: @unchecked Sendable {
             )
         )
 
+        let frameCount = Int(buffer.frameLength)
         guard let copiedBuffer = buffer.copyPCMBuffer() else {
+            telemetry.record(frameCount: frameCount, dropped: true)
             return
         }
 
-        captureContinuation.yield(CapturedAudioBuffer(buffer: copiedBuffer))
+        let result = captureContinuation.yield(
+            CapturedAudioBuffer(buffer: copiedBuffer)
+        )
+        if case .dropped = result {
+            telemetry.record(frameCount: frameCount, dropped: true)
+        } else {
+            telemetry.record(frameCount: frameCount, dropped: false)
+        }
     }
 }
 
