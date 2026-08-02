@@ -409,15 +409,52 @@ Since it's a feature and half its job is peripheral awareness: small, always-on-
 legible from across the room and out of the corner of the eye. High contrast. Follows the
 theme constraints in Framing above — any hardcoded color has to clear all four backgrounds.
 
-**Open questions** (David is chewing on these):
+**Decided 2026-08-02:**
 
-- Passive or active? A window only helps if it's in view. If the point is catching speech that
-  went unnoticed, does it need a Dock badge or notification, or is passive glancing enough?
-  Passive is simpler and probably right if it lives on a second monitor — different feature if
-  not.
-- Confirm the spectrum window shares the captioning device preference rather than having its
-  own input selection. Assumed yes.
-- Whether the instantaneous spectrum earns its space once the spectrogram exists.
+- **Passive glancing, no active signaling.** No Dock badge, no notifications. There are almost
+  always multiple monitors, so the window is simply in view. Revisit only if it turns out not
+  to get noticed in practice.
+- **Shares the captioning device preference.** No separate input selection in this window.
+  Consistent with the first-starter-establishes-the-device rule above.
+
+**Still open:** whether the instantaneous spectrum earns its space once the spectrogram exists.
+
+### History retention and memory
+
+**Bound the ring; then memory is a non-issue and full-resolution storage is affordable.**
+Scrollback is explicitly *not* wanted here — unlike the caption transcript, where it's the
+whole point — so retention only needs to cover what's on screen plus resize headroom.
+
+A 2048-point real FFT yields 1024 magnitude bins. Per column: **4 KB** at Float32,
+1 KB reduced to 256 log-spaced bands, 256 B if those are quantized to UInt8 dB.
+
+At 50% overlap on 48 kHz the hop is 1024 samples = 21.3 ms, so **~47 columns/sec**:
+
+- *Unbounded:* 188 KB/s → **11 MB/min → ~676 MB/hour** at full resolution. A 90-minute client
+  meeting is a gigabyte. Even the quantized form is ~42 MB/hour. Not viable — this would be the
+  first thing in the app to misbehave under the actual workload.
+- *Bounded ring, full resolution Float32:* 30 s ≈ 5.6 MB, **60 s ≈ 11 MB**, 120 s ≈ 22 MB.
+
+**Plan: preallocated ring at ~60 s, all 1024 bins as Float32.** Don't quantize and don't
+downsample to display bands — retaining full-resolution magnitudes means window resize, a
+changed dB floor, a retuned color ramp, or switching between log and mel axes are all re-renders
+from retained data instead of waiting for new audio to scroll past. Worth 11 MB. Preallocation
+also means zero allocation churn across a 90-minute meeting, which matters more than the byte
+count.
+
+*Size the ring by duration, not column count,* deriving columns from the actual hop rate — a
+96 kHz device otherwise doubles the column rate and the same ring covers half the time. Capping
+analysis at 20–30/sec (see DSP parameters) makes the rate device-independent anyway.
+
+*Convenient coincidence:* at ~47 columns/sec and one column per pixel, a 1000px-wide spectrogram
+shows ~21 seconds — naturally in the same range as the 20–30 second "ignore, then catch up"
+window in Framing above. A ring of 2–3× the visible width covers resize headroom without much
+thought.
+
+*No conflict with speaker tinting.* Soniox labels land a second or two behind the audio, so a
+60 s ring has an order of magnitude of margin for retroactive coloring. And the per-speaker
+average spectrum idea doesn't touch the ring at all — it's a running sum and count per speaker,
+a few KB total regardless of meeting length.
 
 ## Blocked
 
