@@ -150,16 +150,19 @@ These shaped the whole list and are worth keeping in mind before changing anythi
   common 2–3 speaker case never uses alert colors. Base16 is a good source palette.
   **Open:** per-theme contrast decisions, especially green-on-`darkGreen`.
 
-- [ ] **`Local` rename + dynamic server segment.** `TranscriptionMode` → `.local` /
-      `.server(provider)`, with the second segment labeled by the active backend.
+- [ ] **`Local` rename + dynamic server segment.** Rename the `.onDevice` title to "Local",
+      and derive the server segment's title from the active provider instead of the literal
+      `"Soniox"` at `UserPreferences.swift:102`.
 
   *Why:* "Local" is 5 characters against "On-device"'s 9, which matters on iPhone where the
-  pill competes with three toolbar buttons in one row. More importantly: many server backends
-  can be *configured* but only one is active, so the picker is really a binary local/server
-  toggle whose second segment is named for the active provider (`Local | Soniox`,
-  `Local | Whisper`). It never grows a third segment, and the fast dead-zone toggle stays one
-  tap. **Open:** do this now, or when a second backend actually exists? Lean is now — cheaper
-  before there's migration to worry about, and the rename is happening anyway.
+  pill competes with three toolbar buttons in one row. And the picker is conceptually a
+  binary local/server toggle whose second segment is named for the active provider
+  (`Local | Soniox`, `Local | Azure`) — it never grows a third segment, and the fast
+  dead-zone toggle stays one tap.
+
+  *Smaller than it first looked.* `TranscriptionMode` is already `.onDevice` / `.server`, so
+  the type-level split exists — this is a title change plus reading the active provider,
+  not a refactor. See the seams note under Long term.
 
 - [ ] **Extracting from scrollback.** Today macOS has one affordance: a
       "Copy Full Transcript to Clipboard" command (`LarmindonApp.swift:51`). iOS has none.
@@ -189,19 +192,48 @@ These shaped the whole list and are worth keeping in mind before changing anythi
 ## Long term
 
 - [ ] **Azure Speech Services backend.** Configurable URL and key pointing at a
-      self-hosted/owned Azure instance.
+      self-hosted/owned Azure instance. **Deferred — medium to long term, not near-term
+      work.**
 
   *Why:* this is the backend that would make the app usable for **work and client** material,
   where sending audio to a third-party API isn't acceptable but an Azure instance under our
   own control is. That's a different bar than the personal use Soniox covers, and it's the
   reason this is worth building even though Soniox is very good.
 
-  *Dependency:* this is the second server backend, which settles the open question under
-  `Local` rename + dynamic server segment — do that refactor **before** Azure lands, not
-  after, so there's no migration to unpick. Also raises questions the single-backend design
-  hasn't had to answer yet: per-provider credential storage beyond the existing Soniox
-  keychain entry, whether diarization is available and in what shape, and what the level
-  meter's token-arrival hot signal maps to on a different protocol.
+  *Open when it happens:* whether diarization is available and in what shape, and what the
+  level meter's token-arrival hot signal maps to on a different protocol.
+
+### Keeping the multi-provider seams open
+
+Azure is deferred, so the near-term obligation is only **don't make it harder later**. Good
+news: the seams already exist and are mostly right.
+
+Already generic, don't undo:
+
+- `TranscriptionMode` is `.onDevice` / `.server` — the mode axis is already provider-neutral
+- `ServerProviderID` is a real enum registry (`UserPreferences.swift:107`)
+- `ProviderCredentialStore` is keyed by `ServerProviderID`, not Soniox-specific
+- `TranscriptionPreference.activeServerProviderStorageKey` exists, and `PreferencesView`
+  already renders a Provider picker over `ServerProviderID.allCases`
+- `TranscriptionSource` is a clean protocol (`results`, `levelUpdates`, `name`, `start`,
+  `stop`) that a second provider satisfies without changes
+- `CaptionSession.activeServerProvider` is tracked and already flows into diagnostics
+
+The actual gap: **the active-provider preference is written but never read.** Everything
+downstream hardcodes `.soniox` instead. These are the sites, and they're the corner to
+avoid deepening:
+
+- `UserPreferences.swift:102` — `TranscriptionMode.server.title` returns the literal `"Soniox"`
+- `CaptionSession.swift:206` — `activeServerProvider = .soniox` rather than the stored value
+- `CaptionSession.swift:418` and `makeSource`'s `.server` branch — credential lookup and
+  source construction both assume Soniox
+- `LarmindonRootView.swift:361` — `isSelectedModeConfigured` checks the Soniox credential
+- `PreferencesView.swift:161`, `:175`, `:185` — save / remove / check credential
+
+**How to apply:** when touching any of these, read the active provider from the stored
+preference rather than adding another `.soniox` literal. Doing that incrementally means
+Azure becomes "add an enum case and a `TranscriptionSource` conformance" rather than a
+refactor. No need to do it as a dedicated project.
 
 ## Blocked
 
