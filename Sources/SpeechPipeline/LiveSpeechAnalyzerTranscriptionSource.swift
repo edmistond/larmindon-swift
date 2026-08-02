@@ -820,17 +820,23 @@ private struct AudioTapSink: @unchecked Sendable {
     let telemetry: AudioCaptureTelemetry
 
     func handle(buffer: AVAudioPCMBuffer) {
-        let rawLevel = AudioLevelMeter.normalizedRMS(from: buffer)
+        // One measurement pass serves both the meter and telemetry; this runs on the
+        // real-time audio thread, so the buffer is walked once.
+        let measurement = AudioLevelMeter.measure(from: buffer)
         levelContinuation.yield(
             audioState.updateRawLevel(
-                rawLevel,
+                AudioLevelMeter.displayLevel(for: measurement),
                 observedCallbackFrameLength: Int(buffer.frameLength)
             )
         )
 
         let frameCount = Int(buffer.frameLength)
         guard let copiedBuffer = buffer.copyPCMBuffer() else {
-            telemetry.record(frameCount: frameCount, dropped: true)
+            telemetry.record(
+                frameCount: frameCount,
+                dropped: true,
+                measurement: measurement
+            )
             return
         }
 
@@ -838,9 +844,17 @@ private struct AudioTapSink: @unchecked Sendable {
             CapturedAudioBuffer(buffer: copiedBuffer)
         )
         if case .dropped = result {
-            telemetry.record(frameCount: frameCount, dropped: true)
+            telemetry.record(
+                frameCount: frameCount,
+                dropped: true,
+                measurement: measurement
+            )
         } else {
-            telemetry.record(frameCount: frameCount, dropped: false)
+            telemetry.record(
+                frameCount: frameCount,
+                dropped: false,
+                measurement: measurement
+            )
         }
     }
 }

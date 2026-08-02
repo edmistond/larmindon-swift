@@ -211,9 +211,11 @@ private struct SharedAudioCaptureSink: @unchecked Sendable {
     let levelReporter: ServerAudioLevelReporter
 
     func handle(_ buffer: AVAudioPCMBuffer) {
-        let rawLevel = AudioLevelMeter.normalizedRMS(from: buffer)
+        // One measurement pass serves both the meter and telemetry; this runs on the
+        // real-time audio thread, so the buffer is walked once.
+        let measurement = AudioLevelMeter.measure(from: buffer)
         if let snapshot = levelReporter.update(
-            rawLevel: rawLevel,
+            rawLevel: AudioLevelMeter.displayLevel(for: measurement),
             observedCallbackFrameLength: Int(buffer.frameLength)
         ) {
             levelContinuation.yield(snapshot)
@@ -222,7 +224,8 @@ private struct SharedAudioCaptureSink: @unchecked Sendable {
         guard let copied = buffer.copyPCMBuffer() else {
             telemetry.record(
                 frameCount: Int(buffer.frameLength),
-                dropped: true
+                dropped: true,
+                measurement: measurement
             )
             return
         }
@@ -232,12 +235,14 @@ private struct SharedAudioCaptureSink: @unchecked Sendable {
         if case .dropped = result {
             telemetry.record(
                 frameCount: Int(buffer.frameLength),
-                dropped: true
+                dropped: true,
+                measurement: measurement
             )
         } else {
             telemetry.record(
                 frameCount: Int(buffer.frameLength),
-                dropped: false
+                dropped: false,
+                measurement: measurement
             )
         }
     }

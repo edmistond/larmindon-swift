@@ -546,6 +546,15 @@ public final class CaptionSession {
                 ),
             "active_input_kind":
                 routeManager.currentRouteInputs.first?.kind ?? "none",
+            // Device identifiers are hashed, which makes a bundle unreadable on its own —
+            // there is no way to tell the built-in mic from loopback from a USB interface.
+            // The display names are the same strings already shown in the input picker.
+            "active_input_name":
+                routeManager.currentRouteInputs.first?.name ?? "none",
+            "preferred_input_name":
+                routeManager.availableInputs
+                    .first { $0.id == routeManager.preferredInputID }?
+                    .name ?? "none",
             "outputs": routeManager.currentRouteOutputs
                 .map {
                     "\(DiagnosticRedaction.identifier($0.id)):\($0.kind)"

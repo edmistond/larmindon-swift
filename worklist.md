@@ -191,6 +191,35 @@ These shaped the whole list and are worth keeping in mind before changing anythi
   the point. Being able to ignore 20–30 seconds while navigating traffic and then catch up
   is a deliberate advantage of the current layout, and a mode that discards it is a downgrade.
 
+## Diagnostics (done, off the original list)
+
+Added while diagnosing a "no captions appearing" report that turned out to be zero tokens
+from Soniox. The bundle could prove audio *flowed* but not that it *contained anything*,
+so answering the question required asking the user what the level meter had been doing.
+
+- [x] **Signal level in `capture_aggregate`.** `rms_dbfs`, `peak_dbfs`, and
+      `silent_callbacks`, cumulative over the session.
+
+  *Why:* Callback and frame counts can't distinguish 441,000 frames of speech from 441,000
+  frames of silence. `peak_dbfs` answers "did anything ever arrive," and `silent_callbacks`
+  separates a device delivering digital zeros (loopback with nothing playing, muted input)
+  from one delivering a very quiet room (mic gain too low). Values are unscaled, unlike the
+  meter — `normalizedRMS` applies a ×8 display gain and clamps, so it saturates at an RMS of
+  0.125 and can't represent anything above that.
+
+- [x] **Device names in `capture_route`.** `active_input_name` and `preferred_input_name`
+      alongside the existing hashed IDs.
+
+  *Why:* `DiagnosticRedaction.identifier` FNV-hashes device IDs, so a bundle showed
+  `device-ecb307f9ac8c5fe2` with no way to tell the built-in mic from loopback from a USB
+  interface — which is the first thing you need when captures come back silent. **Note the
+  tradeoff:** this is a deliberate partial relaxation of the redaction design, since device
+  names can be personal ("<name>'s AirPods"). The hashed IDs are unchanged and still there.
+  Reverse it if bundles ever get shared beyond this project.
+
+- [x] `AudioLevelMeterTests` covering unscaled RMS/peak, transient capture, digital silence
+      vs. quiet signal, Int16/Float parity, display-gain clamping, and dBFS formatting.
+
 ## Minor observations
 
 - The Stop button treatment should split by platform: on iOS a large, saturated,

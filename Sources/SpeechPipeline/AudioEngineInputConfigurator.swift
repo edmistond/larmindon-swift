@@ -132,6 +132,9 @@ final class AudioCaptureTelemetry: @unchecked Sendable {
         let callbacks: Int
         let frames: Int
         let droppedBuffers: Int
+        let meanRMS: Double
+        let peak: Double
+        let silentCallbacks: Int
     }
 
     private let lock = NSLock()
@@ -139,24 +142,33 @@ final class AudioCaptureTelemetry: @unchecked Sendable {
     private var callbacks = 0
     private var frames = 0
     private var droppedBuffers = 0
+    private var weightedSquareSum = 0.0
+    private var peak = 0.0
+    private var silentCallbacks = 0
 
     init(diagnostics: DiagnosticRecorder) {
         self.diagnostics = diagnostics
     }
 
-    func record(frameCount: Int, dropped: Bool) {
+    func record(
+        frameCount: Int,
+        dropped: Bool,
+        measurement: AudioSignalMeasurement = AudioSignalMeasurement()
+    ) {
         lock.lock()
         callbacks += 1
         frames += frameCount
         if dropped {
             droppedBuffers += 1
         }
+        // Weighting by frame count keeps the session mean correct if buffer sizes vary.
+        weightedSquareSum += measurement.rms * measurement.rms * Double(frameCount)
+        peak = max(peak, measurement.peak)
+        if measurement.isDigitalSilence {
+            silentCallbacks += 1
+        }
         let shouldReport = callbacks.isMultiple(of: 100)
-        let snapshot = Snapshot(
-            callbacks: callbacks,
-            frames: frames,
-            droppedBuffers: droppedBuffers
-        )
+        let snapshot = makeSnapshotLocked()
         lock.unlock()
 
         if shouldReport {
@@ -173,10 +185,18 @@ final class AudioCaptureTelemetry: @unchecked Sendable {
     func snapshot() -> Snapshot {
         lock.lock()
         defer { lock.unlock() }
-        return Snapshot(
+        return makeSnapshotLocked()
+    }
+
+    /// Caller must hold `lock`.
+    private func makeSnapshotLocked() -> Snapshot {
+        Snapshot(
             callbacks: callbacks,
             frames: frames,
-            droppedBuffers: droppedBuffers
+            droppedBuffers: droppedBuffers,
+            meanRMS: frames > 0 ? (weightedSquareSum / Double(frames)).squareRoot() : 0,
+            peak: peak,
+            silentCallbacks: silentCallbacks
         )
     }
 
@@ -207,6 +227,12 @@ extension AudioCaptureTelemetry.Snapshot {
             "callbacks": String(callbacks),
             "frames": String(frames),
             "dropped_buffers": String(droppedBuffers),
+            // Frame counts prove audio kept flowing but not that it contained anything.
+            // These distinguish "captured speech" from "captured silence", which is
+            // otherwise unanswerable from a bundle alone.
+            "rms_dbfs": AudioLevelMeter.dBFSDescription(meanRMS),
+            "peak_dbfs": AudioLevelMeter.dBFSDescription(peak),
+            "silent_callbacks": String(silentCallbacks),
         ]
     }
 }
