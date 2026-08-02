@@ -16,6 +16,10 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
     private var pingTask: Task<Void, Never>?
     private var bytesSent = 0
     private var sentenceAccumulator = SonioxSentenceAccumulator()
+    /// Set while tearing down, so the cancellation we asked for is not reported as a
+    /// provider failure. A cancellation arriving outside a stop is a real fault.
+    private var isStopping = false
+    private var stopTask: Task<Void, Never>?
 
     public init(
         apiKey: String,
@@ -143,6 +147,14 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
                     }
                 }
             } catch {
+                guard !isStopping else {
+                    await diagnostics.record(
+                        category: "provider",
+                        name: "soniox_cancelled",
+                        fields: ["message": error.localizedDescription]
+                    )
+                    return
+                }
                 continuation.yield(.failure(error.localizedDescription))
                 await diagnostics.record(
                     category: "provider",
@@ -226,7 +238,24 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
         }
     }
 
+    /// Shutting down cleanly means sending the empty frame Soniox uses as end-of-stream
+    /// and waiting for the server to flush its remaining tokens and close. That takes a
+    /// couple of seconds, and a second stop arriving during it would find the client
+    /// mid-finish and cancel the socket instead, throwing away those final tokens. So
+    /// concurrent callers join the teardown already running rather than starting another.
     public func stop() async {
+        if let stopTask {
+            await stopTask.value
+            return
+        }
+
+        let task = Task { await performStop() }
+        stopTask = task
+        await task.value
+    }
+
+    private func performStop() async {
+        isStopping = true
         pingTask?.cancel()
         pingTask = nil
         if let audioTask {
