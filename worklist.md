@@ -14,6 +14,12 @@ These shaped the whole list and are worth keeping in mind before changing anythi
   reconstructing who said what quickly* — a scanning task. That's why paragraph rhythm and
   speaker separation are primary work rather than cosmetics, and why a reduced "glance mode"
   would be a downgrade.
+- **Full session scrollback is load-bearing, especially on macOS.** It's used to caption
+  client meetings, staying present through the meeting and mining the transcript for notes
+  afterward. So: never cap retained lines or pass a `recentLimit` in the main view, keep the
+  caption list lazy (don't group lines into container views that force a session to render
+  eagerly), and favor work that helps *extract from* past transcript over work that reduces
+  what's shown.
 - **The bottom band on iOS is deliberate.** It's thumb clearance, and on a MagSafe dash
   mount it keeps the last caption line above the hand on the wheel. Don't reclaim it for
   more text. On iOS the goal is a *quieter* control bar at the same height, not a shorter one.
@@ -154,6 +160,22 @@ These shaped the whole list and are worth keeping in mind before changing anythi
   `Local | Whisper`). It never grows a third segment, and the fast dead-zone toggle stays one
   tap. **Open:** do this now, or when a second backend actually exists? Lean is now — cheaper
   before there's migration to worry about, and the rename is happening anyway.
+
+- [ ] **Extracting from scrollback.** Today macOS has one affordance: a
+      "Copy Full Transcript to Clipboard" command (`LarmindonApp.swift:51`). iOS has none.
+
+  *Why:* the meeting workflow is "stay present, mine the transcript for notes afterward,"
+  and full-transcript copy is a blunt instrument for it — after a 90-minute meeting you want
+  the three paragraphs where a process was explained, not all of it. Each utterance is a
+  separate `Text` with `.textSelection(.enabled)`, and SwiftUI scopes selection per view, so
+  dragging a selection *across* utterances almost certainly doesn't work (quick to confirm
+  on device — if it does work, most of this item evaporates).
+
+  *Options, roughly increasing in effort:* copy-a-block on right-click / long-press, since
+  speaker blocks are now a real structural unit; a selection mode that yields a contiguous
+  range across utterances; timestamps on blocks so a copied excerpt can be located later; or
+  session export to a file. **Open:** which of these actually fits how the notes get taken —
+  worth describing the current manual process before building anything.
 
 ## Blocked
 
