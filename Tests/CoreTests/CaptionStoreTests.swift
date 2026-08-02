@@ -53,6 +53,61 @@ final class CaptionStoreTests: XCTestCase {
         XCTAssertEqual(store.fullTranscript, "first\nsecond\nstill in progress")
     }
 
+    func testTranscriptMarksSpeakerChangesAndSeparatesBlocks() {
+        let store = CaptionStore()
+
+        store.appendFinalized([
+            CaptionSegment(text: "First thing I said.", speakerID: "1"),
+            CaptionSegment(text: "Second thing I said.", speakerID: "1"),
+            CaptionSegment(text: "My reply.", speakerID: "2"),
+        ])
+
+        // One marker per speaker turn, not per line, and a blank line between turns.
+        XCTAssertEqual(
+            store.fullTranscript,
+            """
+            [Speaker 1] First thing I said.
+            Second thing I said.
+
+            [Speaker 2] My reply.
+            """
+        )
+    }
+
+    func testTranscriptMarksASpeakerReturningLaterAsANewBlock() {
+        let store = CaptionStore()
+
+        store.appendFinalized([
+            CaptionSegment(text: "Question?", speakerID: "1"),
+            CaptionSegment(text: "Answer.", speakerID: "2"),
+        ])
+        store.replaceVolatile([
+            CaptionSegment(text: "Follow-up.", speakerID: "1"),
+        ])
+
+        XCTAssertEqual(
+            store.fullTranscript,
+            """
+            [Speaker 1] Question?
+
+            [Speaker 2] Answer.
+
+            [Speaker 1] Follow-up.
+            """
+        )
+    }
+
+    func testTranscriptWithoutSpeakersStaysUnlabelled() {
+        let store = CaptionStore()
+
+        // On-device transcription reports no speaker, so the output must not gain markers.
+        store.appendFinalized("first")
+        store.appendFinalized("second")
+        store.replaceVolatile("still in progress")
+
+        XCTAssertEqual(store.fullTranscript, "first\nsecond\nstill in progress")
+    }
+
     func testVisibleCaptionTextUsesRecentChunksPlusVolatileTail() {
         let store = CaptionStore()
 

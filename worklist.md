@@ -177,6 +177,32 @@ These shaped the whole list and are worth keeping in mind before changing anythi
   session export to a file. **Open:** which of these actually fits how the notes get taken —
   worth describing the current manual process before building anything.
 
+- [x] **Speaker markers in the copied transcript.** `[Speaker N]` at the start of each
+      speaker turn, blank line between turns, in `CaptionStore.fullTranscript`.
+
+  *Why:* the notes workflow is "Copy Full Transcript to Clipboard" → paste into a text editor
+  with better search than this app has. Without markers, a Soniox transcript arrives as
+  undifferentiated lines and there's no way to tell or find who said what. One marker per
+  turn rather than per line, so it stays readable as prose and `[Speaker 2]` is a useful
+  search target. On-device reports no speaker, so its output is unchanged.
+
+## Long term
+
+- [ ] **Azure Speech Services backend.** Configurable URL and key pointing at a
+      self-hosted/owned Azure instance.
+
+  *Why:* this is the backend that would make the app usable for **work and client** material,
+  where sending audio to a third-party API isn't acceptable but an Azure instance under our
+  own control is. That's a different bar than the personal use Soniox covers, and it's the
+  reason this is worth building even though Soniox is very good.
+
+  *Dependency:* this is the second server backend, which settles the open question under
+  `Local` rename + dynamic server segment — do that refactor **before** Azure lands, not
+  after, so there's no migration to unpick. Also raises questions the single-backend design
+  hasn't had to answer yet: per-provider credential storage beyond the existing Soniox
+  keychain entry, whether diarization is available and in what shape, and what the level
+  meter's token-arrival hot signal maps to on a different protocol.
+
 ## Blocked
 
 - [ ] **Input chip merge.** `InputSelectionMenu(labelTitle: routeManager.currentInputName)`

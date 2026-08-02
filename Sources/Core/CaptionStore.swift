@@ -63,11 +63,48 @@ public final class CaptionStore {
     }
 
     public var fullFinalizedTranscript: String {
-        finalizedChunks.map(\.text).joined(separator: "\n")
+        Self.transcript(for: finalizedChunks.map(CaptionLine.finalized))
     }
 
     public var fullTranscript: String {
-        visibleCaptionLines().map(\.text).joined(separator: "\n")
+        Self.transcript(for: visibleCaptionLines())
+    }
+
+    /// Renders lines as plain text for copying into an editor, marking each run of
+    /// consecutive lines from one speaker with a `[Speaker N]` prefix and separating runs
+    /// with a blank line. The marker is searchable, which is the point: the transcript gets
+    /// pasted somewhere with better search than this app has.
+    ///
+    /// On-device transcription reports no speaker at all, so every line falls into a single
+    /// unlabelled run and the output stays a plain newline-joined transcript.
+    private static func transcript(for lines: [CaptionLine]) -> String {
+        var blocks: [String] = []
+        var blockLines: [String] = []
+        var blockSpeakerID: String?
+        var hasOpenBlock = false
+
+        func closeBlock() {
+            guard !blockLines.isEmpty else { return }
+            let body = blockLines.joined(separator: "\n")
+            if let blockSpeakerID {
+                blocks.append("[Speaker \(blockSpeakerID)] \(body)")
+            } else {
+                blocks.append(body)
+            }
+            blockLines.removeAll()
+        }
+
+        for line in lines {
+            if hasOpenBlock, line.speakerID != blockSpeakerID {
+                closeBlock()
+            }
+            blockSpeakerID = line.speakerID
+            hasOpenBlock = true
+            blockLines.append(line.text)
+        }
+        closeBlock()
+
+        return blocks.joined(separator: "\n\n")
     }
 
     public func visibleCaptionLines(recentLimit: Int? = nil) -> [CaptionLine] {
