@@ -259,10 +259,28 @@ public final class CaptionSession {
             audioRouteRecoveryTask?.cancel()
             audioRouteRecoveryTask = nil
         }
+        // Tearing a provider down can take seconds — Soniox waits on the server closing
+        // the socket. The Start/Stop button reads `store.isRunning`, so clear the visible
+        // state up front rather than after the teardown, or Stop looks like it did
+        // nothing and gets pressed again.
+        store.isRunning = false
+        audioLevels = AudioLevelSnapshot()
+        activeMode = nil
+        activeServerProvider = nil
+        activeInputDeviceID = nil
+        activeAudioBufferFrameCount = nil
+        activeVoiceProcessingEnabled = nil
+
         captureLevelTask?.cancel()
         captureLevelTask = nil
         silentCaptureTask?.cancel()
         silentCaptureTask = nil
+        // Stop consuming results before the source shuts down, so anything it emits on
+        // the way out cannot be mistaken for a live failure and restart the teardown.
+        resultTask?.cancel()
+        resultTask = nil
+        levelTask?.cancel()
+        levelTask = nil
 
         if let activeCapture {
             await activeCapture.stop()
@@ -271,20 +289,9 @@ public final class CaptionSession {
         if let activeSource {
             await activeSource.stop()
         }
-        resultTask?.cancel()
-        resultTask = nil
-        levelTask?.cancel()
-        levelTask = nil
         routeManager.releaseAudioSession()
         activeSource = nil
-        activeInputDeviceID = nil
-        activeAudioBufferFrameCount = nil
-        activeVoiceProcessingEnabled = nil
-        activeMode = nil
-        activeServerProvider = nil
-        store.isRunning = false
         speechAnalyzerState = "Stopped"
-        audioLevels = AudioLevelSnapshot()
         microphoneCapabilities.refresh()
         await diagnostics.record(
             category: "state",
