@@ -22,6 +22,10 @@ These shaped the whole list and are worth keeping in mind before changing anythi
   `darkGreen` is the obvious casualty.
 - **Font size is user-adjustable 20–72** (`PreferencesView.swift:30`), so every spacing
   value must be a multiple of `fontSize`, never a fixed point size.
+- **Speaker separation has been overcorrected in both directions before.** It used to break
+  per line and per sentence, which was distracting; the accumulator then merged runs so
+  completely that adjacent speakers formed one continuous stripe that merely changed color.
+  The target is a continuous bar within a speaker's turn and a clean break between turns.
 
 ---
 
@@ -93,8 +97,19 @@ These shaped the whole list and are worth keeping in mind before changing anythi
   than adding one, fixes the weak panel seam, and frees the horizontal space the 10pt capsule
   currently takes in the status row. Independent of the input chip merge; not blocked by it.
 
-- [ ] **Speaker bars.** Drop the right-hand bar. ~6pt horizontal inset. `Capsule` instead of
-      `Rectangle`. 2pt vertical inset within a block, plus `fontSize * 0.5` gap between blocks.
+- [x] **Speaker bars.** Drop the right-hand bar. ~6pt horizontal inset. Rounded ends. One
+      continuous bar per speaker block, with the gap between blocks outside the bar.
+
+  *Pulled forward from Tier 2*, because the Tier 1 utterance spacing broke the bars at every
+  line and that read as a regression — a speaker's turn fragmented into a dashed column.
+
+  *Implementation note:* done without grouping lines into container views, which would have
+  put a whole speaker turn inside one `LazyVStack` child and defeated laziness — on-device
+  reports no speaker, so every line would land in a single block and render eagerly. Instead
+  the list stays flat and each line carries two bottom paddings: one *inside* the bar overlay
+  (so same-speaker utterances stay joined through the gap) and one *outside* it (so the bar
+  breaks at a speaker change). Bar ends are square mid-block and rounded only at block
+  boundaries; a capsule per line would pinch at every junction and undo the merge.
 
   *Why:* Two bars is double the chroma for single-duty information, and they visually cage
   the text. On iPhone they currently sit hard against the screen edge where the display

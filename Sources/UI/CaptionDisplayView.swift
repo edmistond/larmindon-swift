@@ -16,11 +16,17 @@ public struct CaptionDisplayView: View {
     // background toward gray and crush contrast further.
     private static let volatileTextOpacity: Double = 0.9
 
+    private static let speakerBarWidth: CGFloat = 3
+    private static let speakerBarInset: CGFloat = 6
+
     // Spacing is expressed as a multiple of the caption font size, which the user can set
-    // anywhere from 20 to 72. The two tiers give a wrapped utterance tighter leading than
-    // the gap between separate utterances, so paragraph boundaries are visible at a glance.
+    // anywhere from 20 to 72. Three tiers: tightest inside a wrapped utterance, wider
+    // between utterances, widest at a speaker change — so turn-taking is visible as shape
+    // before any text is read. On-device transcription reports no speaker, which collapses
+    // every line into one block and leaves the first two tiers doing the work.
     private var textLineSpacing: CGFloat { CGFloat(fontSize * 0.16) }
     private var utteranceSpacing: CGFloat { CGFloat(fontSize * 0.5) }
+    private var speakerBlockSpacing: CGFloat { CGFloat(fontSize * 0.8) }
 
     public init(lines: [CaptionLine], fontSize: Double) {
         self.lines = lines
@@ -31,7 +37,7 @@ public struct CaptionDisplayView: View {
         GeometryReader { scrollContainer in
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: utteranceSpacing) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         if lines.isEmpty {
                             Text("Ready for captions")
                                 .foregroundStyle(.secondary)
@@ -40,7 +46,9 @@ public struct CaptionDisplayView: View {
                                 .padding(.horizontal, 16)
                                 .frame(maxWidth: .infinity, alignment: .center)
                         } else {
-                            ForEach(lines) { line in
+                            ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
+                                let position = blockPosition(at: index)
+
                                 Text(AttributedString(line.text))
                                     .foregroundStyle(
                                         Color.primary.opacity(line.isVolatile ? Self.volatileTextOpacity : 1)
@@ -50,11 +58,17 @@ public struct CaptionDisplayView: View {
                                     .textSelection(.enabled)
                                     .padding(.horizontal, 16)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                    .overlay {
+                                    // Inside the bar: consecutive utterances from one speaker
+                                    // keep their breathing room while the bar runs unbroken
+                                    // through the gap, so a speaker's turn reads as one block.
+                                    .padding(.bottom, position.isBlockEnd ? 0 : utteranceSpacing)
+                                    .overlay(alignment: .leading) {
                                         if let speakerID = line.speakerID {
-                                            speakerBars(for: speakerID)
+                                            speakerBar(for: speakerID, position: position)
                                         }
                                     }
+                                    // Outside the bar, so the bar actually breaks here.
+                                    .padding(.bottom, position.isBlockEnd ? speakerBlockSpacing : 0)
                                     .id(line.id)
                             }
                         }
@@ -144,20 +158,36 @@ public struct CaptionDisplayView: View {
         }
     }
 
-    private func speakerBars(for speakerID: String) -> some View {
-        HStack(spacing: 0) {
-            speakerBar(for: speakerID)
-            Spacer(minLength: 0)
-            speakerBar(for: speakerID)
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
+    /// Where a line sits within a run of consecutive lines from the same speaker.
+    private struct BlockPosition {
+        let isBlockStart: Bool
+        let isBlockEnd: Bool
     }
 
-    private func speakerBar(for speakerID: String) -> some View {
-        Rectangle()
-            .fill(SpeakerColor.color(for: speakerID, scheme: colorScheme))
-            .frame(width: 3)
+    private func blockPosition(at index: Int) -> BlockPosition {
+        let speakerID = lines[index].speakerID
+        return BlockPosition(
+            isBlockStart: index == 0 || lines[index - 1].speakerID != speakerID,
+            isBlockEnd: index == lines.count - 1 || lines[index + 1].speakerID != speakerID
+        )
+    }
+
+    private func speakerBar(for speakerID: String, position: BlockPosition) -> some View {
+        // Square through the middle of a block so adjacent segments meet flush and read as
+        // one unbroken rule; only the block's outer ends are rounded. A capsule on every
+        // line would pinch at each junction and undo the merge.
+        UnevenRoundedRectangle(
+            topLeadingRadius: position.isBlockStart ? Self.speakerBarWidth / 2 : 0,
+            bottomLeadingRadius: position.isBlockEnd ? Self.speakerBarWidth / 2 : 0,
+            bottomTrailingRadius: position.isBlockEnd ? Self.speakerBarWidth / 2 : 0,
+            topTrailingRadius: position.isBlockStart ? Self.speakerBarWidth / 2 : 0
+        )
+        .fill(SpeakerColor.color(for: speakerID, scheme: colorScheme))
+        .frame(width: Self.speakerBarWidth)
+        // Keeps the bar clear of the iPhone's display curvature, which was clipping it.
+        .padding(.leading, Self.speakerBarInset)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -229,18 +259,37 @@ private struct CaptionScrollGeometry: Equatable {
                     speakerID: "1"
                 )
             ),
+            // Same speaker as the line above: the bar should run unbroken across both.
             .finalized(
                 TranscriptChunk(
                     text: "Today we're covering the quarterly results and the roadmap.",
+                    speakerID: "1"
+                )
+            ),
+            .finalized(
+                TranscriptChunk(
+                    text: "Before that, can we revisit last quarter's numbers?",
                     speakerID: "2"
                 )
             ),
             .volatile(
                 VolatileCaption(
-                    text: "And then we'll move on to the open questions…",
+                    text: "Sure — and then we'll move on to the open questions…",
                     speakerID: "1"
                 )
             ),
+        ],
+        fontSize: 30
+    )
+    .frame(width: 520, height: 420)
+}
+
+#Preview("No speaker information") {
+    CaptionDisplayView(
+        lines: [
+            .finalized(TranscriptChunk(text: "On-device transcription reports no speaker.")),
+            .finalized(TranscriptChunk(text: "Every line collapses into a single block.")),
+            .volatile(VolatileCaption(text: "So the utterance gap carries the rhythm…")),
         ],
         fontSize: 30
     )
