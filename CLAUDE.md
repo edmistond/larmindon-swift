@@ -7,8 +7,17 @@ on-device transcription. (Native rewrite of an earlier captioning app.)
 ## Source control: jujutsu (`jj`)
 
 This repo uses **jujutsu**, not plain git. **Checkpoint every turn** — after making changes,
-run `jj describe -m "..."` to record a descriptive message on the working-copy commit. Don't
-wait to be asked. There's no staging step in jj; the working copy is always a commit.
+run `jj commit -m "..."`. Don't wait to be asked. There's no staging step in jj; the working
+copy is always a commit.
+
+Use `jj commit`, **not** `jj describe`. `describe` only renames the working-copy commit, so
+running it every turn overwrites the previous message and collapses all the work into a
+single commit with no rollback granularity. `jj commit` describes the working copy *and*
+starts a new one. Check `jj log` afterwards: the number of commits should be growing, not
+one commit being renamed repeatedly.
+
+Prefer many small checkpoints over one large one. Builds get tested on real hardware, so
+being able to roll back one bad change without losing the good ones matters.
 
 ## Tooling: use `rtk`
 
