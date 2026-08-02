@@ -27,7 +27,7 @@ These shaped the whole list and are worth keeping in mind before changing anythi
 
 ## Tier 1 — small, self-contained, judge on device immediately
 
-- [ ] **Volatile text contrast.** `.secondary` → ~0.9 opacity at `CaptionDisplayView.swift:32`.
+- [x] **Volatile text contrast.** `.secondary` → ~0.9 opacity at `CaptionDisplayView.swift:32`.
 
   *Why:* `.secondary` in dark mode is roughly 55% opacity, so the freshest text — the thing
   just said — is the hardest thing on screen to read. That inverts the app's priority. It's
@@ -36,7 +36,7 @@ These shaped the whole list and are worth keeping in mind before changing anythi
   brightness with a subtle italic, or a thin animated underline — i.e. move the "provisional"
   signal off the contrast channel entirely.
 
-- [ ] **Top scroll edge effect.** `.scrollEdgeEffectStyle(.soft, for: .top)` on the caption
+- [x] **Top scroll edge effect.** `.scrollEdgeEffectStyle(.soft, for: .top)` on the caption
       `ScrollView`.
 
   *Why:* Text currently scrolls under the translucent toolbar and gets sliced mid-glyph,
@@ -45,8 +45,10 @@ These shaped the whole list and are worth keeping in mind before changing anythi
   over the top ~40pt. Don't make the toolbar background opaque — that pushes captions down,
   and unlike the bottom, top space isn't reserved for anything.
 
-- [ ] **Line spacing and paragraph rhythm.** `lineSpacing ≈ fontSize * 0.16` inside a
-      wrapped utterance; `≈ fontSize * 0.5–0.6` between utterances.
+- [x] **Line spacing and paragraph rhythm.** `lineSpacing ≈ fontSize * 0.16` inside a
+      wrapped utterance; `≈ fontSize * 0.5–0.6` between utterances. Shipped at `0.16` /
+      `0.5`; the inter-utterance value is the one most likely to want tuning after a look
+      on device.
 
   *Why:* `LazyVStack(spacing: 0)` with no `lineSpacing` means the gap *inside* a wrapped
   utterance is identical to the gap *between* two utterances — the only cue separating
@@ -54,7 +56,7 @@ These shaped the whole list and are worth keeping in mind before changing anythi
   emits no `speakerID`, so it gets no speaker-based separation at all and this gap carries
   the entire job. Check the multipliers at both 20 and 72.
 
-- [ ] Center the empty state ("Ready for captions" currently strands at the top of a tall
+- [x] Center the empty state ("Ready for captions" currently strands at the top of a tall
       phone screen). Trivial; fold into whichever change touches `CaptionDisplayView`.
 
 ## Tier 2 — moderate, no blockers

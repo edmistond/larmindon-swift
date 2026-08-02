@@ -10,6 +10,18 @@ public struct CaptionDisplayView: View {
     private let bottomSentinelID = "caption-bottom-sentinel"
     private let bottomTolerance: CGFloat = 28
 
+    // Volatile text stays nearly as bright as finalized text. It is the newest and most
+    // urgent content on screen, so dimming it the way `.secondary` does made it the least
+    // legible thing in the view — worst in bright sunlight, where reflections wash the dark
+    // background toward gray and crush contrast further.
+    private static let volatileTextOpacity: Double = 0.9
+
+    // Spacing is expressed as a multiple of the caption font size, which the user can set
+    // anywhere from 20 to 72. The two tiers give a wrapped utterance tighter leading than
+    // the gap between separate utterances, so paragraph boundaries are visible at a glance.
+    private var textLineSpacing: CGFloat { CGFloat(fontSize * 0.16) }
+    private var utteranceSpacing: CGFloat { CGFloat(fontSize * 0.5) }
+
     public init(lines: [CaptionLine], fontSize: Double) {
         self.lines = lines
         self.fontSize = fontSize
@@ -19,18 +31,22 @@ public struct CaptionDisplayView: View {
         GeometryReader { scrollContainer in
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
+                    LazyVStack(alignment: .leading, spacing: utteranceSpacing) {
                         if lines.isEmpty {
                             Text("Ready for captions")
                                 .foregroundStyle(.secondary)
                                 .font(.system(size: fontSize, weight: .regular, design: .default))
+                                .multilineTextAlignment(.center)
                                 .padding(.horizontal, 16)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .frame(maxWidth: .infinity, alignment: .center)
                         } else {
                             ForEach(lines) { line in
                                 Text(AttributedString(line.text))
-                                    .foregroundStyle(line.isVolatile ? .secondary : .primary)
+                                    .foregroundStyle(
+                                        Color.primary.opacity(line.isVolatile ? Self.volatileTextOpacity : 1)
+                                    )
                                     .font(.system(size: fontSize, weight: .regular, design: .default))
+                                    .lineSpacing(textLineSpacing)
                                     .textSelection(.enabled)
                                     .padding(.horizontal, 16)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -49,8 +65,13 @@ public struct CaptionDisplayView: View {
                     }
                     .padding(.vertical, 24)
                     .padding(.horizontal, 8)
-                    .frame(maxWidth: .infinity, minHeight: scrollContainer.size.height, alignment: .topLeading)
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: scrollContainer.size.height,
+                        alignment: lines.isEmpty ? .center : .topLeading
+                    )
                 }
+                .scrollEdgeEffectStyle(.soft, for: .top)
                 .onScrollGeometryChange(for: CaptionScrollGeometry.self) { geometry in
                     CaptionScrollGeometry(
                         contentOffsetY: geometry.contentOffset.y,
