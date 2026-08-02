@@ -235,6 +235,190 @@ preference rather than adding another `.soniox` literal. Doing that incrementall
 Azure becomes "add an enum case and a `TranscriptionSource` conformance" rather than a
 refactor. No need to do it as a dedicated project.
 
+## Spectrum window (macOS)
+
+Design discussion 2026-08-02, nothing built yet. A separate macOS window — **not** a pane —
+showing a live spectral view of the captured audio, with the captioning window otherwise
+untouched. iOS is explicitly out of scope: no room for it.
+
+Treat this as a **feature**, not a debug instrument. Two use cases drive it, and they pull in
+slightly different directions:
+
+1. **Curiosity / analysis** — watching how the spectrum shifts as different people talk in a
+   meeting. This is the stated motivation and the one that sets the DSP requirements.
+2. **Ambient awareness** — "is someone talking right now," for when the hearing aid isn't in
+   and it isn't otherwise obvious. This one sets the *presentation* requirements, and it's the
+   one likely to get used daily.
+
+There's a third payoff that falls out for free: the spectrum shows immediately whether a given
+input is actually delivering the 4–8 kHz consonant band or a muddy 300–3400 Hz phone-quality
+feed. That's the band fricatives live in, so it's the difference between captions being a
+backstop and being load-bearing — and it's a question the level meter structurally cannot
+answer.
+
+### Build it in the app, not as a separate app
+
+The FFT is the easy part. Getting audio out of an arbitrary macOS input device is the hard
+part, and this repo has already paid for it — see the macOS capture constraints in CLAUDE.md,
+every one of which came out of a real diagnostics bundle. A standalone app re-litigates all of
+them, and then has to *contend* for the device: two processes on one input works for many
+devices but not reliably for aggregates or anything exclusive-mode, and leaves two independent
+device configurations to drift apart.
+
+The decisive argument is that Larmindon knows things a generic analyzer can't — VAD, and in
+server mode actual speaker labels. That's what makes speaker tinting possible at all.
+
+### The capture code is already duplicated — converge it here
+
+`SharedMacOSAudioDeviceCapture` (`AudioCaptureSession.swift:306`) and
+`MacOSDirectAudioDeviceCapture` (`LiveSpeechAnalyzerTranscriptionSource.swift:501`) are
+near-identical twins: same fields, same `ioQueue` / `ioProcID` / `isRunning`, same `deinit`,
+same `captureFormat(deviceID:)` shape, down to duplicated sample-rate helpers
+(`sharedMacOSNominalSampleRate` vs `macOSInputDeviceNominalSampleRate`). The only real
+difference is how the buffer leaves — a closure vs. the `AudioTapSink` struct. "Shared" there
+means "used by the shared/server path," not "shared between consumers."
+
+So the refactor this feature needs is **not pure new cost**: it pays down a duplication that
+already exists and currently means every macOS capture bug has to be fixed twice.
+
+**Rule: extract, don't rewrite.** Move the existing IOProc logic across as literally as
+possible and keep `MacOSAudioCaptureStrategy.forDevice` semantics identical. This is the code
+CLAUDE.md says not to undo.
+
+### Capture lifetime becomes reference-counted
+
+- [ ] **Lift capture out from under `TranscriptionSource`.** Today audio only flows while a
+      transcription session runs, because the source owns capture. The spectrum window needs
+      audio without captioning.
+
+  *Opt-in is the hard requirement:* capture runs **only** when captions are started **or** the
+  spectrum window is open. Never otherwise. Lifetime is the union of demand from those two
+  independent consumers.
+
+  *Track named reasons, not an anonymous count.* Two payoffs: the UI can say "microphone is
+  live because the spectrum window is open," and a stuck reason is diagnosable instead of being
+  a refcount that's mysteriously 1. A leaked reason means the mic stays hot indefinitely —
+  exactly the failure this design is guarding against.
+
+  *Ordering rule to write down,* because "capture settings take effect at session start" gets
+  ambiguous with two possible starters: **whoever starts capture first establishes the device
+  and buffer size; the second consumer joins the existing capture.** The `activeInputDeviceID`
+  restart guard carries over unchanged.
+
+  *Wanted in `CoreTests`:* open plot → start captions → close plot → capture continues; then
+  stop captions → device actually released.
+
+### The tap seam already exists
+
+Both paths converge on the same shape — `AudioTapSink.handle`
+(`LiveSpeechAnalyzerTranscriptionSource.swift:816`) and `SharedAudioCaptureSink.handle`
+(`AudioCaptureSession.swift:207`). Each already does one measurement pass, yields a level
+snapshot, copies the buffer, yields the copy downstream. A third consumer goes at exactly that
+point.
+
+`copyPCMBuffer()` has already run for the transcription path, so the analyzer can yield *that
+same reference* — one extra `continuation.yield` on the realtime thread, no additional copy.
+Use `.bufferingNewest(2)` so drops are automatic and stale frames are discarded rather than
+queued. When the window is closed, don't create the stream at all: zero cost in the common
+case, which matters on battery during a long meeting.
+
+**No FFT on the audio thread.** Non-negotiable — the visualization must never backpressure
+capture or put transcription at risk.
+
+### A spectrogram, not just an instantaneous spectrum
+
+- [ ] **Scrolling spectrogram** (time on x, frequency on y, magnitude as color) as the primary
+      view, with the instantaneous magnitude-vs-frequency plot secondary.
+
+  *Why:* a live spectrum plot changes completely every phoneme. Within one speaker, the
+  difference between /s/ and /ɑ/ is far larger than the average difference between two people,
+  so watching it live shows mostly phonetics and buries speaker identity. What actually
+  separates speakers is **F0** — visible as harmonic comb spacing — and **formant structure**,
+  and formants move with whatever vowel is being spoken. Both only become legible *over time*.
+  A spectrogram makes turn-taking visible as a texture change and pitch directly readable as
+  the spacing of the horizontal harmonic stack. Same instinct as the scrollback rule: the
+  history is the information.
+
+  The FFT work is identical for both, so build one analyzer and two renderers. Motion is also
+  what gets caught in peripheral vision, which serves use case 2.
+
+### DSP parameters worth deciding up front
+
+- **Accumulate into a fixed analysis frame.** Callback size is user-configurable
+  (`AudioCaptureBufferFrames`) and won't match the FFT size. Ring-buffer into a fixed frame
+  regardless of what arrives.
+- **2048 @ 48 kHz** ≈ 43 ms, 23.4 Hz bins — resolves adult F0 harmonics (85–255 Hz spacing)
+  while staying responsive. 4096 resolves pitch better but smears transitions; that tradeoff is
+  the time-frequency uncertainty principle, not a tuning bug.
+- **Hann window, 50% overlap.** Without windowing, speech spectra are leakage mush.
+- **dB magnitude, floor ~-80 dB.** Linear magnitude shows nothing but the bottom few hundred Hz.
+- **Log (or mel) frequency axis, ~50 Hz–16 kHz.** A linear axis spends three-quarters of its
+  width on 6–24 kHz where speech has almost nothing, and crushes all the formant action against
+  the left edge. This and the dB decision are the two that most determine whether the view is
+  readable at all.
+- **Cap analysis at ~20–30 spectra/sec,** decoupled from UI updates. Faster is wasted and only
+  burns battery.
+- Use vDSP/Accelerate; don't hand-roll the FFT.
+- **Format handling:** the direct Core Audio path already delivers mono Float32
+  (`AudioCaptureSession.swift:339`, `LiveSpeechAnalyzerTranscriptionSource.swift:531`), but the
+  AVAudioEngine path taps with a `nil` format and gets whatever the bus is — so the analyzer
+  still needs the Int16 and multichannel handling that `AudioLevelMeter.measure` already does.
+- **Rendering:** blit one column into a retained bitmap per hop. Redrawing 500×256 cells as
+  `Canvas` rectangles every frame will crawl.
+
+### Plot-only mode has no VAD — this is the real gap
+
+- [ ] **A cheap speech detector inside the analyzer.**
+
+  *Why:* VAD today is a byproduct of the transcription pipeline — the `SpeechDetector` is built
+  alongside the transcriber (`LiveSpeechAnalyzerTranscriptionSource.swift:226`), and server mode
+  fakes it with `smoothedLevel > 0.01` (`AudioCaptureSession.swift:282`). With no transcriber
+  there is no `speechDetected` at all, so use case 2 — the ambient-awareness one — is precisely
+  the mode where the signal is missing. Spinning up the whole SpeechAnalyzer stack just for this
+  is disproportionate.
+
+  *Nearly free once the FFT exists:*
+  - **Band-limited energy** (~300 Hz–3.5 kHz) rather than broadband RMS. This is exactly why the
+    level meter is useless for the question: it can't tell a talking person from a fan.
+  - **Spectral flatness** (geometric ÷ arithmetic mean of the magnitudes). Low = tonal/harmonic
+    = voice; high = noise-like = hiss.
+  - **4–8 Hz envelope modulation** — the syllable rate. The robust one, and what separates
+    speech from a steady tonal hum that flatness alone would false-positive on. Falls out of the
+    frame-energy series already being computed.
+
+  Flatness + band energy is probably enough for v1; modulation is the upgrade, not the starting
+  point. The speech/no-speech state should be readable without interpreting the DSP.
+
+### Keeping speaker tinting open
+
+Tinting spectrogram columns by speaker — or keeping a per-speaker running average spectrum,
+where phoneme noise cancels over seconds and real between-speaker differences emerge — is a
+**nice-to-have, not near-term**. But two things are cheap now and expensive to retrofit:
+
+1. **Timestamp every analysis frame** on the same clock as caption events. Tinting later
+   becomes a lookup rather than a re-architecture.
+2. **Keep spectrogram history as magnitudes, not pixels.** Soniox speaker labels land *after*
+   the audio, so retroactive coloring is the normal case, not the exception. Store
+   `(timestamp, [Float])` columns and treat the bitmap as an invalidatable render cache.
+
+No speaker plumbing today — just don't throw away what makes it possible.
+
+### Presentation
+
+Since it's a feature and half its job is peripheral awareness: small, always-on-top option,
+legible from across the room and out of the corner of the eye. High contrast. Follows the
+theme constraints in Framing above — any hardcoded color has to clear all four backgrounds.
+
+**Open questions** (David is chewing on these):
+
+- Passive or active? A window only helps if it's in view. If the point is catching speech that
+  went unnoticed, does it need a Dock badge or notification, or is passive glancing enough?
+  Passive is simpler and probably right if it lives on a second monitor — different feature if
+  not.
+- Confirm the spectrum window shares the captioning device preference rather than having its
+  own input selection. Assumed yes.
+- Whether the instantaneous spectrum earns its space once the spectrogram exists.
+
 ## Blocked
 
 - [ ] **Input chip merge.** `InputSelectionMenu(labelTitle: routeManager.currentInputName)`
