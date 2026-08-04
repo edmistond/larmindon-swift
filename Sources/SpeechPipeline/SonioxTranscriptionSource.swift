@@ -20,13 +20,19 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
     /// provider failure. A cancellation arriving outside a stop is a real fault.
     private var isStopping = false
     private var stopTask: Task<Void, Never>?
+    /// Set when the shutdown watchdog gave up on the graceful path, so the cancellation it
+    /// causes is not reported to the user as a provider failure.
+    private var didForceShutdown = false
+    private let gracefulShutdownTimeout: Duration
 
     public init(
         apiKey: String,
         diagnostics: DiagnosticRecorder = .shared,
-        transport: (any WebSocketTransport)? = nil
+        transport: (any WebSocketTransport)? = nil,
+        gracefulShutdownTimeout: Duration = .seconds(5)
     ) {
         self.diagnostics = diagnostics
+        self.gracefulShutdownTimeout = gracefulShutdownTimeout
         let configuration = SonioxRealtimeConfiguration(
             apiKey: apiKey,
             languageHints: ["en"],
@@ -258,6 +264,10 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
         isStopping = true
         pingTask?.cancel()
         pingTask = nil
+
+        let watchdog = startShutdownWatchdog()
+        defer { watchdog.cancel() }
+
         if let audioTask {
             await audioTask.value
         }
@@ -268,7 +278,12 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
             do {
                 try await client.finish()
             } catch {
-                continuation.yield(.failure(error.localizedDescription))
+                // A watchdog cancellation is our own doing, not a provider fault, and
+                // surfacing it would put an error caption on screen every time a stop
+                // timed out.
+                if !didForceShutdown {
+                    continuation.yield(.failure(error.localizedDescription))
+                }
                 await client.cancel()
             }
         } else if state != .finished {
@@ -280,6 +295,40 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
         }
         eventTask = nil
         continuation.finish()
+    }
+
+    /// Bounds the graceful shutdown.
+    ///
+    /// Nothing on the clean path is bounded on its own: `client.finish()` waits on the
+    /// server's `finished` message, and `eventTask` ends only when the server closes the
+    /// socket. A server that goes quiet leaves the teardown hung indefinitely — and because
+    /// `CaptionSession.performStart` awaits `stopActive` before recording anything, and
+    /// `stop()` joins a teardown already in flight, the next Start press then blocks with no
+    /// diagnostic at all. That is a dead button with an empty bundle.
+    ///
+    /// One watchdog covers every wait: cancelling the client closes the transport, which
+    /// fails the pending finish and terminates the event stream. `audioTask` is cancelled
+    /// directly because it waits on the capture frame stream, which the client knows nothing
+    /// about.
+    private func startShutdownWatchdog() -> Task<Void, Never> {
+        Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: gracefulShutdownTimeout)
+            guard !Task.isCancelled else { return }
+
+            didForceShutdown = true
+            await diagnostics.record(
+                category: "provider",
+                name: "soniox_finish_timeout",
+                fields: [
+                    "timeout_seconds":
+                        String(gracefulShutdownTimeout.components.seconds),
+                    "bytes_sent": String(bytesSent),
+                ]
+            )
+            audioTask?.cancel()
+            await client.cancel()
+        }
     }
 }
 

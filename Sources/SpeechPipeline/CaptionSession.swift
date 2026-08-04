@@ -129,6 +129,18 @@ public final class CaptionSession {
         mode: TranscriptionMode,
         generation: Int
     ) async {
+        // Recorded before the teardown rather than after it. `stopActive` can take seconds,
+        // and if a provider teardown stalls this is the only evidence that Start was pressed
+        // at all — otherwise a stuck stop looks like an empty log with nothing after it.
+        await diagnostics.record(
+            category: "state",
+            name: "transcription_start_requested",
+            fields: [
+                "requested_mode": mode.rawValue,
+                "generation": String(generation),
+            ]
+        )
+
         await stopActive(cancelAudioRouteRecovery: true)
         guard generation == transitionGeneration, !Task.isCancelled else {
             return

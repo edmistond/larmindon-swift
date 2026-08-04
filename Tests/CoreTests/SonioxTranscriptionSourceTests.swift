@@ -78,6 +78,59 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         XCTAssertEqual(closeCodes.last, .normalClosure)
     }
 
+    /// Regression: bundle `larmindon-diagnostics-AF081B45` showed a stop that never
+    /// completed. `client.finish()` waits on the server's `finished` message and the event
+    /// stream ends only when the server closes the socket, so a server that goes quiet hung
+    /// the teardown forever — and the next Start press joined that teardown and blocked with
+    /// no diagnostic at all. The happy-path test above enqueues `finished: true`; this one
+    /// deliberately never does.
+    func testStopCompletesWhenServerNeverAcknowledgesFinish() async throws {
+        let transport = FakeWebSocketTransport()
+        let diagnostics = DiagnosticRecorder(capacity: 100)
+        let source = SonioxTranscriptionSource(
+            apiKey: "test-key",
+            diagnostics: diagnostics,
+            transport: transport,
+            gracefulShutdownTimeout: .milliseconds(150)
+        )
+        let (frames, frameContinuation) =
+            AsyncStream<CapturedAudioFrame>.makeStream()
+
+        try await source.start(audioFrames: frames)
+        frameContinuation.finish()
+
+        let stopTask = Task { await source.stop() }
+
+        // Polled rather than awaited directly: if the watchdog regresses, this fails the
+        // assertion instead of hanging the whole suite.
+        var didForceClose = false
+        for _ in 0..<100 {
+            if await transport.closeCodes.contains(.goingAway) {
+                didForceClose = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
+        XCTAssertTrue(
+            didForceClose,
+            "the shutdown watchdog should force the socket closed when the server "
+                + "never acknowledges finish"
+        )
+
+        if didForceClose {
+            await stopTask.value
+        } else {
+            stopTask.cancel()
+        }
+
+        let events = await diagnostics.snapshot()
+        XCTAssertTrue(
+            events.contains { $0.name == "soniox_finish_timeout" },
+            "a forced shutdown should leave a diagnostic breadcrumb"
+        )
+    }
+
     func testSpeakerSegmentsFollowTokenSpeakerBoundaries() throws {
         let tokens = try decodeTokens(
             """
