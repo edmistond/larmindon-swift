@@ -189,6 +189,97 @@ These shaped the whole list and are worth keeping in mind before changing anythi
   turn rather than per line, so it stays readable as prose and `[Speaker 2]` is a useful
   search target. On-device reports no speaker, so its output is unchanged.
 
+## Capture lifecycle bugs
+
+Found 2026-08-03 while investigating an intermittent iOS report: *start captions, stop
+quickly, tap start again — sometimes nothing happens.* Bundle
+`larmindon-diagnostics-AF081B45` (iPhone, iOS 26.5.2, Soniox mode).
+
+- [ ] **Soniox teardown can hang forever, which silently blocks the next start.**
+      *Confirmed by the bundle — this is the reported bug.*
+
+  *Evidence:* the session captured one clean start (00:06:56) with healthy audio
+  (`peak_dbfs -9.1`, `rms_dbfs -27.0`, `silent_callbacks 0`, `dropped_buffers 0`) and a stop at
+  00:07:00 where `capture_stopped` was recorded — so capture tore down fine. The bundle was
+  exported at 00:07:13, and in those 13 seconds there is **no `soniox_finished`, no
+  `soniox_cancelled`, and no `transcription_stopped`**. `stopActive` records
+  `transcription_stopped` at `CaptionSession.swift:296` after `activeSource.stop()`, so the
+  Soniox teardown had not returned 13 seconds in.
+
+  *Mechanism:* `SonioxTranscriptionSource.performStop` has two unbounded awaits —
+  `await audioTask.value` (`:262`) and `await eventTask.value` (`:279`). `eventTask` is the
+  `for try await event in events` loop, which ends only when the **server** closes the socket.
+  No timeout, and `pingTask` is cancelled at the top of `performStop` (`:259`), so nothing
+  detects a dead peer. `audioTask` can stall the same way — its body is
+  `try await client.sendAudio(data)`.
+
+  *Why the restart does nothing and logs nothing:* `performStart` opens with
+  `await stopActive(cancelAudioRouteRecovery: true)` (`CaptionSession.swift:132`), and
+  `transcription_starting` isn't recorded until `:147`. `SonioxTranscriptionSource.stop()`
+  joins an already-running teardown rather than starting a second (`:246-250`) — correct for
+  preserving final tokens, and also what propagates the hang into the start path. So a restart
+  tap blocks before emitting any diagnostic. The button is dead with no error and no trace.
+
+  *Why it's intermittent and tied to stopping quickly:* `final_tokens` and `final_audio_ms` are
+  0 for the whole session — nothing finalized in 3.5s. Stopping early sends `finish()` on a
+  stream with no finalized audio, and whether the server promptly answers `finished: true` and
+  closes in that state plausibly differs from a longer session with real output.
+
+  *Fix direction:* bound both awaits (a few seconds — after that there are no final tokens
+  coming) and fall through to `client.cancel()`. Record a `soniox_finish_timeout` diagnostic
+  when the bound fires, so the next occurrence is visible. Separately, `performStart` should
+  emit a diagnostic **before** awaiting `stopActive`, so a stuck teardown is legible in a
+  bundle instead of being an absence. Consider whether a start should be allowed to force-cancel
+  a teardown that has exceeded the bound rather than joining it.
+
+- [ ] **A failed engine start leaks the tap on the server path.** *Latent — found by reading,
+      not the bug above.*
+
+  `AudioCaptureSession.installEngineTap` sets `isTapInstalled = true` (`:173`) and the caller
+  starts the engine separately (`:127`). If `audioEngine.start()` throws, `isRunning` is never
+  set (`:130` unreached), and `stop()` hits `guard isRunning else { … return }` (`:180`) and
+  returns **before** the tap teardown at `:190`. The tap stays on bus 0. A retry passes
+  `guard !isRunning` (`:69`) and calls `installTap` on a bus that already has one, which raises
+  an uncatchable Objective-C exception — the same class of failure the nil-format comment at
+  `:160-162` warns about.
+
+  `LiveSpeechAnalyzerTranscriptionSource` does **not** have this: its teardown at `:87` is
+  unconditional rather than gated on `isCaptureRunning`. Fix by matching that.
+
+- [ ] **The server path records nothing when capture start fails.** *Latent.*
+
+  `LiveSpeechAnalyzerTranscriptionSource` wraps capture start in `do/catch` →
+  `recordCaptureFailure(error, hintFormat:)` (`:323-326`), capturing node format details.
+  `AudioCaptureSession` has no equivalent — a start failure throws straight out, and
+  `capture_started` is never written because it comes after. In Soniox mode a capture-start
+  failure is currently **invisible in the diagnostics bundle**.
+
+### Capture consolidation — and why it isn't the first move
+
+The iOS capture path *is* the `AVAudioEngine` branch, and it's duplicated between the two
+sources exactly as the macOS path is: compare `AudioCaptureSession.swift:95-103` with
+`LiveSpeechAnalyzerTranscriptionSource.swift:312-322`. `AudioEngineInputConfigurator` is already
+factored out and shared, so this work was started and stopped at configuration — it never
+reached tap install, engine start, teardown, or error handling. The two `installEngineTap`
+methods share a name and differ in responsibility (the live one starts the engine; the shared
+one doesn't).
+
+So consolidation would cover iOS, not just macOS, and the two latent bugs above are exactly the
+kind of divergence it prevents.
+
+**But it is not the first move.** The confirmed bug is in `SonioxTranscriptionSource`, which is
+not duplicated — consolidation would neither have found nor fixed it.
+
+**Sequencing, when it's time:** converge the *diverged* parts first (error handling and
+teardown, i.e. the two latent items above), which is small and mostly additive. Do the
+structural consolidation after the lifecycle bugs are closed. The reason is the testing
+constraint: SpeechAnalyzer doesn't run in the Simulator, so every real verification is a manual
+on-device session. Landing a large refactor on top of an intermittent bug means each expensive
+test cycle has to answer "did the refactor fix it, hide it, or move it?" — and against an
+intermittent failure, a non-repro can't be distinguished from luck. The duplication is also a
+diagnostic asset while it lasts: two near-identical paths where one handles a failure correctly
+and one doesn't is a differential worth reading before deleting.
+
 ## Long term
 
 - [ ] **Azure Speech Services backend.** Configurable URL and key pointing at a
