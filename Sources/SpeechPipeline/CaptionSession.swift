@@ -485,6 +485,13 @@ public final class CaptionSession {
     }
 
     private func handle(_ result: CaptionResult) {
+        // Server mode's meter is hot when the backend is returning words, not when the room
+        // is loud. On-device has no `activeCapture`, so this is a no-op there and the
+        // SpeechAnalyzer VAD keeps driving the colour.
+        if result.carriesTranscription {
+            activeCapture?.noteProviderActivity()
+        }
+
         switch result {
         case .volatile(let text):
             lastVolatileResult = text

@@ -16,7 +16,10 @@ final class SonioxRealtimeClientTests: XCTestCase {
             transport: transport
         )
 
-        _ = try await client.start()
+        // Same reason as above: an unheld event stream cancels the client out from under
+        // the test. Harmless here today, but it's the identical landmine.
+        let events = try await client.start()
+        defer { withExtendedLifetime(events) {} }
 
         let connectCount = await transport.connectCount
         let messages = await transport.sentTextMessages
@@ -137,7 +140,12 @@ final class SonioxRealtimeClientTests: XCTestCase {
     func testEmptyAudioIsReservedForGracefulCompletion() async throws {
         let transport = FakeWebSocketTransport()
         let client = makeClient(transport: transport)
-        _ = try await client.start()
+        // Held for the duration of the test. Dropping the event stream terminates it as
+        // `.cancelled`, and `start()`'s `onTermination` cancels the client — which raced
+        // the assertion below and made this test intermittently fail with
+        // `invalidState(expected: "streaming", actual: "cancelled")`.
+        let events = try await client.start()
+        defer { withExtendedLifetime(events) {} }
 
         do {
             try await client.sendAudio(Data())

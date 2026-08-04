@@ -28,6 +28,7 @@ public final class AudioCaptureSession {
     private let diagnostics: DiagnosticRecorder
     private let audioEngine = AVAudioEngine()
     private let telemetry: AudioCaptureTelemetry
+    private let levelReporter = ServerAudioLevelReporter()
     private var isTapInstalled = false
     private var isRunning = false
     private var stallCheckTask: Task<Void, Never>?
@@ -106,7 +107,7 @@ public final class AudioCaptureSession {
             frameContinuation: frameContinuation,
             levelContinuation: levelContinuation,
             telemetry: telemetry,
-            levelReporter: ServerAudioLevelReporter()
+            levelReporter: levelReporter
         )
 
         #if os(macOS)
@@ -155,6 +156,13 @@ public final class AudioCaptureSession {
                     configuration?.voiceProcessingSkippedReason ?? "none",
             ]
         )
+    }
+
+    /// Marks the provider as alive, turning the level meter's hot state on. See
+    /// `ServerAudioLevelReporter` for why the meter reports backend output rather than input
+    /// loudness in server mode.
+    public func noteProviderActivity() {
+        levelReporter.noteProviderActivity()
     }
 
     /// Installs the tap with a nil format so the node's own format is used verbatim.
@@ -248,16 +256,45 @@ private struct SharedAudioCaptureSink: @unchecked Sendable {
     }
 }
 
+/// Drives the level meter in server mode.
+///
+/// The encoding is **length = am I capturing audio, colour = is the backend producing
+/// anything**, which matches on-device mode where colour means VAD is hot. The hot state used
+/// to be `smoothedLevel > 0.01` — a near-zero noise gate that was on whenever the room wasn't
+/// silent, and which specifically could not show the failure that matters: hit a dead zone,
+/// the websocket stalls, no captions arrive, and the meter still looks healthy because the mic
+/// is fine. Driving it from token arrival makes it an end-to-end signal covering capture,
+/// network, and auth, so a grey-but-moving bar reads as "audio fine, backend not producing."
 final class ServerAudioLevelReporter: @unchecked Sendable {
     static let defaultUpdateInterval: TimeInterval = 0.25
+    /// How long one burst of tokens keeps the meter hot. Long enough to bridge the gaps
+    /// between words so the bar doesn't strobe, short enough that a stall goes grey while
+    /// it still matters.
+    static let defaultActivityWindow: TimeInterval = 2
 
     private let lock = NSLock()
     private let updateInterval: TimeInterval
+    private let activityWindow: TimeInterval
     private var smoothedLevel = 0.0
     private var lastPublishedAt: TimeInterval?
+    private var lastProviderActivityAt: TimeInterval?
 
-    init(updateInterval: TimeInterval = defaultUpdateInterval) {
+    init(
+        updateInterval: TimeInterval = defaultUpdateInterval,
+        activityWindow: TimeInterval = defaultActivityWindow
+    ) {
         self.updateInterval = max(0, updateInterval)
+        self.activityWindow = max(0, activityWindow)
+    }
+
+    /// Records that the provider returned transcribed words. Called from the main actor as
+    /// results arrive, while `update` runs on the audio thread — hence the lock.
+    func noteProviderActivity(
+        at timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        lastProviderActivityAt = timestamp
     }
 
     func update(
@@ -281,11 +318,17 @@ final class ServerAudioLevelReporter: @unchecked Sendable {
         }
         lastPublishedAt = timestamp
 
+        let isProviderActive = lastProviderActivityAt.map {
+            timestamp - $0 < activityWindow
+        } ?? false
+
         return AudioLevelSnapshot(
             rawInputLevel: smoothedLevel,
             processedInputLevel: smoothedLevel,
-            speechDetected: smoothedLevel > 0.01,
-            vadState: "Server stream",
+            speechDetected: isProviderActive,
+            vadState: isProviderActive
+                ? "Server returning tokens"
+                : "Server idle",
             observedCallbackFrameLength: observedCallbackFrameLength
         )
     }

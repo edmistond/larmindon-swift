@@ -6,6 +6,26 @@ public enum CaptionResult: Equatable, Sendable {
     case volatileSegments([CaptionSegment])
     case finalizedSegments([CaptionSegment])
     case failure(String)
+
+    /// Whether this result actually carries transcribed words.
+    ///
+    /// Arrival alone doesn't mean the backend is producing anything: Soniox emits a transcript
+    /// update roughly once a second whether or not it heard speech, and
+    /// `SonioxTranscriptionSource` yields `.volatileSegments` for every one of them. Only the
+    /// ones with text mean the provider is doing work, which is what the server-mode level
+    /// meter reports.
+    public var carriesTranscription: Bool {
+        switch self {
+        case .volatile(let text), .finalized(let text):
+            return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .volatileSegments(let segments), .finalizedSegments(let segments):
+            return segments.contains {
+                !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        case .failure:
+            return false
+        }
+    }
 }
 
 @MainActor
