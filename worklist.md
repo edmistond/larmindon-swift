@@ -195,8 +195,22 @@ Found 2026-08-03 while investigating an intermittent iOS report: *start captions
 quickly, tap start again — sometimes nothing happens.* Bundle
 `larmindon-diagnostics-AF081B45` (iPhone, iOS 26.5.2, Soniox mode).
 
-- [ ] **Soniox teardown can hang forever, which silently blocks the next start.**
+- [x] **Soniox teardown can hang forever, which silently blocks the next start.**
       *Confirmed by the bundle — this is the reported bug.*
+
+  **Fixed 2026-08-03.** A watchdog in `performStop` bounds the graceful path at 5s
+  (injectable; `gracefulShutdownTimeout`) and falls through to `client.cancel()`, which closes
+  the transport, fails the pending finish, and ends the event stream. `audioTask` is cancelled
+  directly since it waits on the capture frame stream rather than the socket. Forced
+  cancellations are not yielded as provider failures, so a timed-out stop doesn't put an error
+  caption on screen. Emits `soniox_finish_timeout`, and `performStart` now records
+  `transcription_start_requested` before the teardown await.
+  Regression test: `testStopCompletesWhenServerNeverAcknowledgesFinish`.
+
+  **Not yet verified on device** — the repro is intermittent and server-dependent, so confirm
+  by reproducing the original stop-fast-then-restart sequence. Worst case is now a ~5s delay
+  rather than a dead button; if that delay is itself annoying in practice, the follow-up is
+  letting a start force-cancel a teardown past the bound instead of joining it.
 
   *Evidence:* the session captured one clean start (00:06:56) with healthy audio
   (`peak_dbfs -9.1`, `rms_dbfs -27.0`, `silent_callbacks 0`, `dropped_buffers 0`) and a stop at
