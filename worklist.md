@@ -79,9 +79,23 @@ These shaped the whole list and are worth keeping in mind before changing anythi
   positional gradient *within* the hot state looks like a scale it isn't: a half-filled bar
   ending in orange implies "getting hot" when it only means "half filled."
 
-- [ ] **Level meter: make the server-mode hot signal mean something.** Drive it from
-      **token arrival from Soniox** instead of `speechDetected: smoothedLevel > 0.01`
-      (`AudioCaptureSession.swift:282`).
+- [x] **Level meter: make the server-mode hot signal mean something.** Drive it from
+      **token arrival from Soniox** instead of `speechDetected: smoothedLevel > 0.01`.
+
+  **Shipped 2026-08-03.** `ServerAudioLevelReporter` gained `noteProviderActivity()`, called
+  from `CaptionSession.handle` as results arrive; the hot state is now "tokens seen within the
+  last 2s". The window bridges the gaps between words so the bar doesn't strobe.
+
+  *Gated on content, not arrival.* Soniox emits a transcript update roughly once a second
+  whether or not it heard speech — bundle `AF081B45` shows several with `volatile_tokens: 0` —
+  and `SonioxTranscriptionSource` yields `.volatileSegments` for every one
+  (`SonioxTranscriptionSource.swift:98`). Counting result *arrival* would pin the meter hot and
+  reproduce exactly the uselessness this replaced, so it tests `CaptionResult.carriesTranscription`.
+
+  *Consequence to watch on device:* a silent room now shows a grey bar in server mode, where it
+  used to be lit. That's the intended encoding — grey-and-moving means "audio fine, backend not
+  producing" — but it's a visible behaviour change and worth confirming it reads correctly
+  rather than looking broken.
 
   *Why:* Today the same visual encoding means two different things by backend, and in server
   mode it means almost nothing — a near-zero noise gate that's on whenever the room isn't
