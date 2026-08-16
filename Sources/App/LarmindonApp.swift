@@ -12,6 +12,12 @@ struct LarmindonApp: App {
     var body: some Scene {
         WindowGroup {
             LarmindonRootView(session: session)
+                // Opens the durable event store, records this launch, prunes aged-out rows,
+                // and reports any previous session that never recorded an end — which is
+                // how a background kill becomes visible at all.
+                .task {
+                    await session.diagnostics.activatePersistence()
+                }
         }
         #if os(macOS)
         .commands {

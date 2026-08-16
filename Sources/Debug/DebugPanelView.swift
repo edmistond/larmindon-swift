@@ -166,6 +166,8 @@ public struct DebugPanelView: View {
                     : nil
                 diagnosticExportURL = try await session.diagnostics
                     .makeExportBundle(transcript: transcript)
+                // Returns a zip now, not a folder — a directory doesn't survive AirDrop
+                // through the share sheet the way a single file does.
             } catch {
                 diagnosticExportError = error.localizedDescription
             }

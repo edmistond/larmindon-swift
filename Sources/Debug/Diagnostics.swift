@@ -39,6 +39,13 @@ public struct DiagnosticManifest: Codable, Equatable, Sendable {
     public let includesTranscript: Bool
     public let includesRawAudio: Bool
     public let eventCount: Int
+    /// Whether `diagnostics.sqlite` is present. It won't be if persistence failed to open,
+    /// in which case the bundle falls back to this session's in-memory events only.
+    public let includesDatabase: Bool
+    /// Events in the database across all retained sessions, as opposed to `eventCount`,
+    /// which counts only this session's in-memory ring buffer.
+    public let storedEventCount: Int
+    public let storedSessionCount: Int
 }
 
 public enum DiagnosticRedaction {
@@ -64,6 +71,18 @@ public actor DiagnosticRecorder {
         category: "diagnostics"
     )
 
+    private var store: DiagnosticStore?
+    private var pendingWrites: [DiagnosticEvent] = []
+    private var flushTask: Task<Void, Never>?
+
+    /// One transaction per 50 events rather than per event: `soniox_update` alone fires
+    /// about once a second, and a commit each time would be constant disk churn in the
+    /// user's pocket.
+    private static let batchSize = 50
+    /// Ceiling on how long an event can sit only in memory. A kill inside this window loses
+    /// at most a couple of seconds of context.
+    private static let flushInterval = Duration.seconds(2)
+
     public init(capacity: Int = 2_000) {
         self.capacity = max(100, capacity)
     }
@@ -86,27 +105,150 @@ public actor DiagnosticRecorder {
         logger.info(
             "[\(category, privacy: .public)] \(name, privacy: .public) \(fields.description, privacy: .public)"
         )
+
+        guard store != nil else { return }
+        pendingWrites.append(event)
+        if pendingWrites.count >= Self.batchSize {
+            flushPending()
+        } else {
+            scheduleFlush()
+        }
     }
 
     public func snapshot() -> [DiagnosticEvent] {
         events
     }
 
-    public func makeExportBundle(transcript: String?) throws -> URL {
+    // MARK: - Persistence
+
+    /// Opens the durable store, records this session, prunes aged-out rows, and reports any
+    /// previous session that never got to record an end.
+    ///
+    /// Separate from `init` because it touches the filesystem and can fail. A failure is
+    /// deliberately non-fatal: diagnostics degrading to in-memory-only is much better than
+    /// diagnostics taking the app down.
+    public func activatePersistence(
+        store: DiagnosticStore? = nil,
+        retention: TimeInterval = DiagnosticStore.defaultRetention
+    ) async {
+        guard self.store == nil else { return }
+
+        do {
+            let resolved = try store ?? DiagnosticStore(url: DiagnosticStore.defaultURL())
+            try await resolved.open()
+
+            // Read this *before* recording the current session, so the current one can't
+            // appear in its own report.
+            let unexpected = try await resolved.sessionsEndedUnexpectedly(
+                excluding: sessionID.uuidString
+            )
+
+            try await resolved.startSession(
+                sessionID: sessionID.uuidString,
+                startedAt: Date(),
+                appVersion: Self.bundleValue("CFBundleShortVersionString"),
+                appBuild: Self.bundleValue("CFBundleVersion"),
+                osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+                deviceClass: Self.deviceClass
+            )
+
+            let pruned = try await resolved.prune(olderThan: retention)
+            self.store = resolved
+
+            record(
+                category: "diagnostics",
+                name: "persistence_ready",
+                fields: [
+                    "pruned_events": String(pruned),
+                    "stored_events": String((try? await resolved.eventCount()) ?? -1),
+                    "stored_sessions": String((try? await resolved.sessionCount()) ?? -1),
+                ]
+            )
+
+            // The whole point of persisting: a background kill leaves no other trace. This
+            // is the only place an unexplained disappearance becomes visible.
+            for session in unexpected {
+                record(
+                    category: "diagnostics",
+                    name: "previous_session_ended_unexpectedly",
+                    fields: [
+                        "session": session.sessionID,
+                        "started_at": ISO8601DateFormatter().string(from: session.startedAt),
+                        "last_event_at": session.lastEventAt
+                            .map { ISO8601DateFormatter().string(from: $0) } ?? "none",
+                        "event_count": String(session.eventCount),
+                    ]
+                )
+            }
+        } catch {
+            logger.error(
+                "Diagnostics persistence unavailable: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    /// Marks this session as having exited gracefully. Its absence on the next launch is
+    /// what identifies a kill, so this must only be called on a real, orderly shutdown.
+    public func markCleanExit(reason: String) async {
+        guard let store else { return }
+        await flush()
+        try? await store.endSession(sessionID: sessionID.uuidString, reason: reason)
+    }
+
+    /// Writes everything buffered. Called on backgrounding, where a kill may follow with no
+    /// further warning.
+    public func flush() async {
+        flushTask?.cancel()
+        flushTask = nil
+
+        guard let store, !pendingWrites.isEmpty else { return }
+        let batch = pendingWrites
+        pendingWrites.removeAll()
+
+        do {
+            try await store.append(batch)
+        } catch {
+            logger.error(
+                "Diagnostics write failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    private func flushPending() {
+        Task { [weak self] in
+            await self?.flush()
+        }
+    }
+
+    private func scheduleFlush() {
+        guard flushTask == nil else { return }
+        flushTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.flushInterval)
+            guard !Task.isCancelled else { return }
+            await self?.flush()
+        }
+    }
+
+    /// Builds the bundle and returns a **zip archive**, not a directory.
+    ///
+    /// AirDrop is the intended delivery path, and a folder does not survive a share sheet
+    /// the way a single file does. Zipping goes through `NSFileCoordinator`'s `.forUploading`
+    /// option, which is the Foundation-native way to archive a directory without pulling in
+    /// a compression dependency.
+    public func makeExportBundle(transcript: String?) async throws -> URL {
+        try Self.zipDirectory(await makeExportDirectory(transcript: transcript))
+    }
+
+    /// Stages the bundle contents. Split from the zip step so tests can assert on what goes
+    /// into the archive without needing to unzip — there's no Foundation API for reading a
+    /// zip, and shelling out to `unzip` doesn't exist in the Simulator.
+    func makeExportDirectory(transcript: String?) async throws -> URL {
+        // Anything still buffered belongs in the export — usually including the events that
+        // prompted the export in the first place.
+        await flush()
+
         let snapshot = events
         let includesTranscript = transcript?.isEmpty == false
-        let manifest = DiagnosticManifest(
-            formatVersion: 1,
-            exportedAt: Date(),
-            sessionID: sessionID,
-            appVersion: Self.bundleValue("CFBundleShortVersionString"),
-            appBuild: Self.bundleValue("CFBundleVersion"),
-            operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
-            deviceClass: Self.deviceClass,
-            includesTranscript: includesTranscript,
-            includesRawAudio: false,
-            eventCount: snapshot.count
-        )
 
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -119,6 +261,43 @@ public actor DiagnosticRecorder {
         try FileManager.default.createDirectory(
             at: root,
             withIntermediateDirectories: true
+        )
+
+        // The database is the reason the bundle exists now: it carries previous sessions,
+        // including any that were killed. The per-session JSONL below stays for the sake of
+        // eyeballing a bundle without a SQL client.
+        var includesDatabase = false
+        var storedEventCount = 0
+        var storedSessionCount = 0
+        if let store {
+            do {
+                try await store.writeSnapshot(
+                    to: root.appendingPathComponent("diagnostics.sqlite")
+                )
+                includesDatabase = true
+                storedEventCount = (try? await store.eventCount()) ?? 0
+                storedSessionCount = (try? await store.sessionCount()) ?? 0
+            } catch {
+                logger.error(
+                    "Diagnostics snapshot failed: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+
+        let manifest = DiagnosticManifest(
+            formatVersion: 2,
+            exportedAt: Date(),
+            sessionID: sessionID,
+            appVersion: Self.bundleValue("CFBundleShortVersionString"),
+            appBuild: Self.bundleValue("CFBundleVersion"),
+            operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
+            deviceClass: Self.deviceClass,
+            includesTranscript: includesTranscript,
+            includesRawAudio: false,
+            eventCount: snapshot.count,
+            includesDatabase: includesDatabase,
+            storedEventCount: storedEventCount,
+            storedSessionCount: storedSessionCount
         )
 
         let encoder = JSONEncoder()
@@ -151,19 +330,65 @@ public actor DiagnosticRecorder {
                 options: .atomic
             )
         }
+
         return root
+    }
+
+    /// Archives a directory using `NSFileCoordinator`'s `.forUploading` option, which hands
+    /// back a temporary zip. The zip is copied somewhere stable before the closure returns,
+    /// because the coordinator deletes its temporary copy immediately afterward.
+    private static func zipDirectory(_ directory: URL) throws -> URL {
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent(directory.lastPathComponent)
+            .appendingPathExtension("zip")
+
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
+
+        var coordinatorError: NSError?
+        var copyError: Error?
+        NSFileCoordinator().coordinate(
+            readingItemAt: directory,
+            options: [.forUploading],
+            error: &coordinatorError
+        ) { temporaryZip in
+            do {
+                try FileManager.default.copyItem(at: temporaryZip, to: destination)
+            } catch {
+                copyError = error
+            }
+        }
+
+        if let coordinatorError { throw coordinatorError }
+        if let copyError { throw copyError }
+        return destination
     }
 
     private static func bundleValue(_ key: String) -> String {
         Bundle.main.object(forInfoDictionaryKey: key) as? String ?? "Unknown"
     }
 
+    /// Read via sysctl rather than `UIDevice.current.model`, which is main-actor isolated and
+    /// so can't be touched from this actor. The identifier it returns ("iPhone17,1") is also
+    /// strictly more useful in a bundle than the word "iPhone" — thermal and memory limits
+    /// differ by model, and both matter for diagnosing a background kill.
     private static var deviceClass: String {
         #if os(iOS)
-        return UIDevice.current.model
+        let key = "hw.machine"
         #else
-        return "Mac"
+        let key = "hw.model"
         #endif
+
+        var size = 0
+        guard sysctlbyname(key, nil, &size, nil, 0) == 0, size > 0 else {
+            return "Unknown"
+        }
+        var value = [UInt8](repeating: 0, count: size)
+        guard sysctlbyname(key, &value, &size, nil, 0) == 0 else {
+            return "Unknown"
+        }
+        return String(decoding: value.prefix { $0 != 0 }, as: UTF8.self)
     }
 }
 

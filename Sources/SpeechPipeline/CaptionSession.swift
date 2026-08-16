@@ -48,6 +48,7 @@ public final class CaptionSession {
     private var transitionGeneration = 0
     private let credentialStore: any ProviderCredentialStore
     private let networkPathMonitor: NetworkPathDiagnosticMonitor
+    private let environmentMonitor: AppEnvironmentDiagnosticMonitor
     private let failureNotifier: any CaptionFailureNotifying
 
     #if os(iOS)
@@ -82,6 +83,9 @@ public final class CaptionSession {
         self.credentialStore = credentialStore
         self.failureNotifier = failureNotifier
         self.networkPathMonitor = NetworkPathDiagnosticMonitor(
+            recorder: diagnostics
+        )
+        self.environmentMonitor = AppEnvironmentDiagnosticMonitor(
             recorder: diagnostics
         )
         self.microphoneCapabilities = MicrophoneCapabilityMonitor(routeManager: routeManager)
@@ -266,6 +270,9 @@ public final class CaptionSession {
             activeMode = mode
             speechAnalyzerState = "Running \(source.name)"
             startSilentCaptureWatchdog(generation: generation)
+            // Memory and thermal sampling runs only while captioning — that's the window
+            // where a background kill would actually cost something.
+            environmentMonitor.startSampling()
             #if os(iOS)
             prepareFailureNotifierIfNeeded(sourceKind: sourceKind)
             #endif
@@ -363,6 +370,7 @@ public final class CaptionSession {
         captureLevelTask = nil
         silentCaptureTask?.cancel()
         silentCaptureTask = nil
+        environmentMonitor.stopSampling()
         // Stop consuming results before the source shuts down, so anything it emits on
         // the way out cannot be mistaken for a live failure and restart the teardown.
         resultTask?.cancel()
