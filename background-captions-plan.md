@@ -20,6 +20,11 @@ what the current code already does, which isn't obvious from the file names.
 
 ## Feature 1 — Background captions
 
+**Status: Steps 1–6 implemented 2026-08-15. Step 7 (device verification) is outstanding
+and is the only thing standing between this and "working".** Both apps build; 85 tests
+pass on the iOS Simulator, 80 on macOS. Nothing below has been exercised against a real
+interruption — the Simulator can't produce one.
+
 ### Why it currently stops
 
 `Project.swift:19` (`iOSInfoPlist`) declares no `UIBackgroundModes` at all. Nothing in
@@ -138,14 +143,61 @@ Implementation notes:
 
 ### Step 7 — Device verification checklist
 
-The simulator proves it compiles, nothing more. On device, walk:
+**Outstanding.** The Simulator proves it compiles and that the recovery logic is wired
+correctly; it cannot produce a real interruption. On device, walk:
 
 - 5+ minutes in another app, transcript intact on return
-- Incoming phone call, and an outgoing one
+- Incoming phone call, and an outgoing one — captions should resume by themselves
 - Siri invocation
 - AirPods / Bluetooth connect and disconnect **while backgrounded**
 - Screen lock
-- Another audio app grabbing the mic
+- Another audio app grabbing the mic — expect the give-up notification, since that's
+  `.ended` without `shouldResume`
+- The notification permission prompt appearing on the first live start after install
+
+Worth watching in the diagnostics bundle: `audio_interruption` records every event with
+the decision taken, `audio_interruption_recovered` records which attempt succeeded, and
+`audio_interruption_unrecoverable` records the give-up reason. If recovery is flaky, the
+attempt counts in those fields are what to tune the backoff against.
+
+### Calls made during implementation, for follow-up
+
+Decisions taken without stopping, none of which close off an architectural avenue:
+
+1. **`AudioInterruptionPolicy`, not `IOSAudioInterruptionPolicy`.** It carries no
+   `AVAudioSession` types, so it compiles and tests on macOS too — the policy tests run
+   on both platforms rather than iOS only. Translation from the notification's `userInfo`
+   happens once, in `AudioRouteManager.interruptionEvent(from:)`.
+2. **Notification authorization is requested on the first *live session start*,** not at
+   launch and not on first backgrounding. Backgrounding is the tempting trigger and is
+   wrong: the system prompt can't be presented while the app is in the background, so the
+   request would be silently denied at exactly the moment it started mattering.
+3. **`interruptionLevel` is not set to `.timeSensitive`.** That needs an entitlement, and
+   `Entitlements/` is empty. Worth revisiting if a give-up banner should break through a
+   Focus mode — which, for a device on a dash mount, it arguably should.
+4. **Four attempts, 0.5s / 1s / 2s / 4s backoff** (~7.5s total). Covers the hand-off after
+   a call ends without retrying in your pocket indefinitely. Tune after device testing.
+5. **A constant notification identifier,** so repeated failures replace the previous
+   banner rather than stacking. Only the latest one is true.
+6. **`preserveRunningState` threaded through `stopActive` / `performStart`,** so
+   interruption recovery doesn't flash the Start/Stop button mid-recovery for a session
+   the user never asked to stop.
+7. **`isInterrupted` added, and the status line now reads "Interrupted · <mode>".** It
+   previously said "Listening" throughout an interruption, which meant a caption view
+   that stopped growing read as a quiet room rather than a dead session.
+8. **Recovery tests use the fake source** so the restart genuinely succeeds in the
+   Simulator. Against `.live` they'd have been asserting the failure path by accident.
+
+### One bug found by review, worth knowing about on device
+
+`mediaServicesWereResetNotification` arrives **with no preceding `.began`**. The first
+implementation latched "were we running?" only on `.began`, so a media-server restart
+would have been permanently unrecoverable — the session would end silently with no path
+back. Fixed, and `testMediaServicesResetRecoversWithoutAPrecedingBegan` was confirmed to
+fail against the old logic before being kept.
+
+This is the class of thing device testing is for: it type-checks, it passes a naive test,
+and it only bites when the audio stack actually restarts.
 
 ### Explicitly do not
 
@@ -302,9 +354,8 @@ than speculative, and the target is cheap to add against a fake that already wor
 
 ## Sequencing
 
-1. **Background captions** (Steps 1–7), including the local notification. Independent
-   of everything else, small. Interruption policy unit-tested from the start — nearly
-   free given the existing pattern.
+1. ~~**Background captions** (Steps 1–7), including the local notification.~~ **Code
+   complete 2026-08-15; awaiting device verification (Step 7).**
 2. **Fake source determinism + iOS reachability** (Gaps 1, 2). Small, unlocks the rest.
 3. **Injected frames for the Apple source** (Gap 3). Small, unlocks WAV-driven testing
    and improves the design.
