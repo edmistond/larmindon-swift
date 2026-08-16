@@ -352,6 +352,65 @@ than speculative, and the target is cheap to add against a fake that already wor
 
 ---
 
+## Durable diagnostics (implemented 2026-08-15)
+
+Motivated directly by Feature 1: the in-memory ring buffer couldn't answer "why did the
+app stop?", because a jetsam kill gives the process no chance to write anything. It also
+overflowed in roughly half an hour of server mode (`soniox_update` fires ~1/sec against a
+2,000-event buffer), so a long backgrounded session discarded its own beginning.
+
+**What's stored.** `DiagnosticStore` (`Sources/Debug/DiagnosticStore.swift`) — an actor
+over SQLite in WAL mode at `Application Support/Larmindon/diagnostics.sqlite`. One
+transaction per 50 events or 2 seconds. Pruned to 7 days at launch. Raw `import SQLite3`,
+no package dependency.
+
+**New event categories:**
+
+- `lifecycle` — background/foreground/terminate/memory-warning, each carrying a resource
+  snapshot. Previously invisible, and it's the context every other event needs.
+- `resources` — available memory (MB), thermal state, low-power mode, app state; sampled
+  every 30s while captioning only.
+- `diagnostics` — `persistence_ready`, and `previous_session_ended_unexpectedly` for any
+  session that never recorded a graceful exit.
+
+**Reading a bundle.** Export produces a **zip** (AirDrop doesn't carry folders through
+the share sheet). Inside: `diagnostics.sqlite` (all retained sessions), `manifest.json`,
+`events.jsonl` (this session only, for eyeballing), and optionally `transcript.txt`.
+
+```sql
+-- Every interruption and what recovery decided to do
+SELECT datetime(ts,'unixepoch','localtime') AS t, name,
+       json_extract(fields,'$.event')    AS event,
+       json_extract(fields,'$.decision') AS decision,
+       json_extract(fields,'$.attempt')  AS attempt
+FROM events WHERE name LIKE 'audio_interruption%' ORDER BY ts;
+
+-- Sessions that were killed rather than closed
+SELECT session_id, datetime(started_at,'unixepoch','localtime') AS started, device_class
+FROM sessions WHERE ended_at IS NULL ORDER BY started_at DESC;
+
+-- Was it jetsam? Memory heading into the end of a killed session
+SELECT datetime(ts,'unixepoch','localtime') AS t,
+       json_extract(fields,'$.available_memory_mb') AS mb,
+       json_extract(fields,'$.app_state')           AS state,
+       json_extract(fields,'$.thermal_state')       AS thermal
+FROM events WHERE category='resources' AND session_id='<id>'
+ORDER BY ts DESC LIMIT 30;
+
+-- What was happening around a give-up
+SELECT datetime(ts,'unixepoch','localtime') AS t, category, name, fields
+FROM events WHERE ts BETWEEN <start> AND <end> ORDER BY ts;
+```
+
+**Caveat on "ended unexpectedly".** It means "no graceful exit was recorded", which also
+covers force-quitting from the app switcher — iOS doesn't reliably deliver
+`willTerminate` there. The surrounding `lifecycle` and `resources` events are what
+separate a force-quit from a jetsam: a kill under memory pressure shows available memory
+falling while backgrounded, a force-quit doesn't.
+
+**Not done:** no in-app history browser. `recentEvents(limit:)` exists for one, but for
+now reading happens on the Mac against the exported database.
+
 ## Sequencing
 
 1. ~~**Background captions** (Steps 1–7), including the local notification.~~ **Code
