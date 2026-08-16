@@ -16,6 +16,11 @@ let sharedPrivacyPlist: [String: Plist.Value] = [
 ]
 
 let iOSInfoPlist: [String: Plist.Value] = sharedPrivacyPlist.merging([
+    // Captions have to survive switching to another app — the whole point is glancing at
+    // something else mid-conversation. Without this the process is suspended a second or
+    // two after backgrounding and transcription dies silently. Recording continues under
+    // either category `IOSAudioSessionCapturePolicy` selects.
+    "UIBackgroundModes": .array([.string("audio")]),
     "UISupportedInterfaceOrientations": .array([
         .string("UIInterfaceOrientationPortrait"),
         .string("UIInterfaceOrientationLandscapeLeft"),
