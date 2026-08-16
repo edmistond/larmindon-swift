@@ -331,6 +331,12 @@ public struct LarmindonRootView: View {
 
     private var modeStatusText: String {
         if session.store.isRunning {
+            // Say so rather than claiming "Listening" through an interruption. No audio is
+            // arriving, so a caption view that stops growing would otherwise read as a
+            // quiet room rather than a session that needs attention.
+            if session.isInterrupted {
+                return "Interrupted · \(session.requestedMode.title)"
+            }
             if let activeMode = session.activeMode {
                 return "Listening · \(activeMode.title)"
             }

@@ -24,6 +24,11 @@ public final class CaptionSession {
     public private(set) var microphoneConfiguration = MicrophoneCaptureConfiguration()
     public private(set) var isApplyingMicrophoneConfiguration = false
     public private(set) var microphoneConfigurationError: String?
+    /// True between an interruption starting and recovery resolving either way. The session
+    /// is still nominally running, but no audio is arriving — without this the status line
+    /// keeps claiming "Listening", and an empty caption view reads as a quiet room rather
+    /// than a dead session. Always false on macOS.
+    public private(set) var isInterrupted = false
 
     private var activeSource: TranscriptionSource?
     private var activeCapture: AudioCaptureSession?
@@ -324,6 +329,7 @@ public final class CaptionSession {
         interruptionRecoveryTask = nil
         wasRunningBeforeInterruption = false
         interruptionAttempt = 0
+        isInterrupted = false
     }
     #endif
 
@@ -690,6 +696,7 @@ public final class CaptionSession {
             wasRunningBeforeInterruption = store.isRunning
             if store.isRunning {
                 speechAnalyzerState = "Interrupted"
+                isInterrupted = true
             }
 
         case .mediaServicesReset:
@@ -698,6 +705,9 @@ public final class CaptionSession {
             // unrecovered, since the flag is still false. It can also land *during* an
             // existing interruption, so neither source of truth alone is enough.
             wasRunningBeforeInterruption = store.isRunning || wasRunningBeforeInterruption
+            if wasRunningBeforeInterruption {
+                isInterrupted = true
+            }
 
         case .ended:
             break
@@ -741,6 +751,7 @@ public final class CaptionSession {
             interruptionRecoveryTask = nil
             wasRunningBeforeInterruption = false
             interruptionAttempt = 0
+            isInterrupted = false
             lastError = reason.message
             speechAnalyzerState = "Error"
 
@@ -777,6 +788,7 @@ public final class CaptionSession {
                 let recoveredOnAttempt = interruptionAttempt
                 wasRunningBeforeInterruption = false
                 interruptionAttempt = 0
+                isInterrupted = false
                 await diagnostics.record(
                     category: "state",
                     name: "audio_interruption_recovered",

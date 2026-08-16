@@ -62,6 +62,8 @@ final class CaptionSessionInterruptionTests: XCTestCase {
         XCTAssertEqual(session.lastError, AudioInterruptionFailureReason
             .interruptionEndedWithoutResume.message)
         XCTAssertFalse(session.store.isRunning)
+        // Resolved, not still pending: the session is stopped, not interrupted.
+        XCTAssertFalse(session.isInterrupted)
     }
 
     /// The failure mode that matters most: the app must never decide to start capturing on
@@ -104,11 +106,16 @@ final class CaptionSessionInterruptionTests: XCTestCase {
         session.store.isRunning = true
 
         session.routeManager.onAudioInterruption?(.began)
+        // Running, but nothing is arriving — the status line has to say so rather than
+        // keep claiming "Listening".
+        XCTAssertTrue(session.isInterrupted)
+
         session.routeManager.onAudioInterruption?(.ended(shouldResume: true))
         await waitUntil { session.activeMode != nil }
 
         XCTAssertTrue(session.store.isRunning)
         XCTAssertNotNil(session.activeMode)
+        XCTAssertFalse(session.isInterrupted)
         XCTAssertTrue(notifier.notifiedReasons.isEmpty)
     }
 
