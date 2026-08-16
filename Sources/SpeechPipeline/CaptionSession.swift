@@ -683,13 +683,24 @@ public final class CaptionSession {
     /// reports, `AudioInterruptionPolicy` decides, and this executes. Nothing here inspects
     /// `AVAudioSession` — that is what keeps the decision testable.
     private func handleAudioInterruption(_ event: AudioInterruptionEvent) {
-        if case .began = event {
+        switch event {
+        case .began:
             // Latch it now. `store.isRunning` is still true at this instant; after the
             // teardown it isn't, and the resume decision would read the wrong answer.
             wasRunningBeforeInterruption = store.isRunning
             if store.isRunning {
                 speechAnalyzerState = "Interrupted"
             }
+
+        case .mediaServicesReset:
+            // A reset arrives on its own — there is no `.began` to pair with it. Reading
+            // only the latched flag here would leave a media-server restart permanently
+            // unrecovered, since the flag is still false. It can also land *during* an
+            // existing interruption, so neither source of truth alone is enough.
+            wasRunningBeforeInterruption = store.isRunning || wasRunningBeforeInterruption
+
+        case .ended:
+            break
         }
 
         let decision = AudioInterruptionPolicy.decision(

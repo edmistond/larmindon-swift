@@ -27,6 +27,13 @@ final class CaptionSessionInterruptionTests: XCTestCase {
         CaptionSession(failureNotifier: notifier)
     }
 
+    /// Recovery tests use the fake source so the restart genuinely succeeds in the
+    /// Simulator. With `.live` the restart would fail on SpeechAnalyzer's device-only
+    /// restriction, and the test would be asserting the failure path by accident.
+    private func makeRecoverableSession(notifier: SpyNotifier) -> CaptionSession {
+        CaptionSession(selectedSourceKind: .fake, failureNotifier: notifier)
+    }
+
     /// Polls rather than sleeping a fixed interval: the give-up path hands off to a Task,
     /// and a hard sleep would either be flaky or slow.
     private func waitUntil(
@@ -89,6 +96,48 @@ final class CaptionSessionInterruptionTests: XCTestCase {
 
         XCTAssertFalse(session.store.isRunning)
         XCTAssertTrue(notifier.notifiedReasons.isEmpty)
+    }
+
+    func testInterruptionEndingWithResumeRestartsCaptions() async {
+        let notifier = SpyNotifier()
+        let session = makeRecoverableSession(notifier: notifier)
+        session.store.isRunning = true
+
+        session.routeManager.onAudioInterruption?(.began)
+        session.routeManager.onAudioInterruption?(.ended(shouldResume: true))
+        await waitUntil { session.activeMode != nil }
+
+        XCTAssertTrue(session.store.isRunning)
+        XCTAssertNotNil(session.activeMode)
+        XCTAssertTrue(notifier.notifiedReasons.isEmpty)
+    }
+
+    /// A media-server reset arrives on its own, with no `.began` to pair with it. Reading
+    /// only the latched "were we running?" flag would leave this case permanently
+    /// unrecovered — a restart of the audio stack would silently end the session.
+    func testMediaServicesResetRecoversWithoutAPrecedingBegan() async {
+        let notifier = SpyNotifier()
+        let session = makeRecoverableSession(notifier: notifier)
+        session.store.isRunning = true
+
+        session.routeManager.onAudioInterruption?(.mediaServicesReset)
+        await waitUntil { session.activeMode != nil }
+
+        XCTAssertTrue(session.store.isRunning)
+        XCTAssertNotNil(session.activeMode)
+        XCTAssertTrue(notifier.notifiedReasons.isEmpty)
+    }
+
+    /// Same event, opposite expectation: a reset while stopped must stay stopped.
+    func testMediaServicesResetWhileStoppedStaysStopped() async {
+        let notifier = SpyNotifier()
+        let session = makeRecoverableSession(notifier: notifier)
+
+        session.routeManager.onAudioInterruption?(.mediaServicesReset)
+        await waitUntil({ session.store.isRunning }, timeout: .milliseconds(300))
+
+        XCTAssertFalse(session.store.isRunning)
+        XCTAssertNil(session.activeMode)
     }
 
     /// A give-up notification is worth reading precisely because it's rare. Repeated
