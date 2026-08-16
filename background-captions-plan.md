@@ -109,18 +109,32 @@ with the option flags and attempt count as fields.
 failure that happens while the app is backgrounded is **only** diagnosable that way —
 there is no other observer present.
 
-### Step 6 — Surface a failure you can't see (decision needed)
+### Step 6 — Surface a failure you can't see
 
-If recovery gives up while you're in another app, nothing tells you.
+**Decided: local notification on unrecoverable failure.**
 
-- **Minimum:** set `lastError` + `speechAnalyzerState` so the state is visible on
-  return to the app.
-- **Better:** a local notification on give-up. Silently-dead captions are the exact
-  failure mode that makes the whole feature untrustworthy — if you can't tell the
-  difference between "nobody is talking" and "it died four minutes ago," you end up
-  checking the app constantly, which defeats the point.
+If recovery gives up while you're in another app, nothing tells you. Silently-dead
+captions are the failure mode that makes the whole feature untrustworthy — if you can't
+tell "nobody is talking" from "it died four minutes ago," you end up checking the app
+constantly, which defeats the point of backgrounding it.
 
-*Status: undecided.*
+Both halves:
+
+- Set `lastError` + `speechAnalyzerState` so the state is visible on return to the app.
+- Post a `UNNotificationRequest` on `.giveUp`, saying captions stopped and why
+  (interrupted, mic taken by another app, media services reset).
+
+Implementation notes:
+
+- Needs `UNUserNotificationCenter.requestAuthorization` — request it lazily, the first
+  time a background session actually starts, not at launch. No point prompting for a
+  permission that only matters once backgrounding is in use.
+- **Fire only on `.giveUp`, never on `.retry` or `.restart`.** A notification per
+  transient blip during a phone call would train you to ignore them, which is worse
+  than not sending any.
+- Keep it iOS-only; macOS has no equivalent problem, since the window is visible.
+- Notification permission being denied must not break capture — degrade to the
+  `lastError` path silently.
 
 ### Step 7 — Device verification checklist
 
@@ -280,24 +294,24 @@ size changes, landscape layout. Screenshots as `XCTAttachment`s for eyeballing.
 re-baselining would cost more than it catches. Screenshots for human review, pure
 functions for automated assertions.
 
-*Status: scope undecided — whether this lands in this round or waits until the fake
-source is deterministic and its value is visible.*
+**Decided: held.** Not in this round. Revisit once the fake source is deterministic and
+reachable on iOS — at that point the actual value of a UI test target is visible rather
+than speculative, and the target is cheap to add against a fake that already works.
 
 ---
 
 ## Sequencing
 
-1. **Background captions** (Steps 1–7). Independent of everything else, small.
-   Interruption policy unit-tested from the start — nearly free given the existing
-   pattern.
+1. **Background captions** (Steps 1–7), including the local notification. Independent
+   of everything else, small. Interruption policy unit-tested from the start — nearly
+   free given the existing pattern.
 2. **Fake source determinism + iOS reachability** (Gaps 1, 2). Small, unlocks the rest.
 3. **Injected frames for the Apple source** (Gap 3). Small, unlocks WAV-driven testing
    and improves the design.
-4. **XCUITest target.** Only once 2 is done.
+4. **XCUITest target.** Held; revisit after 2.
 5. **Picture-in-Picture.** Only after living with background captions.
 
 ## Open decisions
 
-- Local notification on unrecoverable background failure? (Step 6)
-- XCUITest target in this round, or held until the fake source is deterministic?
 - Is a 2–3 line PiP overlay actually useful, given legibility is the whole point?
+  (Deliberately deferred until background captions have had real use.)
