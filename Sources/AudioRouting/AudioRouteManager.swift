@@ -37,6 +37,9 @@ public final class AudioRouteManager {
     public private(set) var currentRouteOutputs: [AudioRoutePort] = []
     public var onInputAvailabilityChange: (@MainActor @Sendable (AudioInputAvailabilityChange) -> Void)?
     public var onRouteChange: (@MainActor @Sendable () -> Void)?
+    /// iOS only. Fires for interruptions and media-server resets; `CaptionSession` owns the
+    /// response, the same way it owns `onInputAvailabilityChange` on macOS.
+    public var onAudioInterruption: (@MainActor @Sendable (AudioInterruptionEvent) -> Void)?
 
     #if os(macOS)
     private var deviceObservation: MacAudioDeviceObservation?
@@ -46,6 +49,7 @@ public final class AudioRouteManager {
     public init() {
         refresh()
         observeRouteChanges()
+        observeInterruptions()
     }
 
     public func configureForCapture(
@@ -253,6 +257,68 @@ public final class AudioRouteManager {
         }
         #endif
     }
+
+    /// Interruptions matter far more once captures survive backgrounding. In the foreground
+    /// a lost session is visible — captions stop, the meter dies, you press Start. Behind
+    /// another app the same failure is silent, and the first you'd know of it is discovering
+    /// the last several minutes of a conversation were never transcribed.
+    private func observeInterruptions() {
+        #if os(iOS)
+        // `object: nil` on both: there is only ever one shared session in this process, and
+        // matching any sender is strictly safer than assuming which object AVFoundation
+        // attaches — missing one of these notifications is a silent, unrecoverable failure.
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let event = Self.interruptionEvent(from: notification) else { return }
+            Task { @MainActor in
+                self?.onAudioInterruption?(event)
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refresh()
+                self?.onAudioInterruption?(.mediaServicesReset)
+            }
+        }
+        #endif
+    }
+
+    #if os(iOS)
+    /// Translates the notification's `userInfo` into the platform-agnostic event the policy
+    /// reads. Doing it here, once, is what keeps `AudioInterruptionPolicy` free of
+    /// `AVAudioSession` and therefore testable off-device.
+    /// `nonisolated` so it can run inside the notification closure without hopping actors —
+    /// the event has to be extracted from `userInfo` before the hop, since `Notification`
+    /// isn't `Sendable`.
+    nonisolated static func interruptionEvent(
+        from notification: Notification
+    ) -> AudioInterruptionEvent? {
+        guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: rawType) else {
+            return nil
+        }
+
+        switch type {
+        case .began:
+            return .began
+        case .ended:
+            let rawOptions =
+                notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
+            return .ended(shouldResume: options.contains(.shouldResume))
+        @unknown default:
+            return nil
+        }
+    }
+    #endif
 
     #if os(macOS)
     private func scheduleDeviceListRefresh() {

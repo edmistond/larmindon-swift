@@ -43,6 +43,18 @@ public final class CaptionSession {
     private var transitionGeneration = 0
     private let credentialStore: any ProviderCredentialStore
     private let networkPathMonitor: NetworkPathDiagnosticMonitor
+    private let failureNotifier: any CaptionFailureNotifying
+
+    #if os(iOS)
+    /// Captured when an interruption begins, because by the time it ends the session has
+    /// already been torn down and `store.isRunning` can no longer answer "were we supposed
+    /// to be captioning?". Without it, a call ending after the user had stopped captions
+    /// would start recording on its own.
+    private var wasRunningBeforeInterruption = false
+    private var interruptionAttempt = 0
+    private var interruptionRecoveryTask: Task<Void, Never>?
+    private var didPrepareFailureNotifier = false
+    #endif
 
     public init(
         store: CaptionStore = CaptionStore(),
@@ -55,12 +67,15 @@ public final class CaptionSession {
         profanityFilterEnabled: Bool = false,
         diagnostics: DiagnosticRecorder = .shared,
         credentialStore: any ProviderCredentialStore =
-            KeychainProviderCredentialStore()
+            KeychainProviderCredentialStore(),
+        failureNotifier: any CaptionFailureNotifying =
+            UserNotificationCaptionFailureNotifier()
     ) {
         self.store = store
         self.routeManager = routeManager
         self.diagnostics = diagnostics
         self.credentialStore = credentialStore
+        self.failureNotifier = failureNotifier
         self.networkPathMonitor = NetworkPathDiagnosticMonitor(
             recorder: diagnostics
         )
@@ -82,6 +97,12 @@ public final class CaptionSession {
         #if os(macOS)
         routeManager.onInputAvailabilityChange = { [weak self] change in
             self?.handleAudioInputAvailabilityChange(change)
+        }
+        #endif
+
+        #if os(iOS)
+        routeManager.onAudioInterruption = { [weak self] event in
+            self?.handleAudioInterruption(event)
         }
         #endif
     }
@@ -111,6 +132,11 @@ public final class CaptionSession {
             self.profanityFilterEnabled = profanityFilterEnabled
         }
 
+        #if os(iOS)
+        // A deliberate Start supersedes whatever recovery was in flight.
+        cancelInterruptionRecovery()
+        #endif
+
         transitionGeneration += 1
         let generation = transitionGeneration
         transitionTask?.cancel()
@@ -127,7 +153,8 @@ public final class CaptionSession {
     private func performStart(
         sourceKind: TranscriptionSourceKind,
         mode: TranscriptionMode,
-        generation: Int
+        generation: Int,
+        preserveRunningState: Bool = false
     ) async {
         // Recorded before the teardown rather than after it. `stopActive` can take seconds,
         // and if a provider teardown stalls this is the only evidence that Start was pressed
@@ -141,7 +168,10 @@ public final class CaptionSession {
             ]
         )
 
-        await stopActive(cancelAudioRouteRecovery: true)
+        await stopActive(
+            cancelAudioRouteRecovery: true,
+            preserveRunningState: preserveRunningState
+        )
         guard generation == transitionGeneration, !Task.isCancelled else {
             return
         }
@@ -231,6 +261,9 @@ public final class CaptionSession {
             activeMode = mode
             speechAnalyzerState = "Running \(source.name)"
             startSilentCaptureWatchdog(generation: generation)
+            #if os(iOS)
+            prepareFailureNotifierIfNeeded(sourceKind: sourceKind)
+            #endif
             microphoneCapabilities.refresh()
             await diagnostics.record(
                 category: "state",
@@ -263,10 +296,41 @@ public final class CaptionSession {
         transitionGeneration += 1
         transitionTask?.cancel()
         transitionTask = nil
+        #if os(iOS)
+        // Disarm any pending resume. Stopping captions *during* a phone call and having
+        // them come back when the call ends would be the app deciding to record on its own.
+        cancelInterruptionRecovery()
+        #endif
         await stopActive(cancelAudioRouteRecovery: true)
     }
 
-    private func stopActive(cancelAudioRouteRecovery: Bool) async {
+    #if os(iOS)
+    /// Asks for notification permission the first time a live session actually runs.
+    ///
+    /// Not at launch — there's no reason to prompt for a permission that only matters once
+    /// captions are running. Not on first backgrounding either, tempting as that is: the
+    /// system prompt can't be presented while the app is in the background, so the request
+    /// would be silently denied at exactly the moment it became relevant.
+    private func prepareFailureNotifierIfNeeded(sourceKind: TranscriptionSourceKind) {
+        guard sourceKind == .live, !didPrepareFailureNotifier else { return }
+        didPrepareFailureNotifier = true
+        Task { @MainActor [failureNotifier] in
+            await failureNotifier.prepare()
+        }
+    }
+
+    private func cancelInterruptionRecovery() {
+        interruptionRecoveryTask?.cancel()
+        interruptionRecoveryTask = nil
+        wasRunningBeforeInterruption = false
+        interruptionAttempt = 0
+    }
+    #endif
+
+    private func stopActive(
+        cancelAudioRouteRecovery: Bool,
+        preserveRunningState: Bool = false
+    ) async {
         if cancelAudioRouteRecovery {
             audioRouteRecoveryTask?.cancel()
             audioRouteRecoveryTask = nil
@@ -275,7 +339,13 @@ public final class CaptionSession {
         // the socket. The Start/Stop button reads `store.isRunning`, so clear the visible
         // state up front rather than after the teardown, or Stop looks like it did
         // nothing and gets pressed again.
-        store.isRunning = false
+        //
+        // Interruption recovery is the exception: it stops and starts as one motion, and
+        // flipping this would flash the button to Start mid-recovery for a session the
+        // user never asked to stop.
+        if !preserveRunningState {
+            store.isRunning = false
+        }
         audioLevels = AudioLevelSnapshot()
         activeMode = nil
         activeServerProvider = nil
@@ -303,7 +373,9 @@ public final class CaptionSession {
         }
         routeManager.releaseAudioSession()
         activeSource = nil
-        speechAnalyzerState = "Stopped"
+        if !preserveRunningState {
+            speechAnalyzerState = "Stopped"
+        }
         microphoneCapabilities.refresh()
         await diagnostics.record(
             category: "state",
@@ -602,6 +674,161 @@ public final class CaptionSession {
             fields: fields
         )
     }
+
+    #if os(iOS)
+    /// Responds to a phone call, Siri, an alarm, another app taking the microphone, or the
+    /// media server restarting.
+    ///
+    /// Mirrors the macOS `handleAudioInputAvailabilityChange` below: the route manager
+    /// reports, `AudioInterruptionPolicy` decides, and this executes. Nothing here inspects
+    /// `AVAudioSession` — that is what keeps the decision testable.
+    private func handleAudioInterruption(_ event: AudioInterruptionEvent) {
+        if case .began = event {
+            // Latch it now. `store.isRunning` is still true at this instant; after the
+            // teardown it isn't, and the resume decision would read the wrong answer.
+            wasRunningBeforeInterruption = store.isRunning
+            if store.isRunning {
+                speechAnalyzerState = "Interrupted"
+            }
+        }
+
+        let decision = AudioInterruptionPolicy.decision(
+            for: event,
+            wasRunning: wasRunningBeforeInterruption,
+            attempt: interruptionAttempt
+        )
+
+        Task { @MainActor [weak self] in
+            await self?.diagnostics.record(
+                category: "audio_route",
+                name: "audio_interruption",
+                fields: [
+                    "event": Self.diagnosticID(for: event),
+                    "was_running": String(self?.wasRunningBeforeInterruption ?? false),
+                    "attempt": String(self?.interruptionAttempt ?? 0),
+                    "decision": Self.diagnosticID(for: decision),
+                ]
+            )
+        }
+
+        apply(decision)
+    }
+
+    private func apply(_ decision: AudioInterruptionPolicy.Decision) {
+        switch decision {
+        case .hold:
+            return
+
+        case .restart:
+            scheduleInterruptionRecovery(after: nil)
+
+        case .retry(let delay):
+            scheduleInterruptionRecovery(after: delay)
+
+        case .giveUp(let reason):
+            interruptionRecoveryTask?.cancel()
+            interruptionRecoveryTask = nil
+            wasRunningBeforeInterruption = false
+            interruptionAttempt = 0
+            lastError = reason.message
+            speechAnalyzerState = "Error"
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await stopActive(cancelAudioRouteRecovery: true)
+                await diagnostics.record(
+                    category: "error",
+                    name: "audio_interruption_unrecoverable",
+                    fields: ["reason": reason.diagnosticID]
+                )
+                // The whole point of the feature is that the user is in another app when
+                // this happens, so `lastError` alone would go unread. Only give-up posts —
+                // one banner per transient blip during a phone call would train them to be
+                // swiped away unread, which is worse than sending none.
+                await failureNotifier.notifyCaptionsStopped(reason: reason)
+            }
+        }
+    }
+
+    private func scheduleInterruptionRecovery(after delay: Duration?) {
+        interruptionRecoveryTask?.cancel()
+        interruptionRecoveryTask = Task { @MainActor [weak self] in
+            if let delay {
+                try? await Task.sleep(for: delay)
+            }
+            guard let self, !Task.isCancelled else { return }
+
+            interruptionAttempt += 1
+            let succeeded = await restartAfterInterruption()
+            guard !Task.isCancelled else { return }
+
+            if succeeded {
+                let recoveredOnAttempt = interruptionAttempt
+                wasRunningBeforeInterruption = false
+                interruptionAttempt = 0
+                await diagnostics.record(
+                    category: "state",
+                    name: "audio_interruption_recovered",
+                    fields: ["attempt": String(recoveredOnAttempt)]
+                )
+                return
+            }
+
+            // Reactivating commonly fails for a moment while the interrupting app finishes
+            // letting go of the session, so a single attempt gives up far too early.
+            apply(
+                AudioInterruptionPolicy.decisionAfterFailedRestart(
+                    attempt: interruptionAttempt
+                )
+            )
+        }
+    }
+
+    /// Restarts through the same generation-guarded path a user-initiated Start uses, rather
+    /// than a bespoke partial rebuild. That path is already correct about cancellation and
+    /// re-entrancy, and that correctness was expensive to arrive at.
+    private func restartAfterInterruption() async -> Bool {
+        transitionGeneration += 1
+        let generation = transitionGeneration
+        transitionTask?.cancel()
+        transitionTask = nil
+
+        await performStart(
+            sourceKind: selectedSourceKind,
+            mode: requestedMode,
+            generation: generation,
+            preserveRunningState: true
+        )
+
+        return store.isRunning && activeMode != nil
+    }
+
+    private static func diagnosticID(for event: AudioInterruptionEvent) -> String {
+        switch event {
+        case .began:
+            return "began"
+        case .ended(let shouldResume):
+            return shouldResume ? "ended_should_resume" : "ended_no_resume"
+        case .mediaServicesReset:
+            return "media_services_reset"
+        }
+    }
+
+    private static func diagnosticID(
+        for decision: AudioInterruptionPolicy.Decision
+    ) -> String {
+        switch decision {
+        case .hold:
+            return "hold"
+        case .restart:
+            return "restart"
+        case .retry(let delay):
+            return "retry_\(delay)"
+        case .giveUp(let reason):
+            return "give_up_\(reason.diagnosticID)"
+        }
+    }
+    #endif
 
     #if os(macOS)
     private func handleAudioInputAvailabilityChange(_ change: AudioInputAvailabilityChange) {
