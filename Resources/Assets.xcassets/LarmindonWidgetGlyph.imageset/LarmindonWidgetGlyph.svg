@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <title>Larmindon listening tower</title>
+  <g fill="#000000">
+    <!-- The beacon body is deliberately broad so it survives Lock Screen scale. -->
+    <path fill-rule="evenodd" d="
+      M 512 170
+      L 616 286
+      L 616 354
+      L 650 382
+      L 650 770
+      L 714 842
+      L 714 888
+      L 310 888
+      L 310 842
+      L 374 770
+      L 374 382
+      L 408 354
+      L 408 286
+      Z
+
+      M 512 592
+      C 467 592 438 627 438 672
+      L 438 817
+      L 586 817
+      L 586 672
+      C 586 627 557 592 512 592
+      Z
+
+      M 458 362
+      L 494 362
+      L 494 476
+      L 458 476
+      Z
+
+      M 530 362
+      L 566 362
+      L 566 476
+      L 530 476
+      Z"/>
+  </g>
+
+  <!-- Two strong radio-wave bands on each side echo the original app icon. -->
+  <g fill="none" stroke="#000000" stroke-width="72" stroke-linecap="round">
+    <path d="M 296 366 C 214 446 214 578 296 658"/>
+    <path d="M 190 252 C 44 396 44 628 190 772"/>
+    <path d="M 728 366 C 810 446 810 578 728 658"/>
+    <path d="M 834 252 C 980 396 980 628 834 772"/>
+  </g>
+</svg>
