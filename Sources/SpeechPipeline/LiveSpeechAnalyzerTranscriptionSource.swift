@@ -148,7 +148,10 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             ?? inputNode.outputFormat(forBus: 0)
 
         let locale = try await prepareTranscriberLocale()
-        await recordStage("locale_reserved", fields: ["locale": locale.identifier])
+        await recordStage(
+            "locale_reserved",
+            fields: ["locale": locale.identifier, "reserved": String(reservedLocale != nil)]
+        )
 
         let transcriber = SpeechTranscriber(
             locale: locale,
@@ -425,21 +428,24 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             )
         }
 
+        // Two failure shapes, deliberately kept apart. A *thrown* error is a real asset
+        // problem and still aborts the start. A `false` return is not: it means the OS
+        // declined the reservation without saying why, and it is what a long-idle process
+        // starts doing after a session has been stopped — see the `larmindon-diagnostics-
+        // C0F09A8C` bundle, where every start after a >75 minute background stretch failed
+        // this way while `reservedLocales` was empty and en_US was installed. A reservation
+        // only keeps the OS from purging assets that are already on disk, so a refusal is
+        // recorded and the pipeline continues unreserved rather than refusing to start.
+        let didReserve: Bool
         do {
-            let didReserve = try await AssetInventory.reserve(locale: supportedLocale)
-            let reservedLocales = await AssetInventory.reservedLocales
-            guard didReserve || reservedLocales.contains(where: { $0.identifier == supportedLocale.identifier }) else {
-                let reservedLocales = await AssetInventory.reservedLocales
-                    .map(\.identifier)
-                    .sorted()
-                    .joined(separator: ", ")
-                throw TranscriptionSourceError.unavailable(
-                    "Could not reserve SpeechAnalyzer locale \(supportedLocale.identifier). Reserved locales: \(reservedLocales.isEmpty ? "none" : reservedLocales)"
-                )
-            }
-            reservedLocale = supportedLocale
-            return supportedLocale
+            didReserve = try await AssetInventory.reserve(locale: supportedLocale)
         } catch {
+            await recordReservationDiagnostics(
+                name: "locale_reservation_failed",
+                category: "error",
+                locale: supportedLocale,
+                extra: ["error": error.localizedDescription]
+            )
             let installedLocales = await SpeechTranscriber.installedLocales
                 .map(\.identifier)
                 .sorted()
@@ -448,6 +454,57 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
                 "Could not reserve SpeechAnalyzer assets for \(supportedLocale.identifier): \(error.localizedDescription). Installed SpeechTranscriber locales: \(installedLocales.isEmpty ? "none" : installedLocales)"
             )
         }
+
+        let reservedLocales = await AssetInventory.reservedLocales
+        guard didReserve || reservedLocales.contains(where: { $0.identifier == supportedLocale.identifier }) else {
+            await recordReservationDiagnostics(
+                name: "locale_reservation_refused",
+                category: "state",
+                locale: supportedLocale,
+                extra: ["did_reserve": String(didReserve)]
+            )
+            // `reservedLocale` stays nil, so `stop()` will not release a reservation we
+            // never held.
+            return supportedLocale
+        }
+
+        reservedLocale = supportedLocale
+        return supportedLocale
+    }
+
+    /// Everything the Speech framework will tell us about why a reservation did not happen.
+    /// The previous wording nested our own guard message inside the `catch`'s wrapper, which
+    /// made a refusal and a thrown error indistinguishable in an exported bundle.
+    private func recordReservationDiagnostics(
+        name: String,
+        category: String,
+        locale: Locale,
+        extra: [String: String]
+    ) async {
+        let reservedLocales = await AssetInventory.reservedLocales
+            .map(\.identifier)
+            .sorted()
+            .joined(separator: ", ")
+        let installedLocales = await SpeechTranscriber.installedLocales
+            .map(\.identifier)
+            .sorted()
+            .joined(separator: ", ")
+        let probe = SpeechTranscriber(
+            locale: locale,
+            transcriptionOptions: [],
+            reportingOptions: [],
+            attributeOptions: []
+        )
+        let moduleStatus = await AssetInventory.status(forModules: [probe])
+
+        var fields = extra
+        fields["locale"] = locale.identifier
+        fields["reserved_locales"] = reservedLocales.isEmpty ? "none" : reservedLocales
+        fields["maximum_reserved_locales"] = String(AssetInventory.maximumReservedLocales)
+        fields["module_status"] = String(describing: moduleStatus)
+        fields["installed_locales"] = installedLocales.isEmpty ? "none" : installedLocales
+
+        await diagnostics.record(category: category, name: name, fields: fields)
     }
 }
 
