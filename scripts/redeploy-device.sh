@@ -95,7 +95,7 @@ if [[ -z "${device_selector}" ]]; then
   if [[ "${device_count}" != "1" ]]; then
     echo "Expected exactly one connected iOS device; found ${device_count}." >&2
     echo "Pass a device name or UDID explicitly:" >&2
-    echo "  $0 \"My iPhone\"" >&2
+    echo "  $0 \"My iPad\"" >&2
     exit 1
   fi
 

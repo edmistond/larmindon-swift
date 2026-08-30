@@ -26,15 +26,22 @@ open Larmindon.xcworkspace
 After generation, build the `Larmindon` scheme for an iOS simulator:
 
 ```bash
-xcodebuild -workspace Larmindon.xcworkspace -scheme Larmindon -destination 'platform=iOS Simulator,name=iPhone 17' build
+xcodebuild -workspace Larmindon.xcworkspace -scheme Larmindon -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' build
 ```
 
-Use a simulator name that exists on your machine if `iPhone 17` is not installed.
+To exercise the iPad build explicitly, select an installed iPad simulator:
 
-## Redeploy to a Connected iPhone
+```bash
+xcodebuild -workspace Larmindon.xcworkspace -scheme Larmindon -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5),OS=latest' build
+```
 
-With one iPhone connected and trusted, rebuild, install, and launch a freshly
-signed development copy from the command line:
+Use simulator names that exist on your machine if either example device is not
+installed.
+
+## Redeploy to a Connected iPhone or iPad
+
+With one iOS device connected and trusted, rebuild, install, and launch a
+freshly signed development copy from the command line:
 
 ```bash
 ./scripts/redeploy-device.sh
@@ -43,7 +50,7 @@ signed development copy from the command line:
 If more than one physical iOS device is connected, pass its name or UDID:
 
 ```bash
-./scripts/redeploy-device.sh "My iPhone"
+./scripts/redeploy-device.sh "My iPad"
 ```
 
 To force Xcode to issue a new development provisioning profile before the
