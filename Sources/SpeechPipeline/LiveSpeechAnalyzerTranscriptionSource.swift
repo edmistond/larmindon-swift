@@ -72,6 +72,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     }
 
     public func start() async throws {
+        try await MicrophonePermission.ensureGranted()
         try await startSpeechAnalyzerPipeline()
     }
 

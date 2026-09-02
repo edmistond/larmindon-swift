@@ -68,6 +68,7 @@ public final class AudioCaptureSession {
 
     public func start() async throws {
         guard !isRunning else { return }
+        try await MicrophonePermission.ensureGranted()
 
         let inputNode = audioEngine.inputNode
         let captureFormat: AVAudioFormat
