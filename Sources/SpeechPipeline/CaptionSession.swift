@@ -44,6 +44,11 @@ public final class CaptionSession {
     private var activeInputDeviceID: UInt32?
     private var silentCaptureTask: Task<Void, Never>?
     private var didReceiveAudioSinceStart = false
+    /// When `audioLevels` was last written for a level-only change. See `publishAudioLevels`.
+    private var lastLevelOnlyPublish: ContinuousClock.Instant?
+    /// Minimum spacing between level-only writes. Capture delivers a snapshot per buffer
+    /// (about 60/s at the default 768 frames); the meter reads fine at 20/s.
+    private static let levelOnlyPublishInterval: Duration = .milliseconds(50)
     private var transitionTask: Task<Void, Never>?
     private var transitionGeneration = 0
     private let credentialStore: any ProviderCredentialStore
@@ -215,7 +220,7 @@ public final class CaptionSession {
             levelTask = Task { @MainActor [weak self, source] in
                 for await snapshot in source.levelUpdates {
                     self?.didReceiveAudioSinceStart = true
-                    self?.audioLevels = snapshot
+                    self?.publishAudioLevels(snapshot)
                 }
             }
 
@@ -240,7 +245,7 @@ public final class CaptionSession {
                 activeCapture = capture
                 captureLevelTask = Task {
                     for await snapshot in capture.levelUpdates {
-                        self.audioLevels = snapshot
+                        self.publishAudioLevels(snapshot)
                     }
                 }
                 try await sonioxSource.start(
@@ -360,6 +365,7 @@ public final class CaptionSession {
             store.isRunning = false
         }
         audioLevels = AudioLevelSnapshot()
+        lastLevelOnlyPublish = nil
         activeMode = nil
         activeServerProvider = nil
         activeInputDeviceID = nil
@@ -594,6 +600,31 @@ public final class CaptionSession {
             speechAnalyzerState = "Error"
             scheduleFailureStop()
         }
+    }
+
+    /// Writes a level snapshot to `audioLevels`, thinning out pure level changes.
+    ///
+    /// Every write to an `@Observable` property invalidates the views that read it, and
+    /// capture yields one snapshot per audio buffer. The meter is a first-class signal for
+    /// a user who cannot hear the input, so anything that changes its *meaning* — speech
+    /// detected or not, the VAD label, the observed buffer size — is published immediately.
+    /// Only a snapshot that differs by level alone is rate-limited.
+    private func publishAudioLevels(_ snapshot: AudioLevelSnapshot) {
+        guard snapshot != audioLevels else { return }
+
+        let now = ContinuousClock.now
+        let isLevelOnlyChange = snapshot.speechDetected == audioLevels.speechDetected
+            && snapshot.vadState == audioLevels.vadState
+            && snapshot.observedCallbackFrameLength == audioLevels.observedCallbackFrameLength
+
+        if isLevelOnlyChange,
+           let lastLevelOnlyPublish,
+           now - lastLevelOnlyPublish < Self.levelOnlyPublishInterval {
+            return
+        }
+
+        audioLevels = snapshot
+        lastLevelOnlyPublish = now
     }
 
     /// Capture can start cleanly and still deliver no audio at all, which otherwise shows

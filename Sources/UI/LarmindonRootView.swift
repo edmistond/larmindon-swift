@@ -190,10 +190,7 @@ public struct LarmindonRootView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(modeStatusText)
 
-            AudioLevelBar(
-                level: session.audioLevels.rawInputLevel,
-                isActive: session.audioLevels.speechDetected
-            )
+            SessionAudioLevelBar(session: session)
         }
         .animation(.easeInOut(duration: 0.2), value: session.store.isRunning)
     }
@@ -441,4 +438,20 @@ private enum CaptionControlsPlacement {
 #Preview {
     LarmindonRootView(session: CaptionSession())
         .frame(minWidth: 480, minHeight: 600)
+}
+
+/// The meter in its own view so level updates invalidate only this leaf.
+///
+/// Reading `session.audioLevels` directly in `LarmindonRootView` made the whole root body
+/// — captions included — re-evaluate on every level write, which showed up as sustained
+/// SwiftUI layout CPU while capturing.
+private struct SessionAudioLevelBar: View {
+    let session: CaptionSession
+
+    var body: some View {
+        AudioLevelBar(
+            level: session.audioLevels.rawInputLevel,
+            isActive: session.audioLevels.speechDetected
+        )
+    }
 }
