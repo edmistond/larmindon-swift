@@ -21,8 +21,11 @@ public struct AudioLevelBar: View {
             }
         }
         .frame(height: 10)
-        .accessibilityLabel("Input level")
-        .accessibilityValue("\(Int(level * 100)) percent, \(isActive ? "speech detected" : "no speech")")
+        // Not exposed to assistive tech on purpose: the level changes ~20 times a second,
+        // and each change rebuilt the platform accessibility properties, which showed up
+        // as a measurable slice of main-thread time in a profile. The bar is a visual
+        // signal for a user who cannot hear the input; it has no screen-reader audience.
+        .accessibilityHidden(true)
     }
 
     private var levelGradient: LinearGradient {
