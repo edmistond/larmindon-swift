@@ -81,6 +81,12 @@ Build the macOS app in Release configuration and replace the copy installed at
 ./scripts/deploy-macos-release.sh
 ```
 
+Builds are signed with the personal-team Apple Development certificate (set in
+`Project.swift`; the script also derives the team from the certificate). This matters
+for more than tidiness: an ad-hoc signature's designated requirement is the build's
+code hash, so macOS treats every rebuild as a new app and asks for microphone access
+again. A certificate-backed signature keeps the grant across rebuilds.
+
 ## Live Transcription Mode
 
 The default transcription source is `Live`. Press **Start Captions** in the app to capture microphone audio and feed it through Apple's on-device SpeechAnalyzer pipeline.

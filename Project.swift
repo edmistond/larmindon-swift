@@ -7,6 +7,17 @@ let appSettings: SettingsDictionary = [
     "PRODUCT_NAME": "Larmindon",
     "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
     "ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS": "YES",
+    // Sign every build with the personal-team Apple Development certificate, including
+    // Debug runs from Xcode. Ad-hoc signatures make TCC treat each rebuild as a new app
+    // and re-prompt for the microphone; a certificate-backed signature is stable.
+    "CODE_SIGN_STYLE": "Automatic",
+    "DEVELOPMENT_TEAM": "ZKRZM9RTLN",
+]
+
+/// Tuist's per-target defaults set `CODE_SIGN_IDENTITY = "-"` (ad hoc) for macOS, which
+/// outranks the project-level team above, so the identity has to be set on the targets.
+let certificateSigning: SettingsDictionary = [
+    "CODE_SIGN_IDENTITY": "Apple Development",
 ]
 
 let sharedPrivacyPlist: [String: Plist.Value] = [
@@ -62,7 +73,8 @@ let project = Project(
                 .sdk(name: "Network", type: .framework),
                 .sdk(name: "Security", type: .framework),
                 .sdk(name: "Speech", type: .framework),
-            ]
+            ],
+            settings: .settings(base: certificateSigning)
         ),
         .target(
             name: "Larmindon",
@@ -84,7 +96,8 @@ let project = Project(
             infoPlist: .extendingDefault(with: sharedPrivacyPlist),
             sources: ["Sources/App/**"],
             resources: ["Resources/**"],
-            dependencies: [.target(name: "LarmindonKit")]
+            dependencies: [.target(name: "LarmindonKit")],
+            settings: .settings(base: certificateSigning)
         ),
         .target(
             name: "CoreTests",

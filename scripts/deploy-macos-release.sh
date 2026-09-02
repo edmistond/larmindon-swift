@@ -11,13 +11,50 @@ readonly installed_app="${HOME}/Larmindon_macOS.app"
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-echo "Building ${scheme} in Release configuration..."
+# Sign with the Apple Development identity rather than ad hoc. An ad-hoc signature's
+# designated requirement is the code hash, so TCC treats every rebuild as a new app and
+# asks for microphone access again; a certificate-backed requirement is stable across
+# builds. The free personal-team certificate is enough: the macOS target has no
+# entitlements, so no provisioning profile is involved. Mirrors redeploy-device.sh.
+development_team="${DEVELOPMENT_TEAM:-}"
+
+if [[ -z "${development_team}" ]]; then
+  identity_names="$(
+    security find-identity -v -p codesigning \
+      | sed -nE 's/.*"(Apple Development:[^"]+)".*/\1/p'
+  )"
+  identity_count="$(printf '%s\n' "${identity_names}" | sed '/^$/d' | wc -l | tr -d ' ')"
+
+  if [[ "${identity_count}" != "1" ]]; then
+    echo "Expected exactly one Apple Development signing identity; found ${identity_count}." >&2
+    echo "Set DEVELOPMENT_TEAM explicitly, for example:" >&2
+    echo "  DEVELOPMENT_TEAM=YOURTEAMID $0" >&2
+    exit 1
+  fi
+
+  certificate_subject="$(
+    security find-certificate -c "${identity_names}" -p \
+      | openssl x509 -noout -subject -nameopt RFC2253
+  )"
+  development_team="$(printf '%s\n' "${certificate_subject}" | sed -nE 's/.*OU=([^,]+).*/\1/p')"
+
+  if [[ -z "${development_team}" ]]; then
+    echo "Could not determine the development team from the signing certificate." >&2
+    exit 1
+  fi
+fi
+readonly development_team
+
+echo "Building ${scheme} in Release configuration (team ${development_team})..."
 xcodebuild \
   -workspace "${workspace}" \
   -scheme "${scheme}" \
   -configuration Release \
   -destination "platform=macOS,arch=${architecture}" \
   -derivedDataPath "${derived_data}" \
+  CODE_SIGN_STYLE=Automatic \
+  CODE_SIGN_IDENTITY="Apple Development" \
+  DEVELOPMENT_TEAM="${development_team}" \
   -quiet \
   build
 
@@ -28,6 +65,10 @@ fi
 
 echo "Verifying the built app..."
 codesign --verify --deep --strict "${built_app}"
+if codesign -dv "${built_app}" 2>&1 | grep -q "Signature=adhoc"; then
+  echo "The built app is still ad-hoc signed; TCC will re-prompt on every build." >&2
+  exit 1
+fi
 
 if [[ -L "${installed_app}" ]] || { [[ -e "${installed_app}" ]] && [[ ! -d "${installed_app}" ]]; }; then
   echo "Refusing to replace non-app destination: ${installed_app}" >&2
