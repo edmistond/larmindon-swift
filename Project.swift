@@ -46,6 +46,11 @@ let iOSInfoPlist: [String: Plist.Value] = sharedPrivacyPlist.merging([
     "UILaunchScreen": .dictionary([:]),
 ]) { _, newValue in newValue }
 
+let macOSInfoPlist: [String: Plist.Value] = sharedPrivacyPlist.merging([
+    // Only the App Store needs a category, but xcodebuild warns on every build without one.
+    "LSApplicationCategoryType": "public.app-category.utilities",
+]) { _, newValue in newValue }
+
 let project = Project(
     name: "Larmindon",
     organizationName: "David Edmiston",
@@ -93,7 +98,7 @@ let project = Project(
             product: .app,
             bundleId: "com.davidedmiston.larmindon",
             deploymentTargets: .macOS("26.0"),
-            infoPlist: .extendingDefault(with: sharedPrivacyPlist),
+            infoPlist: .extendingDefault(with: macOSInfoPlist),
             sources: ["Sources/App/**"],
             resources: ["Resources/**"],
             dependencies: [.target(name: "LarmindonKit")],
