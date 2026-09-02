@@ -107,12 +107,6 @@ public struct CaptionDisplayView: View {
                     )
                 }
                 .scrollEdgeEffectStyle(.soft, for: .top)
-                // While pinned, SwiftUI keeps the bottom edge in place as content grows,
-                // which replaces a scrollTo after every volatile update. Each of those
-                // forced a layout of the whole scroll content to locate the sentinel and
-                // was the largest app-side cost on the main thread during speech. Passing
-                // nil when unpinned leaves the reader's offset alone while they read back.
-                .defaultScrollAnchor(isPinnedToBottom ? .bottom : nil, for: .sizeChanges)
                 .onScrollGeometryChange(for: CaptionScrollGeometry.self) { geometry in
                     CaptionScrollGeometry(
                         contentOffsetY: geometry.contentOffset.y,
@@ -125,11 +119,13 @@ public struct CaptionDisplayView: View {
                 .onAppear {
                     scrollToBottom(proxy, animated: false)
                 }
-                .onChange(of: isEmpty) { _, nowEmpty in
-                    // Clearing the transcript re-pins, so the next session starts at the
-                    // bottom rather than wherever the reader had scrolled to.
-                    if nowEmpty {
+                .onChange(of: scrollSignature) { _, newSignature in
+                    if newSignature.isEmpty {
                         isPinnedToBottom = true
+                    }
+
+                    if isPinnedToBottom {
+                        scrollToBottom(proxy, animated: false)
                     }
                 }
                 .onChange(of: scrollContainer.size.height) {
@@ -145,6 +141,21 @@ public struct CaptionDisplayView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var scrollSignature: CaptionScrollSignature {
+        if let tail = volatileCaptions.last {
+            return CaptionScrollSignature(
+                lineCount: finalizedChunks.count + volatileCaptions.count,
+                lastLineID: tail.id,
+                lastLineText: tail.text
+            )
+        }
+        return CaptionScrollSignature(
+            lineCount: finalizedChunks.count,
+            lastLineID: finalizedChunks.last.map { CaptionLine.finalized($0).id },
+            lastLineText: finalizedChunks.last?.text
+        )
     }
 
     private func updateBottomStickiness(oldGeometry: CaptionScrollGeometry, newGeometry: CaptionScrollGeometry) {
@@ -302,6 +313,16 @@ private enum SpeakerColor {
             (($0 * 31) + Int($1.value)) % count
         }
         return stableHash
+    }
+}
+
+private struct CaptionScrollSignature: Equatable {
+    let lineCount: Int
+    let lastLineID: String?
+    let lastLineText: String?
+
+    var isEmpty: Bool {
+        lineCount == 0
     }
 }
 
