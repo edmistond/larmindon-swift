@@ -1,7 +1,12 @@
 import SwiftUI
 
 public struct CaptionDisplayView: View {
-    public let lines: [CaptionLine]
+    /// Finalized lines and the volatile tail are kept apart so a volatile update, which
+    /// arrives many times a second while someone is speaking, re-diffs only the tail.
+    /// Full scrollback is a feature — sessions run for hours and the transcript is copied
+    /// out afterward — so the finalized list is never trimmed, only left undisturbed.
+    public let finalizedChunks: [TranscriptChunk]
+    public let volatileCaptions: [VolatileCaption]
     public let fontSize: Double
 
     @Environment(\.colorScheme) private var colorScheme
@@ -28,9 +33,31 @@ public struct CaptionDisplayView: View {
     private var utteranceSpacing: CGFloat { CGFloat(fontSize * 0.5) }
     private var speakerBlockSpacing: CGFloat { CGFloat(fontSize * 0.6) }
 
-    public init(lines: [CaptionLine], fontSize: Double) {
-        self.lines = lines
+    public init(
+        finalizedChunks: [TranscriptChunk],
+        volatileCaptions: [VolatileCaption],
+        fontSize: Double
+    ) {
+        self.finalizedChunks = finalizedChunks
+        self.volatileCaptions = volatileCaptions
         self.fontSize = fontSize
+    }
+
+    /// Convenience for previews and callers that already hold combined lines.
+    public init(lines: [CaptionLine], fontSize: Double) {
+        var finalized: [TranscriptChunk] = []
+        var volatile: [VolatileCaption] = []
+        for line in lines {
+            switch line {
+            case .finalized(let chunk): finalized.append(chunk)
+            case .volatile(let caption): volatile.append(caption)
+            }
+        }
+        self.init(finalizedChunks: finalized, volatileCaptions: volatile, fontSize: fontSize)
+    }
+
+    private var isEmpty: Bool {
+        finalizedChunks.isEmpty && volatileCaptions.isEmpty
     }
 
     public var body: some View {
@@ -38,7 +65,7 @@ public struct CaptionDisplayView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        if lines.isEmpty {
+                        if isEmpty {
                             Text("Ready for captions")
                                 .foregroundStyle(.secondary)
                                 .font(.system(size: fontSize, weight: .regular, design: .default))
@@ -46,30 +73,24 @@ public struct CaptionDisplayView: View {
                                 .padding(.horizontal, 16)
                                 .frame(maxWidth: .infinity, alignment: .center)
                         } else {
-                            ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
-                                let position = blockPosition(at: index)
+                            ForEach(Array(finalizedChunks.enumerated()), id: \.element.id) { index, chunk in
+                                captionRow(
+                                    text: chunk.text,
+                                    speakerID: chunk.speakerID,
+                                    isVolatile: false,
+                                    position: finalizedBlockPosition(at: index)
+                                )
+                                .id(CaptionLine.finalized(chunk).id)
+                            }
 
-                                Text(AttributedString(line.text))
-                                    .foregroundStyle(
-                                        Color.primary.opacity(line.isVolatile ? Self.volatileTextOpacity : 1)
-                                    )
-                                    .font(.system(size: fontSize, weight: .regular, design: .default))
-                                    .lineSpacing(textLineSpacing)
-                                    .textSelection(.enabled)
-                                    .padding(.horizontal, 16)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    // Inside the bar: consecutive utterances from one speaker
-                                    // keep their breathing room while the bar runs unbroken
-                                    // through the gap, so a speaker's turn reads as one block.
-                                    .padding(.bottom, position.isBlockEnd ? 0 : utteranceSpacing)
-                                    .overlay(alignment: .leading) {
-                                        if let speakerID = line.speakerID {
-                                            speakerBar(for: speakerID, position: position)
-                                        }
-                                    }
-                                    // Outside the bar, so the bar actually breaks here.
-                                    .padding(.bottom, position.isBlockEnd ? speakerBlockSpacing : 0)
-                                    .id(line.id)
+                            ForEach(Array(volatileCaptions.enumerated()), id: \.element.id) { index, caption in
+                                captionRow(
+                                    text: caption.text,
+                                    speakerID: caption.speakerID,
+                                    isVolatile: true,
+                                    position: volatileBlockPosition(at: index)
+                                )
+                                .id(caption.id)
                             }
                         }
 
@@ -82,7 +103,7 @@ public struct CaptionDisplayView: View {
                     .frame(
                         maxWidth: .infinity,
                         minHeight: scrollContainer.size.height,
-                        alignment: lines.isEmpty ? .center : .topLeading
+                        alignment: isEmpty ? .center : .topLeading
                     )
                 }
                 .scrollEdgeEffectStyle(.soft, for: .top)
@@ -123,10 +144,17 @@ public struct CaptionDisplayView: View {
     }
 
     private var scrollSignature: CaptionScrollSignature {
-        CaptionScrollSignature(
-            lineCount: lines.count,
-            lastLineID: lines.last?.id,
-            lastLineText: lines.last?.text
+        if let tail = volatileCaptions.last {
+            return CaptionScrollSignature(
+                lineCount: finalizedChunks.count + volatileCaptions.count,
+                lastLineID: tail.id,
+                lastLineText: tail.text
+            )
+        }
+        return CaptionScrollSignature(
+            lineCount: finalizedChunks.count,
+            lastLineID: finalizedChunks.last.map { CaptionLine.finalized($0).id },
+            lastLineText: finalizedChunks.last?.text
         )
     }
 
@@ -164,12 +192,70 @@ public struct CaptionDisplayView: View {
         let isBlockEnd: Bool
     }
 
-    private func blockPosition(at index: Int) -> BlockPosition {
-        let speakerID = lines[index].speakerID
-        return BlockPosition(
-            isBlockStart: index == 0 || lines[index - 1].speakerID != speakerID,
-            isBlockEnd: index == lines.count - 1 || lines[index + 1].speakerID != speakerID
-        )
+    /// Block positions span the finalized/volatile seam: the volatile tail continues the
+    /// last finalized speaker's block when the speaker matches, exactly as it did when the
+    /// two were one list.
+    private func finalizedBlockPosition(at index: Int) -> BlockPosition {
+        let speakerID = finalizedChunks[index].speakerID
+
+        let isBlockStart = index == 0 || finalizedChunks[index - 1].speakerID != speakerID
+
+        let isBlockEnd: Bool
+        if index + 1 < finalizedChunks.count {
+            isBlockEnd = finalizedChunks[index + 1].speakerID != speakerID
+        } else if let firstVolatile = volatileCaptions.first {
+            isBlockEnd = firstVolatile.speakerID != speakerID
+        } else {
+            isBlockEnd = true
+        }
+
+        return BlockPosition(isBlockStart: isBlockStart, isBlockEnd: isBlockEnd)
+    }
+
+    private func volatileBlockPosition(at index: Int) -> BlockPosition {
+        let speakerID = volatileCaptions[index].speakerID
+
+        let isBlockStart: Bool
+        if index > 0 {
+            isBlockStart = volatileCaptions[index - 1].speakerID != speakerID
+        } else if let lastFinalized = finalizedChunks.last {
+            isBlockStart = lastFinalized.speakerID != speakerID
+        } else {
+            isBlockStart = true
+        }
+
+        let isBlockEnd = index == volatileCaptions.count - 1
+            || volatileCaptions[index + 1].speakerID != speakerID
+
+        return BlockPosition(isBlockStart: isBlockStart, isBlockEnd: isBlockEnd)
+    }
+
+    private func captionRow(
+        text: String,
+        speakerID: String?,
+        isVolatile: Bool,
+        position: BlockPosition
+    ) -> some View {
+        Text(AttributedString(text))
+            .foregroundStyle(
+                Color.primary.opacity(isVolatile ? Self.volatileTextOpacity : 1)
+            )
+            .font(.system(size: fontSize, weight: .regular, design: .default))
+            .lineSpacing(textLineSpacing)
+            .textSelection(.enabled)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Inside the bar: consecutive utterances from one speaker keep their breathing
+            // room while the bar runs unbroken through the gap, so a speaker's turn reads
+            // as one block.
+            .padding(.bottom, position.isBlockEnd ? 0 : utteranceSpacing)
+            .overlay(alignment: .leading) {
+                if let speakerID {
+                    speakerBar(for: speakerID, position: position)
+                }
+            }
+            // Outside the bar, so the bar actually breaks here.
+            .padding(.bottom, position.isBlockEnd ? speakerBlockSpacing : 0)
     }
 
     private func speakerBar(for speakerID: String, position: BlockPosition) -> some View {

@@ -152,7 +152,8 @@ public struct LarmindonRootView: View {
 
     private var captions: some View {
         CaptionDisplayView(
-            lines: session.store.visibleCaptionLines(),
+            finalizedChunks: session.store.finalizedChunks,
+            volatileCaptions: session.store.volatileCaptions,
             fontSize: captionFontSize
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -277,7 +278,7 @@ public struct LarmindonRootView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.bordered)
-        .disabled(session.store.visibleCaptionLines().isEmpty)
+        .disabled(session.store.finalizedChunks.isEmpty && session.store.volatileCaptions.isEmpty)
     }
 
     @ViewBuilder
