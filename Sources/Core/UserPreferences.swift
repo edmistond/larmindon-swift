@@ -6,16 +6,19 @@ public enum AppTheme: String, CaseIterable, Identifiable, Sendable {
     case dark
     case darkBlue
     case darkGreen
+    // Canonical values come from the upstream Rosé Pine palette:
+    // https://github.com/rose-pine/rose-pine-palette/blob/main/palette.json
+    case rosePine
+    case rosePineMoon
+    case rosePineDawn
 
     public var id: String { rawValue }
 
     public var colorScheme: ColorScheme {
         switch self {
-        case .light:
+        case .light, .rosePineDawn:
             return .light
-        case .dark:
-            return .dark
-        case .darkBlue, .darkGreen:
+        case .dark, .darkBlue, .darkGreen, .rosePine, .rosePineMoon:
             return .dark
         }
     }
@@ -30,6 +33,12 @@ public enum AppTheme: String, CaseIterable, Identifiable, Sendable {
             return "Dark Blue"
         case .darkGreen:
             return "Dark Green"
+        case .rosePine:
+            return "Rosé Pine"
+        case .rosePineMoon:
+            return "Rosé Pine Moon"
+        case .rosePineDawn:
+            return "Rosé Pine Dawn"
         }
     }
 
@@ -41,6 +50,12 @@ public enum AppTheme: String, CaseIterable, Identifiable, Sendable {
             return Color(red: 0.35, green: 0.58, blue: 0.98)
         case .darkGreen:
             return Color(red: 0.34, green: 0.76, blue: 0.49)
+        case .rosePine:
+            return Color(hex: 0x31748F)
+        case .rosePineMoon:
+            return Color(hex: 0x3E8FB0)
+        case .rosePineDawn:
+            return Color(hex: 0x286983)
         }
     }
 
@@ -52,6 +67,12 @@ public enum AppTheme: String, CaseIterable, Identifiable, Sendable {
             return Color(red: 0.04, green: 0.08, blue: 0.16)
         case .darkGreen:
             return Color(red: 0.03, green: 0.12, blue: 0.08)
+        case .rosePine:
+            return Color(hex: 0x191724)
+        case .rosePineMoon:
+            return Color(hex: 0x232136)
+        case .rosePineDawn:
+            return Color(hex: 0xFAF4ED)
         }
     }
 
@@ -63,11 +84,72 @@ public enum AppTheme: String, CaseIterable, Identifiable, Sendable {
             return Color(red: 0.07, green: 0.13, blue: 0.24).opacity(0.92)
         case .darkGreen:
             return Color(red: 0.05, green: 0.18, blue: 0.11).opacity(0.92)
+        case .rosePine:
+            return Color(hex: 0x1F1D2E)
+        case .rosePineMoon:
+            return Color(hex: 0x2A273F)
+        case .rosePineDawn:
+            return Color(hex: 0xFFFAF3)
+        }
+    }
+
+    public var customTextColor: Color? {
+        switch self {
+        case .light, .dark, .darkBlue, .darkGreen:
+            return nil
+        case .rosePine, .rosePineMoon:
+            return Color(hex: 0xE0DEF4)
+        case .rosePineDawn:
+            return Color(hex: 0x464261)
+        }
+    }
+
+    public var speakerAccentColors: [Color]? {
+        switch self {
+        case .light, .dark, .darkBlue, .darkGreen:
+            return nil
+        case .rosePine:
+            return [
+                Color(hex: 0xEB6F92),
+                Color(hex: 0xF6C177),
+                Color(hex: 0xEBBCBA),
+                Color(hex: 0x31748F),
+                Color(hex: 0x9CCFD8),
+                Color(hex: 0xC4A7E7),
+            ]
+        case .rosePineMoon:
+            return [
+                Color(hex: 0xEB6F92),
+                Color(hex: 0xF6C177),
+                Color(hex: 0xEA9A97),
+                Color(hex: 0x3E8FB0),
+                Color(hex: 0x9CCFD8),
+                Color(hex: 0xC4A7E7),
+            ]
+        case .rosePineDawn:
+            return [
+                Color(hex: 0xB4637A),
+                Color(hex: 0xEA9D34),
+                Color(hex: 0xD7827E),
+                Color(hex: 0x286983),
+                Color(hex: 0x56949F),
+                Color(hex: 0x907AA9),
+            ]
         }
     }
 
     public static func themes(for colorScheme: ColorScheme) -> [AppTheme] {
         allCases.filter { $0.colorScheme == colorScheme }
+    }
+}
+
+private extension Color {
+    init(hex: UInt32) {
+        self.init(
+            red: Double((hex >> 16) & 0xFF) / 255,
+            green: Double((hex >> 8) & 0xFF) / 255,
+            blue: Double(hex & 0xFF) / 255
+        )
     }
 }
 

@@ -21,8 +21,24 @@ final class UserPreferencesTests: XCTestCase {
     }
 
     func testThemesCanBeFilteredByColorScheme() {
-        XCTAssertEqual(AppTheme.themes(for: .light), [.light])
-        XCTAssertEqual(AppTheme.themes(for: .dark), [.dark, .darkBlue, .darkGreen])
+        XCTAssertEqual(AppTheme.themes(for: .light), [.light, .rosePineDawn])
+        XCTAssertEqual(
+            AppTheme.themes(for: .dark),
+            [.dark, .darkBlue, .darkGreen, .rosePine, .rosePineMoon]
+        )
+    }
+
+    func testRosePineThemesUseCanonicalAppearancesAndPaletteRoles() {
+        XCTAssertEqual(AppTheme.rosePine.colorScheme, .dark)
+        XCTAssertEqual(AppTheme.rosePineMoon.colorScheme, .dark)
+        XCTAssertEqual(AppTheme.rosePineDawn.colorScheme, .light)
+
+        for theme in [AppTheme.rosePine, .rosePineMoon, .rosePineDawn] {
+            XCTAssertNotNil(theme.customBackgroundColor)
+            XCTAssertNotNil(theme.customControlBackgroundColor)
+            XCTAssertNotNil(theme.customTextColor)
+            XCTAssertEqual(theme.speakerAccentColors?.count, 6)
+        }
     }
 
     func testFixedSelectionAlwaysUsesItsThemeAndColorScheme() {

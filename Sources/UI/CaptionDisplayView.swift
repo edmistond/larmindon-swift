@@ -8,6 +8,8 @@ public struct CaptionDisplayView: View {
     public let finalizedChunks: [TranscriptChunk]
     public let volatileCaptions: [VolatileCaption]
     public let fontSize: Double
+    public let textColor: Color?
+    public let speakerColors: [Color]?
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var isPinnedToBottom = true
@@ -36,11 +38,15 @@ public struct CaptionDisplayView: View {
     public init(
         finalizedChunks: [TranscriptChunk],
         volatileCaptions: [VolatileCaption],
-        fontSize: Double
+        fontSize: Double,
+        textColor: Color? = nil,
+        speakerColors: [Color]? = nil
     ) {
         self.finalizedChunks = finalizedChunks
         self.volatileCaptions = volatileCaptions
         self.fontSize = fontSize
+        self.textColor = textColor
+        self.speakerColors = speakerColors
     }
 
     /// Convenience for previews and callers that already hold combined lines.
@@ -53,7 +59,11 @@ public struct CaptionDisplayView: View {
             case .volatile(let caption): volatile.append(caption)
             }
         }
-        self.init(finalizedChunks: finalized, volatileCaptions: volatile, fontSize: fontSize)
+        self.init(
+            finalizedChunks: finalized,
+            volatileCaptions: volatile,
+            fontSize: fontSize
+        )
     }
 
     private var isEmpty: Bool {
@@ -67,7 +77,7 @@ public struct CaptionDisplayView: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         if isEmpty {
                             Text("Ready for captions")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(secondaryTextColor)
                                 .font(.system(size: fontSize, weight: .regular, design: .default))
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 16)
@@ -158,6 +168,10 @@ public struct CaptionDisplayView: View {
         )
     }
 
+    private var secondaryTextColor: Color {
+        textColor?.opacity(0.65) ?? Color.secondary
+    }
+
     private func updateBottomStickiness(oldGeometry: CaptionScrollGeometry, newGeometry: CaptionScrollGeometry) {
         if newGeometry.distanceFromBottom <= bottomTolerance {
             if !isPinnedToBottom {
@@ -238,7 +252,8 @@ public struct CaptionDisplayView: View {
     ) -> some View {
         Text(AttributedString(text))
             .foregroundStyle(
-                Color.primary.opacity(isVolatile ? Self.volatileTextOpacity : 1)
+                (textColor ?? Color.primary)
+                    .opacity(isVolatile ? Self.volatileTextOpacity : 1)
             )
             .font(.system(size: fontSize, weight: .regular, design: .default))
             .lineSpacing(textLineSpacing)
@@ -268,7 +283,13 @@ public struct CaptionDisplayView: View {
             bottomTrailingRadius: position.isBlockEnd ? Self.speakerBarWidth / 2 : 0,
             topTrailingRadius: position.isBlockStart ? Self.speakerBarWidth / 2 : 0
         )
-        .fill(SpeakerColor.color(for: speakerID, scheme: colorScheme))
+        .fill(
+            SpeakerColor.color(
+                for: speakerID,
+                scheme: colorScheme,
+                customPalette: speakerColors
+            )
+        )
         .frame(width: Self.speakerBarWidth)
         // Keeps the bar clear of the iPhone's display curvature, which was clipping it.
         .padding(.leading, Self.speakerBarInset)
@@ -278,9 +299,12 @@ public struct CaptionDisplayView: View {
 }
 
 private enum SpeakerColor {
-    static func color(for speakerID: String, scheme: ColorScheme) -> Color {
-        let palette =
-            scheme == .dark
+    static func color(
+        for speakerID: String,
+        scheme: ColorScheme,
+        customPalette: [Color]? = nil
+    ) -> Color {
+        let defaultPalette = scheme == .dark
             ? [
                 Color(red: 0.35, green: 0.65, blue: 1.00),
                 Color(red: 1.00, green: 0.58, blue: 0.24),
@@ -297,6 +321,7 @@ private enum SpeakerColor {
                 Color(red: 0.42, green: 0.25, blue: 0.78),
                 Color(red: 0.00, green: 0.50, blue: 0.52),
             ]
+        let palette = customPalette.flatMap { $0.isEmpty ? nil : $0 } ?? defaultPalette
 
         return palette[paletteIndex(for: speakerID, count: palette.count)]
     }

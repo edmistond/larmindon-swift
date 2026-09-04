@@ -163,7 +163,9 @@ public struct LarmindonRootView: View {
         CaptionDisplayView(
             finalizedChunks: session.store.finalizedChunks,
             volatileCaptions: session.store.volatileCaptions,
-            fontSize: captionFontSize
+            fontSize: captionFontSize,
+            textColor: activeTheme.customTextColor,
+            speakerColors: activeTheme.speakerAccentColors
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
