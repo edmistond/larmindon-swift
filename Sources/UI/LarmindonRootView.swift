@@ -98,7 +98,7 @@ public struct LarmindonRootView: View {
             }
             #endif
             .preferredColorScheme(preferredColorScheme)
-            .tint(activeTheme.tintColor)
+            .tint(activeTheme.palette.tint ?? .accentColor)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
@@ -164,8 +164,8 @@ public struct LarmindonRootView: View {
             finalizedChunks: session.store.finalizedChunks,
             volatileCaptions: session.store.volatileCaptions,
             fontSize: captionFontSize,
-            textColor: activeTheme.customTextColor,
-            speakerColors: activeTheme.speakerAccentColors
+            textColor: activeTheme.palette.text,
+            speakerColors: activeTheme.palette.speakerAccents
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -274,7 +274,7 @@ public struct LarmindonRootView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderedProminent)
-        .tint(session.store.isRunning ? .red : activeTheme.tintColor)
+        .tint(session.store.isRunning ? .red : (activeTheme.palette.tint ?? .accentColor))
         .disabled(
             !session.store.isRunning && !isSelectedModeConfigured
         )
@@ -393,13 +393,13 @@ public struct LarmindonRootView: View {
     }
 
     private var rootBackground: Color {
-        activeTheme.customBackgroundColor ?? Color(platformBackgroundColor)
+        activeTheme.palette.background ?? Color(platformBackgroundColor)
     }
 
     @ViewBuilder
     private var captureControlsBackground: some View {
-        if let customControlBackgroundColor = activeTheme.customControlBackgroundColor {
-            customControlBackgroundColor
+        if let controlBackground = activeTheme.palette.controlBackground {
+            controlBackground
                 .overlay(alignment: .top) { Divider() }
         } else {
             Rectangle()

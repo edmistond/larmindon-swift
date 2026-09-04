@@ -3,21 +3,46 @@ import XCTest
 @testable import LarmindonKit
 
 final class UserPreferencesTests: XCTestCase {
-    func testStandardAppearancesUseMatchingColorSchemes() {
-        XCTAssertEqual(AppTheme.light.colorScheme, .light)
-        XCTAssertEqual(AppTheme.dark.colorScheme, .dark)
+    func testEveryThemeHasSixSpeakerAccents() {
+        for theme in AppTheme.allCases {
+            XCTAssertEqual(theme.palette.speakerAccents.count, 6, "\(theme) should have 6 speaker accents")
+        }
     }
 
-    func testTintedDarkAppearancesUseDarkColorScheme() {
-        XCTAssertEqual(AppTheme.darkBlue.colorScheme, .dark)
-        XCTAssertEqual(AppTheme.darkGreen.colorScheme, .dark)
+    func testEveryThemeHasANonEmptyUniqueTitle() {
+        let titles = AppTheme.allCases.map(\.title)
+
+        for title in titles {
+            XCTAssertFalse(title.isEmpty, "Theme title should not be empty")
+        }
+        XCTAssertEqual(Set(titles).count, titles.count, "Theme titles should be unique")
     }
 
-    func testTintedDarkAppearancesHaveCustomBackgrounds() {
-        XCTAssertNotNil(AppTheme.darkBlue.customBackgroundColor)
-        XCTAssertNotNil(AppTheme.darkBlue.customControlBackgroundColor)
-        XCTAssertNotNil(AppTheme.darkGreen.customBackgroundColor)
-        XCTAssertNotNil(AppTheme.darkGreen.customControlBackgroundColor)
+    func testStandardThemesDeferToThePlatform() {
+        for theme in [AppTheme.light, .dark] {
+            let palette = theme.palette
+            XCTAssertNil(palette.tint, "\(theme) should use the platform accent color")
+            XCTAssertNil(palette.background, "\(theme) should use the platform background")
+            XCTAssertNil(palette.controlBackground, "\(theme) should use the platform control material")
+            XCTAssertNil(palette.text, "\(theme) should use the platform text color")
+        }
+    }
+
+    func testCustomThemesPaintTheirOwnSurfaces() {
+        for theme in AppTheme.allCases where theme != .light && theme != .dark {
+            let palette = theme.palette
+            XCTAssertNotNil(palette.background, "\(theme) should set its own background")
+            XCTAssertNotNil(palette.controlBackground, "\(theme) should set its own control background")
+        }
+    }
+
+    func testCustomTextColorRequiresACustomBackground() {
+        for theme in AppTheme.allCases {
+            let palette = theme.palette
+            if palette.text != nil {
+                XCTAssertNotNil(palette.background, "\(theme) sets a custom text color but not a background")
+            }
+        }
     }
 
     func testThemesCanBeFilteredByColorScheme() {
@@ -26,19 +51,6 @@ final class UserPreferencesTests: XCTestCase {
             AppTheme.themes(for: .dark),
             [.dark, .darkBlue, .darkGreen, .rosePine, .rosePineMoon]
         )
-    }
-
-    func testRosePineThemesUseCanonicalAppearancesAndPaletteRoles() {
-        XCTAssertEqual(AppTheme.rosePine.colorScheme, .dark)
-        XCTAssertEqual(AppTheme.rosePineMoon.colorScheme, .dark)
-        XCTAssertEqual(AppTheme.rosePineDawn.colorScheme, .light)
-
-        for theme in [AppTheme.rosePine, .rosePineMoon, .rosePineDawn] {
-            XCTAssertNotNil(theme.customBackgroundColor)
-            XCTAssertNotNil(theme.customControlBackgroundColor)
-            XCTAssertNotNil(theme.customTextColor)
-            XCTAssertEqual(theme.speakerAccentColors?.count, 6)
-        }
     }
 
     func testFixedSelectionAlwaysUsesItsThemeAndColorScheme() {

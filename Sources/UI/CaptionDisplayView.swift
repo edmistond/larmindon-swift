@@ -304,23 +304,10 @@ private enum SpeakerColor {
         scheme: ColorScheme,
         customPalette: [Color]? = nil
     ) -> Color {
-        let defaultPalette = scheme == .dark
-            ? [
-                Color(red: 0.35, green: 0.65, blue: 1.00),
-                Color(red: 1.00, green: 0.58, blue: 0.24),
-                Color(red: 0.35, green: 0.80, blue: 0.48),
-                Color(red: 1.00, green: 0.42, blue: 0.70),
-                Color(red: 0.70, green: 0.55, blue: 1.00),
-                Color(red: 0.25, green: 0.80, blue: 0.82),
-            ]
-            : [
-                Color(red: 0.08, green: 0.42, blue: 0.82),
-                Color(red: 0.85, green: 0.36, blue: 0.04),
-                Color(red: 0.08, green: 0.55, blue: 0.25),
-                Color(red: 0.72, green: 0.15, blue: 0.48),
-                Color(red: 0.42, green: 0.25, blue: 0.78),
-                Color(red: 0.00, green: 0.50, blue: 0.52),
-            ]
+        // Callers without a theme (previews, the convenience initializer) fall back to the
+        // built-in theme for the current scheme, so every palette lives in `AppTheme`.
+        let defaultPalette = (scheme == .dark ? AppTheme.dark : AppTheme.light)
+            .palette.speakerAccents
         let palette = customPalette.flatMap { $0.isEmpty ? nil : $0 } ?? defaultPalette
 
         return palette[paletteIndex(for: speakerID, count: palette.count)]
