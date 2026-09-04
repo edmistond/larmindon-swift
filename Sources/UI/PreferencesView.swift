@@ -2,7 +2,14 @@ import SwiftUI
 
 public struct PreferencesView: View {
     @AppStorage("captionFontSize") private var captionFontSize = defaultCaptionFontSize
-    @AppStorage("appearancePreference") private var appearancePreferenceRaw = AppearancePreference.system.rawValue
+    @AppStorage(ThemePreference.modeStorageKey)
+    private var themeSelectionModeRaw = ThemePreference.defaultMode.rawValue
+    @AppStorage(ThemePreference.fixedThemeStorageKey)
+    private var fixedThemeRaw = ThemePreference.defaultFixedTheme.rawValue
+    @AppStorage(ThemePreference.lightThemeStorageKey)
+    private var lightThemeRaw = ThemePreference.defaultLightTheme.rawValue
+    @AppStorage(ThemePreference.darkThemeStorageKey)
+    private var darkThemeRaw = ThemePreference.defaultDarkTheme.rawValue
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
     @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
     @AppStorage(VoiceProcessingPreference.storageKey)
@@ -16,7 +23,9 @@ public struct PreferencesView: View {
     @State private var credentialMessage: String?
     private let credentialStore = KeychainProviderCredentialStore()
 
-    public init() {}
+    public init() {
+        ThemePreference.migrateLegacySettings()
+    }
 
     public var body: some View {
         Form {
@@ -31,12 +40,19 @@ public struct PreferencesView: View {
             }
 
             Section("Appearance") {
-                Picker("Mode", selection: $appearancePreferenceRaw) {
-                    ForEach(AppearancePreference.allCases) { preference in
-                        Text(preference.title).tag(preference.rawValue)
+                Picker("Theme behavior", selection: $themeSelectionModeRaw) {
+                    ForEach(ThemeSelectionMode.allCases) { mode in
+                        Text(mode.title).tag(mode.rawValue)
                     }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
+
+                if themeSelectionMode == .fixed {
+                    themePicker("Theme", selection: $fixedThemeRaw, themes: AppTheme.allCases)
+                } else {
+                    themePicker("Light theme", selection: $lightThemeRaw, themes: AppTheme.themes(for: .light))
+                    themePicker("Dark theme", selection: $darkThemeRaw, themes: AppTheme.themes(for: .dark))
+                }
             }
 
             Section("Transcription") {
@@ -144,6 +160,23 @@ public struct PreferencesView: View {
         .onChange(of: audioBufferFrameCount) {
             normalizeAudioBufferFrameCount()
         }
+    }
+
+    private var themeSelectionMode: ThemeSelectionMode {
+        ThemeSelectionMode(rawValue: themeSelectionModeRaw) ?? ThemePreference.defaultMode
+    }
+
+    private func themePicker(
+        _ title: String,
+        selection: Binding<String>,
+        themes: [AppTheme]
+    ) -> some View {
+        Picker(title, selection: selection) {
+            ForEach(themes) { theme in
+                Text(theme.title).tag(theme.rawValue)
+            }
+        }
+        .pickerStyle(.menu)
     }
 
     private func saveSonioxCredential() {

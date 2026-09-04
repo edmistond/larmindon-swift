@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct LarmindonRootView: View {
     @Bindable private var session: CaptionSession
+    @Environment(\.colorScheme) private var systemColorScheme
 
     #if os(iOS)
     @State private var showDebugPanel = false
@@ -19,7 +20,14 @@ public struct LarmindonRootView: View {
         return 34
         #endif
     }()
-    @AppStorage("appearancePreference") private var appearancePreferenceRaw = AppearancePreference.system.rawValue
+    @AppStorage(ThemePreference.modeStorageKey)
+    private var themeSelectionModeRaw = ThemePreference.defaultMode.rawValue
+    @AppStorage(ThemePreference.fixedThemeStorageKey)
+    private var fixedThemeRaw = ThemePreference.defaultFixedTheme.rawValue
+    @AppStorage(ThemePreference.lightThemeStorageKey)
+    private var lightThemeRaw = ThemePreference.defaultLightTheme.rawValue
+    @AppStorage(ThemePreference.darkThemeStorageKey)
+    private var darkThemeRaw = ThemePreference.defaultDarkTheme.rawValue
     @AppStorage(TranscriptionPreference.modeStorageKey)
     private var transcriptionModeRaw = TranscriptionMode.onDevice.rawValue
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
@@ -29,6 +37,7 @@ public struct LarmindonRootView: View {
     @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
 
     public init(session: CaptionSession) {
+        ThemePreference.migrateLegacySettings()
         self.session = session
     }
 
@@ -88,8 +97,8 @@ public struct LarmindonRootView: View {
                 microphonePanelSheet
             }
             #endif
-            .preferredColorScheme(appearancePreference.colorScheme)
-            .tint(appearancePreference.tintColor)
+            .preferredColorScheme(preferredColorScheme)
+            .tint(activeTheme.tintColor)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
@@ -263,7 +272,7 @@ public struct LarmindonRootView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderedProminent)
-        .tint(session.store.isRunning ? .red : appearancePreference.tintColor)
+        .tint(session.store.isRunning ? .red : activeTheme.tintColor)
         .disabled(
             !session.store.isRunning && !isSelectedModeConfigured
         )
@@ -319,8 +328,30 @@ public struct LarmindonRootView: View {
     }
     #endif
 
-    private var appearancePreference: AppearancePreference {
-        AppearancePreference(rawValue: appearancePreferenceRaw) ?? .system
+    private var themeSelectionMode: ThemeSelectionMode {
+        ThemeSelectionMode(rawValue: themeSelectionModeRaw) ?? ThemePreference.defaultMode
+    }
+
+    private var activeTheme: AppTheme {
+        themeSelection.theme(for: systemColorScheme)
+    }
+
+    private var preferredColorScheme: ColorScheme? {
+        themeSelection.preferredColorScheme
+    }
+
+    private var themeSelection: ThemeSelection {
+        switch themeSelectionMode {
+        case .fixed:
+            return .fixed(
+                AppTheme(rawValue: fixedThemeRaw) ?? ThemePreference.defaultFixedTheme
+            )
+        case .followSystem:
+            return .followSystem(
+                light: AppTheme(rawValue: lightThemeRaw) ?? ThemePreference.defaultLightTheme,
+                dark: AppTheme(rawValue: darkThemeRaw) ?? ThemePreference.defaultDarkTheme
+            )
+        }
     }
 
     private var transcriptionMode: TranscriptionMode {
@@ -360,12 +391,12 @@ public struct LarmindonRootView: View {
     }
 
     private var rootBackground: Color {
-        appearancePreference.customBackgroundColor ?? Color(platformBackgroundColor)
+        activeTheme.customBackgroundColor ?? Color(platformBackgroundColor)
     }
 
     @ViewBuilder
     private var captureControlsBackground: some View {
-        if let customControlBackgroundColor = appearancePreference.customControlBackgroundColor {
+        if let customControlBackgroundColor = activeTheme.customControlBackgroundColor {
             customControlBackgroundColor
                 .overlay(alignment: .top) { Divider() }
         } else {
