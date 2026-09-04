@@ -46,10 +46,10 @@ final class UserPreferencesTests: XCTestCase {
     }
 
     func testThemesCanBeFilteredByColorScheme() {
-        XCTAssertEqual(AppTheme.themes(for: .light), [.light, .rosePineDawn])
+        XCTAssertEqual(AppTheme.themes(for: .light), [.light, .rosePineDawn, .alucard])
         XCTAssertEqual(
             AppTheme.themes(for: .dark),
-            [.dark, .darkBlue, .darkGreen, .rosePine, .rosePineMoon]
+            [.dark, .darkBlue, .darkGreen, .rosePine, .rosePineMoon, .dracula]
         )
     }
 

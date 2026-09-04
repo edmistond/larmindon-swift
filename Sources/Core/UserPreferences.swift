@@ -46,6 +46,8 @@ public enum AppTheme: String, CaseIterable, Identifiable, Sendable {
     case rosePine
     case rosePineMoon
     case rosePineDawn
+    case dracula
+    case alucard
 
     public var id: String { rawValue }
 
@@ -143,6 +145,44 @@ public enum AppTheme: String, CaseIterable, Identifiable, Sendable {
                     Color(hex: 0x286983),
                     Color(hex: 0x56949F),
                     Color(hex: 0x907AA9),
+                ]
+            )
+        // Canonical values come from the Dracula spec: https://draculatheme.com/spec
+        // Tint is Purple, which the spec reserves for focus indicators. Controls sit on
+        // Selection. Red is left out of the speaker palette because the spec reserves it
+        // for errors and the Stop button already uses it.
+        case .dracula:
+            return ThemePalette(
+                title: "Dracula Classic",
+                colorScheme: .dark,
+                tint: Color(hex: 0xBD93F9),
+                background: Color(hex: 0x282A36),
+                controlBackground: Color(hex: 0x44475A),
+                text: Color(hex: 0xF8F8F2),
+                speakerAccents: [
+                    Color(hex: 0xFF79C6),
+                    Color(hex: 0x8BE9FD),
+                    Color(hex: 0xFFB86C),
+                    Color(hex: 0x50FA7B),
+                    Color(hex: 0xBD93F9),
+                    Color(hex: 0xF1FA8C),
+                ]
+            )
+        case .alucard:
+            return ThemePalette(
+                title: "Alucard Classic",
+                colorScheme: .light,
+                tint: Color(hex: 0x644AC9),
+                background: Color(hex: 0xFFFBEB),
+                controlBackground: Color(hex: 0xCFCFDE),
+                text: Color(hex: 0x1F1F1F),
+                speakerAccents: [
+                    Color(hex: 0xA3144D),
+                    Color(hex: 0x036A96),
+                    Color(hex: 0xA34D14),
+                    Color(hex: 0x14710A),
+                    Color(hex: 0x644AC9),
+                    Color(hex: 0x846E15),
                 ]
             )
         }
