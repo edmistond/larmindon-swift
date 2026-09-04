@@ -174,7 +174,9 @@ public enum AppTheme: String, CaseIterable, Identifiable, Sendable {
                 colorScheme: .light,
                 tint: Color(hex: 0x644AC9),
                 background: Color(hex: 0xFFFBEB),
-                controlBackground: Color(hex: 0xCFCFDE),
+                // Selection (#CFCFDE) is a cool gray that reads as off against the warm
+                // cream background, so controls use the spec's warm line-highlight fallback.
+                controlBackground: Color(hex: 0xE2DECA),
                 text: Color(hex: 0x1F1F1F),
                 speakerAccents: [
                     Color(hex: 0xA3144D),
