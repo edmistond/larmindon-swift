@@ -5,7 +5,6 @@ public struct LarmindonRootView: View {
     @Environment(\.colorScheme) private var systemColorScheme
 
     #if os(iOS)
-    @State private var showDebugPanel = false
     @State private var showMicrophonePanel = false
     @State private var showSettings = false
     #else
@@ -79,19 +78,12 @@ public struct LarmindonRootView: View {
                         Label("Microphone", systemImage: "microphone.and.signal.meter")
                     }
 
-                    Button {
-                        presentDebugPanel()
-                    } label: {
-                        Label("Debug", systemImage: "sidebar.trailing")
-                    }
+                    TranscriptShareLink(session: session)
                 }
             }
             #if os(iOS)
             .sheet(isPresented: $showSettings) {
                 settingsSheet
-            }
-            .sheet(isPresented: $showDebugPanel) {
-                debugPanelSheet
             }
             .sheet(isPresented: $showMicrophonePanel) {
                 microphonePanelSheet
@@ -118,14 +110,6 @@ public struct LarmindonRootView: View {
         showSettings = true
         #else
         openSettings()
-        #endif
-    }
-
-    private func presentDebugPanel() {
-        #if os(iOS)
-        showDebugPanel.toggle()
-        #else
-        openWindow(id: LarmindonWindowID.debug)
         #endif
     }
 
@@ -314,11 +298,6 @@ public struct LarmindonRootView: View {
     }
 
     #if os(iOS)
-    private var debugPanelSheet: some View {
-        DebugPanelView(session: session)
-            .presentationDetents([.medium, .large])
-    }
-
     private var microphonePanelSheet: some View {
         MicrophonePanelView(session: session)
         .presentationDetents([.medium, .large])
@@ -410,7 +389,6 @@ public struct LarmindonRootView: View {
 }
 
 public enum LarmindonWindowID {
-    public static let debug = "debug"
     public static let microphone = "microphone"
 }
 
@@ -472,6 +450,22 @@ private enum CaptionControlsPlacement {
 #Preview {
     LarmindonRootView(session: CaptionSession())
         .frame(minWidth: 480, minHeight: 600)
+}
+
+/// The share button as its own leaf so the transcript is only rendered when the sheet asks
+/// for it; the button itself only watches whether there is anything to share.
+private struct TranscriptShareLink: View {
+    let session: CaptionSession
+
+    var body: some View {
+        ShareLink(
+            item: TranscriptExport(store: session.store),
+            preview: SharePreview("Larmindon Transcript")
+        ) {
+            Label("Share Transcript", systemImage: "square.and.arrow.up")
+        }
+        .disabled(session.store.finalizedChunks.isEmpty && session.store.volatileCaptions.isEmpty)
+    }
 }
 
 /// The meter in its own view so level updates invalidate only this leaf.

@@ -26,12 +26,6 @@ struct LarmindonApp: App {
         #endif
 
         #if os(macOS)
-        Window("Debug", id: LarmindonWindowID.debug) {
-            DebugPanelView(session: session)
-                .frame(minWidth: 560, idealWidth: 640, minHeight: 620, idealHeight: 720)
-        }
-        .defaultSize(width: 640, height: 720)
-
         Window("Microphone", id: LarmindonWindowID.microphone) {
             MicrophonePanelView(session: session)
             .frame(minWidth: 560, idealWidth: 640, minHeight: 620, idealHeight: 760)

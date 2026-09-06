@@ -1,9 +1,22 @@
 import SwiftUI
 
+#if os(macOS)
+import AppKit
+#endif
+
+/// Everything about the capture side of a session in one place: the input device, its
+/// capabilities, live session state and levels, and the diagnostic bundle export. This
+/// absorbed the old debug panel — the two exposed mostly the same information.
 public struct MicrophonePanelView: View {
     @Bindable private var session: CaptionSession
     @State private var draftConfiguration = MicrophoneCaptureConfiguration()
     @State private var hasEditedConfiguration = false
+    @AppStorage(AudioCaptureBufferFrames.storageKey)
+    private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
+    @State private var includeTranscriptInExport = false
+    @State private var diagnosticExportURL: URL?
+    @State private var diagnosticExportError: String?
+    @State private var isPreparingDiagnosticExport = false
 
     public init(session: CaptionSession) {
         self.session = session
@@ -12,27 +25,12 @@ public struct MicrophonePanelView: View {
     public var body: some View {
         NavigationStack {
             List {
-                voiceProcessingStatus
-
                 if let snapshot = session.microphoneCapabilities.snapshot {
                     summary(snapshot)
 
                     #if os(iOS)
                     configurationControls(snapshot)
                     #endif
-
-                    ForEach(snapshot.sections) { section in
-                        Section(section.title) {
-                            ForEach(section.items) { item in
-                                capabilityRow(item)
-                            }
-                        }
-                    }
-
-                    Section("What This Means") {
-                        Label(snapshot.guidance, systemImage: "info.circle")
-                            .foregroundStyle(.secondary)
-                    }
                 } else if let lastError = session.microphoneCapabilities.lastError {
                     ContentUnavailableView(
                         "Microphone Unavailable",
@@ -43,6 +41,40 @@ public struct MicrophonePanelView: View {
                     ProgressView("Reading microphone capabilities…")
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
+
+                sessionStatus
+
+                SessionLevelsSection(
+                    session: session,
+                    configuredBufferFrameCount: audioBufferFrameCount
+                )
+
+                voiceProcessingStatus
+
+                if let snapshot = session.microphoneCapabilities.snapshot {
+                    ForEach(snapshot.sections) { section in
+                        Section(section.title) {
+                            ForEach(section.items) { item in
+                                capabilityRow(item)
+                            }
+                        }
+                    }
+                }
+
+                routingSection
+
+                if let snapshot = session.microphoneCapabilities.snapshot {
+                    Section("What This Means") {
+                        Label(snapshot.guidance, systemImage: "info.circle")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                SessionTranscriptSection(session: session)
+
+                diagnosticsExport
+
+                developerActions
             }
             .navigationTitle("Microphone")
             .toolbar {
@@ -73,6 +105,149 @@ public struct MicrophonePanelView: View {
         }
         .onChange(of: session.microphoneConfiguration) {
             synchronizeDraft()
+        }
+    }
+
+    private var sessionStatus: some View {
+        Section("Session") {
+            row("Running", session.store.isRunning ? "Yes" : "No")
+            row("Source", session.selectedSourceKind.title)
+            row("Requested mode", session.requestedMode.title)
+            row("Active mode", session.activeMode?.title ?? "None")
+            row(
+                "Active provider",
+                session.activeMode == .onDevice
+                    ? "Apple"
+                    : session.activeServerProvider?.title ?? "None"
+            )
+            row("Speech", session.speechAnalyzerState)
+            row("Last error", session.lastError ?? "None")
+        }
+    }
+
+    private var routingSection: some View {
+        Section("Routing") {
+            row("Current input", session.routeManager.currentInputName)
+            row("Preferred input", session.routeManager.preferredInputName ?? "None")
+            routeRows("Available input", session.routeManager.availableInputs)
+            routeRows("Route input", session.routeManager.currentRouteInputs)
+            routeRows("Route output", session.routeManager.currentRouteOutputs)
+        }
+    }
+
+    private var diagnosticsExport: some View {
+        Section("Diagnostics Export") {
+            Toggle(
+                "Include transcript text",
+                isOn: $includeTranscriptInExport
+            )
+            Text(
+                "API keys, authorization data, and raw audio are never included."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            Button(
+                isPreparingDiagnosticExport
+                    ? "Preparing…"
+                    : "Prepare Diagnostic Bundle"
+            ) {
+                prepareDiagnosticExport()
+            }
+            .disabled(isPreparingDiagnosticExport)
+
+            if let diagnosticExportURL {
+                #if os(iOS)
+                ShareLink(item: diagnosticExportURL) {
+                    Label(
+                        "Share Diagnostic Bundle",
+                        systemImage: "square.and.arrow.up"
+                    )
+                }
+                #else
+                Button {
+                    saveDiagnosticBundle(diagnosticExportURL)
+                } label: {
+                    Label(
+                        "Save Diagnostic Bundle…",
+                        systemImage: "square.and.arrow.down"
+                    )
+                }
+                #endif
+            }
+
+            if let diagnosticExportError {
+                Text(diagnosticExportError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private var developerActions: some View {
+        Section("Developer") {
+            Button("Start fake transcription source") {
+                session.start(kind: .fake)
+            }
+
+            Button("Dump route info to console") {
+                session.dumpRouteInfoToConsole()
+            }
+        }
+    }
+
+    private func prepareDiagnosticExport() {
+        isPreparingDiagnosticExport = true
+        diagnosticExportError = nil
+        Task {
+            do {
+                let transcript = includeTranscriptInExport
+                    ? session.store.fullTranscript
+                    : nil
+                diagnosticExportURL = try await session.diagnostics
+                    .makeExportBundle(transcript: transcript)
+                // Returns a zip now, not a folder — a directory doesn't survive AirDrop
+                // through the share sheet the way a single file does.
+            } catch {
+                diagnosticExportError = error.localizedDescription
+            }
+            isPreparingDiagnosticExport = false
+        }
+    }
+
+    #if os(macOS)
+    private func saveDiagnosticBundle(_ sourceURL: URL) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = sourceURL.lastPathComponent
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        guard panel.runModal() == .OK, let destination = panel.url else {
+            return
+        }
+        do {
+            try FileManager.default.copyItem(
+                at: sourceURL,
+                to: destination
+            )
+            diagnosticExportError = nil
+        } catch {
+            diagnosticExportError = error.localizedDescription
+        }
+    }
+    #endif
+
+    private func row(_ label: String, _ value: String) -> some View {
+        capabilityRow(MicrophoneCapabilityItem(label: label, value: value))
+    }
+
+    @ViewBuilder
+    private func routeRows(_ title: String, _ ports: [AudioRoutePort]) -> some View {
+        if ports.isEmpty {
+            row(title, "None")
+        } else {
+            ForEach(ports) { port in
+                row(title, "\(port.name) (\(port.kind))")
+            }
         }
     }
 
@@ -311,6 +486,61 @@ public struct MicrophonePanelView: View {
             Text(item.value)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
+    }
+}
+
+/// Level rows in their own view so per-buffer level writes invalidate only this section,
+/// not the whole panel with its Canvas diagram. Same reasoning as the root view's meter.
+private struct SessionLevelsSection: View {
+    let session: CaptionSession
+    let configuredBufferFrameCount: Int
+
+    var body: some View {
+        Section("Levels") {
+            row("Raw input", session.audioLevels.rawInputLevel.formatted(.number.precision(.fractionLength(2))))
+            row("VAD-gated display", session.audioLevels.processedInputLevel.formatted(.number.precision(.fractionLength(2))))
+            row("VAD state", session.audioLevels.vadState)
+            row("VAD active", session.audioLevels.speechDetected ? "Yes" : "No")
+            row("Configured buffer", "\(configuredBufferFrameCount) frames")
+            row("Active buffer", session.activeAudioBufferFrameCount.map { "\($0) frames" } ?? "None")
+            row(
+                "Observed callback",
+                session.audioLevels.observedCallbackFrameLength.map { "\($0) frames" } ?? "None"
+            )
+            AudioLevelBar(
+                level: session.audioLevels.rawInputLevel,
+                isActive: session.audioLevels.speechDetected
+            )
+        }
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+            Spacer(minLength: 16)
+            Text(value)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
+    }
+}
+
+/// Isolated for the same reason: the volatile result changes on every recognizer update.
+private struct SessionTranscriptSection: View {
+    let session: CaptionSession
+
+    var body: some View {
+        Section("Transcript") {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Finalized chunks")
+                Spacer(minLength: 16)
+                Text("\(session.store.finalizedChunks.count)")
+                    .foregroundStyle(.secondary)
+            }
+            Text(session.lastVolatileResult.isEmpty ? "No volatile result" : session.lastVolatileResult)
                 .textSelection(.enabled)
         }
     }
