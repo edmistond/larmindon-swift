@@ -452,19 +452,25 @@ private enum CaptionControlsPlacement {
         .frame(minWidth: 480, minHeight: 600)
 }
 
-/// The share button as its own leaf so the transcript is only rendered when the sheet asks
-/// for it; the button itself only watches whether there is anything to share.
+/// The share button as its own leaf so caption updates rebuild only this view. The
+/// transcript text is rendered when the sheet asks for it, not here.
 private struct TranscriptShareLink: View {
     let session: CaptionSession
 
     var body: some View {
+        let export = TranscriptExport(store: session.store)
         ShareLink(
-            item: TranscriptExport(store: session.store),
-            preview: SharePreview("Larmindon Transcript")
+            item: export,
+            preview: SharePreview(
+                "Larmindon Transcript",
+                // An explicit icon stops the sheet from thumbnailing the exported file for
+                // its header, which would load the item before the sheet can appear.
+                image: Image(systemName: "text.alignleft")
+            )
         ) {
             Label("Share Transcript", systemImage: "square.and.arrow.up")
         }
-        .disabled(session.store.finalizedChunks.isEmpty && session.store.volatileCaptions.isEmpty)
+        .disabled(export.isEmpty)
     }
 }
 

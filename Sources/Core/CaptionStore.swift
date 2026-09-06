@@ -77,7 +77,9 @@ public final class CaptionStore {
     ///
     /// On-device transcription reports no speaker at all, so every line falls into a single
     /// unlabelled run and the output stays a plain newline-joined transcript.
-    private static func transcript(for lines: [CaptionLine]) -> String {
+    ///
+    /// Nonisolated so an export can render off the main actor from a snapshot of the lines.
+    public nonisolated static func transcript(for lines: [CaptionLine]) -> String {
         var blocks: [String] = []
         var blockLines: [String] = []
         var blockSpeakerID: String?

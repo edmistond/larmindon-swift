@@ -5,16 +5,46 @@ import UniformTypeIdentifiers
 /// The transcript as a shareable `.txt` file, for the share sheet's Save to Files, AirDrop,
 /// Mail and friends.
 ///
-/// The text is rendered and written only when a share destination asks for it. A
-/// `ShareLink` builds its item every time the toolbar re-evaluates, which during capture is
-/// every caption update, so the item must be cheap to construct — it just holds the store.
+/// Holds a snapshot of the caption arrays rather than the store. Copying the arrays is a
+/// copy-on-write reference bump, so a `ShareLink` can rebuild this on every caption update,
+/// and the export closure needs no hop back to the main actor. That matters: the iOS share
+/// sheet loads item representations while blocking the main thread, so an export that
+/// awaits the main actor sits there until the system gives up waiting.
 public struct TranscriptExport: Transferable, Sendable {
-    public let store: CaptionStore
+    public let finalizedChunks: [TranscriptChunk]
+    public let volatileCaptions: [VolatileCaption]
     public let createdAt: Date
 
-    public init(store: CaptionStore, createdAt: Date = Date()) {
-        self.store = store
+    public init(
+        finalizedChunks: [TranscriptChunk],
+        volatileCaptions: [VolatileCaption],
+        createdAt: Date = Date()
+    ) {
+        self.finalizedChunks = finalizedChunks
+        self.volatileCaptions = volatileCaptions
         self.createdAt = createdAt
+    }
+
+    @MainActor
+    public init(store: CaptionStore, createdAt: Date = Date()) {
+        self.init(
+            finalizedChunks: store.finalizedChunks,
+            volatileCaptions: store.volatileCaptions,
+            createdAt: createdAt
+        )
+    }
+
+    public var isEmpty: Bool {
+        finalizedChunks.isEmpty && volatileCaptions.isEmpty
+    }
+
+    /// Same rendering as `CaptionStore.fullTranscript`, `[Speaker N]` markers included when
+    /// the provider reports speakers, so the file matches what "Copy Full Transcript" gives.
+    public var text: String {
+        CaptionStore.transcript(
+            for: finalizedChunks.map(CaptionLine.finalized)
+                + volatileCaptions.map(CaptionLine.volatile)
+        )
     }
 
     /// `Larmindon Transcript 2026-09-05 14.32.txt`. Sortable, and free of the slashes and
@@ -46,11 +76,7 @@ public struct TranscriptExport: Transferable, Sendable {
 
     public static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(exportedContentType: .plainText) { export in
-            // `fullTranscript` already carries `[Speaker N]` markers when the provider
-            // reports speakers, so the file matches what "Copy Full Transcript" produces.
-            let text = await export.store.fullTranscript
-            let url = try Self.write(text, named: export.suggestedFileName)
-            return SentTransferredFile(url)
+            SentTransferredFile(try Self.write(export.text, named: export.suggestedFileName))
         }
     }
 }

@@ -2,6 +2,21 @@ import XCTest
 @testable import LarmindonKit
 
 final class TranscriptExportTests: XCTestCase {
+    func testTextMatchesStoreRenderingIncludingSpeakerMarkers() {
+        let export = TranscriptExport(
+            finalizedChunks: [
+                TranscriptChunk(text: "Hello", speakerID: "1"),
+                TranscriptChunk(text: "there", speakerID: "1"),
+                TranscriptChunk(text: "Hi", speakerID: "2"),
+            ],
+            volatileCaptions: [VolatileCaption(text: "and", speakerID: "2")]
+        )
+
+        XCTAssertEqual(export.text, "[Speaker 1] Hello\nthere\n\n[Speaker 2] Hi\nand")
+        XCTAssertFalse(export.isEmpty)
+        XCTAssertTrue(TranscriptExport(finalizedChunks: [], volatileCaptions: []).isEmpty)
+    }
+
     func testFileNameIsSortableAndFileSystemSafe() {
         var components = DateComponents()
         components.year = 2026
