@@ -294,8 +294,8 @@ test the type** — is the right one to keep extending.
 
 ### Gap 1 — The fake source isn't reachable on iOS
 
-`.fake` is startable only from the Developer section of `MicrophonePanelView`, which is a
-macOS-only `Window` (`LarmindonApp.swift:22-39`). On iOS there is no path to it.
+`.fake` is startable from the Developer section of `MicrophonePanelView` (a macOS `Window`,
+an iOS sheet), so this gap is closed for manual testing. It is still a UI-only path.
 
 Fix: expose it via a **launch argument**, not a UI toggle. Launch arguments need no
 interaction, which is what makes automation possible.
