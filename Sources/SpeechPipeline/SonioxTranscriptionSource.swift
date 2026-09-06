@@ -2,7 +2,7 @@ import AVFAudio
 import Foundation
 
 @MainActor
-public final class SonioxTranscriptionSource: TranscriptionSource {
+public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSource {
     public let name = "Soniox"
     public let results: AsyncStream<CaptionResult>
     public let levelUpdates: AsyncStream<AudioLevelSnapshot>
@@ -301,10 +301,8 @@ public final class SonioxTranscriptionSource: TranscriptionSource {
     ///
     /// Nothing on the clean path is bounded on its own: `client.finish()` waits on the
     /// server's `finished` message, and `eventTask` ends only when the server closes the
-    /// socket. A server that goes quiet leaves the teardown hung indefinitely — and because
-    /// `CaptionSession.performStart` awaits `stopActive` before recording anything, and
-    /// `stop()` joins a teardown already in flight, the next Start press then blocks with no
-    /// diagnostic at all. That is a dead button with an empty bundle.
+    /// socket. A server that goes quiet would otherwise retain this retired provider
+    /// indefinitely. CaptionSession lets this drain finish independently of a new capture.
     ///
     /// One watchdog covers every wait: cancelling the client closes the transport, which
     /// fails the pending finish and terminates the event stream. `audioTask` is cancelled

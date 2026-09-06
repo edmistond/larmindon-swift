@@ -48,3 +48,9 @@ public enum TranscriptionSourceError: LocalizedError, Equatable {
         }
     }
 }
+
+/// Opt-in for providers whose capture is owned by CaptionSession and whose stop is
+/// bounded. After capture ends they may drain independently, without accessing the
+/// shared audio session. Sources that own their microphone must stop synchronously.
+@MainActor
+protocol BackgroundFinishingTranscriptionSource: TranscriptionSource {}

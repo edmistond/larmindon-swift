@@ -30,6 +30,10 @@ public final class CaptionSession {
     /// than a dead session. Always false on macOS.
     public private(set) var isInterrupted = false
 
+    /// Optional factory for exercising lifecycle transitions without live microphone access.
+    @ObservationIgnored
+    var sourceFactory: ((TranscriptionSourceKind, TranscriptionMode) throws -> any TranscriptionSource)?
+    private var localStopTask: Task<Void, Never>?
     private var activeSource: TranscriptionSource?
     private var activeCapture: AudioCaptureSession?
     private var resultTask: Task<Void, Never>?
@@ -182,6 +186,7 @@ public final class CaptionSession {
             ]
         )
 
+        guard generation == transitionGeneration, !Task.isCancelled else { return }
         await stopActive(
             cancelAudioRouteRecovery: true,
             preserveRunningState: preserveRunningState
@@ -210,17 +215,22 @@ public final class CaptionSession {
                 ]
             )
 
+            guard generation == transitionGeneration, !Task.isCancelled else { return }
             resultTask = Task { @MainActor [weak self, source] in
                 for await result in source.results {
-                    self?.handle(result)
+                    guard let self, !Task.isCancelled,
+                          generation == self.transitionGeneration else { return }
+                    self.handle(result)
                 }
             }
 
             didReceiveAudioSinceStart = false
             levelTask = Task { @MainActor [weak self, source] in
                 for await snapshot in source.levelUpdates {
-                    self?.didReceiveAudioSinceStart = true
-                    self?.publishAudioLevels(snapshot)
+                    guard let self, !Task.isCancelled,
+                          generation == self.transitionGeneration else { return }
+                    self.didReceiveAudioSinceStart = true
+                    self.publishAudioLevels(snapshot)
                 }
             }
 
@@ -230,10 +240,12 @@ public final class CaptionSession {
                     configuration: microphoneConfiguration,
                     voiceProcessingEnabled: requestedVoiceProcessingEnabled
                 )
+                guard generation == transitionGeneration, !Task.isCancelled else { return }
                 activeInputDeviceID = routeManager.preferredInputDeviceID
                 await recordCurrentAudioRoute(reason: "capture_start")
             }
 
+            guard generation == transitionGeneration, !Task.isCancelled else { return }
             if sourceKind == .live, mode == .server,
                let sonioxSource = source as? SonioxTranscriptionSource {
                 let capture = AudioCaptureSession(
@@ -245,6 +257,8 @@ public final class CaptionSession {
                 activeCapture = capture
                 captureLevelTask = Task {
                     for await snapshot in capture.levelUpdates {
+                        guard !Task.isCancelled,
+                              generation == self.transitionGeneration else { return }
                         self.publishAudioLevels(snapshot)
                     }
                 }
@@ -269,7 +283,7 @@ public final class CaptionSession {
 
             guard generation == transitionGeneration,
                   !Task.isCancelled else {
-                await stopActive(cancelAudioRouteRecovery: true)
+                await source.stop()
                 return
             }
             activeMode = mode
@@ -292,6 +306,7 @@ public final class CaptionSession {
                 ]
             )
         } catch {
+            guard generation == transitionGeneration, !Task.isCancelled else { return }
             lastError = error.localizedDescription
             speechAnalyzerState = "Error"
             await diagnostics.record(
@@ -302,7 +317,9 @@ public final class CaptionSession {
                     "message": error.localizedDescription,
                 ]
             )
+            guard generation == transitionGeneration, !Task.isCancelled else { return }
             await stopActive(cancelAudioRouteRecovery: true)
+            guard generation == transitionGeneration, !Task.isCancelled else { return }
             requestedMode = mode
             speechAnalyzerState = "Error"
             lastError = error.localizedDescription
@@ -353,6 +370,24 @@ public final class CaptionSession {
             audioRouteRecoveryTask?.cancel()
             audioRouteRecoveryTask = nil
         }
+        if !preserveRunningState {
+            store.isRunning = false
+        }
+        // Join only microphone/local teardown. This task owns all session-state writes,
+        // so an older Stop cannot release the audio session belonging to a new Start.
+        if let localStopTask {
+            await localStopTask.value
+            return
+        }
+        let task = Task { @MainActor in
+            await self.performLocalStop(preserveRunningState: preserveRunningState)
+            self.localStopTask = nil
+        }
+        localStopTask = task
+        await task.value
+    }
+
+    private func performLocalStop(preserveRunningState: Bool) async {
         // Tearing a provider down can take seconds — Soniox waits on the server closing
         // the socket. The Start/Stop button reads `store.isRunning`, so clear the visible
         // state up front rather than after the teardown, or Stop looks like it did
@@ -384,16 +419,21 @@ public final class CaptionSession {
         levelTask?.cancel()
         levelTask = nil
 
-        if let activeCapture {
-            await activeCapture.stop()
-        }
+        let capture = activeCapture
+        let source = activeSource
         activeCapture = nil
-        if let activeSource {
-            await activeSource.stop()
+        activeSource = nil
+        await capture?.stop()
+        if let source, !(source is any BackgroundFinishingTranscriptionSource) {
+            await source.stop()
         }
         routeManager.releaseAudioSession()
-        activeSource = nil
-        if !preserveRunningState {
+        if let source = source as? any BackgroundFinishingTranscriptionSource {
+            // Captures only the retired provider: completion cannot touch this session,
+            // its audio route, or the replacement provider. Soniox retains its watchdog.
+            Task { await source.stop() }
+        }
+        if !preserveRunningState || !store.isRunning {
             speechAnalyzerState = "Stopped"
         }
         microphoneCapabilities.refresh()
@@ -504,6 +544,7 @@ public final class CaptionSession {
         kind: TranscriptionSourceKind,
         mode: TranscriptionMode
     ) throws -> TranscriptionSource {
+        if let sourceFactory { return try sourceFactory(kind, mode) }
         switch kind {
         case .fake:
             return FakeTranscriptionSource()
