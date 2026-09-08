@@ -48,6 +48,7 @@ public final class CaptionSession {
     private var activeInputDeviceID: UInt32?
     private var silentCaptureTask: Task<Void, Never>?
     private var didReceiveAudioSinceStart = false
+    private var silentCaptureWarning: String?
     /// When `audioLevels` was last written for a level-only change. See `publishAudioLevels`.
     private var lastLevelOnlyPublish: ContinuousClock.Instant?
     /// Minimum spacing between level-only writes. Capture delivers a snapshot per buffer
@@ -227,6 +228,7 @@ public final class CaptionSession {
             activeAudioBufferFrameCount = sourceKind == .live ? self.audioBufferFrameCount : nil
             store.isRunning = true
             lastError = nil
+            silentCaptureWarning = nil
             speechAnalyzerState = "Starting \(source.name)"
             activeMode = nil
             activeServerProvider = nil
@@ -255,8 +257,7 @@ public final class CaptionSession {
                 for await snapshot in source.levelUpdates {
                     guard let self, !Task.isCancelled,
                           generation == self.transitionGeneration else { return }
-                    self.didReceiveAudioSinceStart = true
-                    self.publishAudioLevels(snapshot)
+                    self.receiveAudioLevels(snapshot)
                 }
             }
 
@@ -285,7 +286,7 @@ public final class CaptionSession {
                     for await snapshot in capture.levelUpdates {
                         guard !Task.isCancelled,
                               generation == self.transitionGeneration else { return }
-                        self.publishAudioLevels(snapshot)
+                        self.receiveAudioLevels(snapshot)
                     }
                 }
                 try await sonioxSource.start(
@@ -670,6 +671,18 @@ public final class CaptionSession {
         }
     }
 
+    /// Both provider-owned and session-owned capture report through this boundary.
+    /// Receiving even an unchanged, zero-level buffer proves capture is delivering audio;
+    /// meter deduplication and display throttling must not hide that from the watchdog.
+    func receiveAudioLevels(_ snapshot: AudioLevelSnapshot) {
+        didReceiveAudioSinceStart = true
+        if let warning = silentCaptureWarning {
+            if lastError == warning { lastError = nil }
+            silentCaptureWarning = nil
+        }
+        publishAudioLevels(snapshot)
+    }
+
     /// Writes a level snapshot to `audioLevels`, thinning out pure level changes.
     ///
     /// Every write to an `@Observable` property invalidates the views that read it, and
@@ -711,15 +724,17 @@ public final class CaptionSession {
 
             let inputName = routeManager.currentInputName
             #if os(iOS)
-            lastError = requestedVoiceProcessingEnabled
+            let warning = requestedVoiceProcessingEnabled
                 ? """
                 No audio is arriving from “\(inputName)”. Try turning off voice \
                 processing in Settings, then Stop and Start.
                 """
                 : "No audio is arriving from “\(inputName)”."
             #else
-            lastError = "No audio is arriving from “\(inputName)”."
+            let warning = "No audio is arriving from “\(inputName)”."
             #endif
+            silentCaptureWarning = warning
+            lastError = warning
         }
     }
 

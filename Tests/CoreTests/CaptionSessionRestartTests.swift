@@ -43,6 +43,80 @@ final class CaptionSessionRestartTests: XCTestCase {
         XCTAssertTrue(condition(), "Lifecycle transition did not complete")
     }
 
+    private final class QuietSource: TranscriptionSource {
+        let name = "Quiet"
+        let results: AsyncStream<CaptionResult>
+        let resultContinuation: AsyncStream<CaptionResult>.Continuation
+        let levelUpdates: AsyncStream<AudioLevelSnapshot>
+        let levelContinuation: AsyncStream<AudioLevelSnapshot>.Continuation
+
+        init() {
+            (results, resultContinuation) = AsyncStream.makeStream()
+            (levelUpdates, levelContinuation) = AsyncStream.makeStream()
+        }
+
+        func start() async throws {}
+        func stop() async {}
+    }
+
+    private func quietSession() async -> (CaptionSession, QuietSource) {
+        let source = QuietSource()
+        let session = CaptionSession(selectedSourceKind: .fake)
+        session.sourceFactory = { _, _ in source }
+        session.start()
+        await waitUntil { session.activeMode != nil }
+        return (session, source)
+    }
+
+    private func waitForAudioWatchdog() async {
+        // Exercise the production three-second timeout, with scheduling headroom.
+        try? await Task.sleep(for: .milliseconds(3200))
+    }
+
+    func testSessionOwnedCapturePreventsNoAudioWarningEvenForUnchangedZeroLevels() async {
+        let (session, _) = await quietSession()
+        // The exact delivery boundary used by captureLevelTask in the Soniox path.
+        session.receiveAudioLevels(AudioLevelSnapshot())
+        await waitForAudioWatchdog()
+        XCTAssertNil(session.lastError)
+        XCTAssertTrue(session.store.isRunning)
+        await session.stop()
+    }
+
+    func testProviderOwnedCaptureAlsoPreventsNoAudioWarning() async {
+        let (session, source) = await quietSession()
+        source.levelContinuation.yield(AudioLevelSnapshot(rawInputLevel: 0.5))
+        await waitUntil { session.audioLevels.rawInputLevel == 0.5 }
+        await waitForAudioWatchdog()
+        XCTAssertNil(session.lastError)
+        await session.stop()
+    }
+
+    func testLateAudioClearsWarningAndNewSessionStillDetectsMissingAudio() async {
+        let (session, _) = await quietSession()
+        await waitForAudioWatchdog()
+        XCTAssertTrue(session.lastError?.hasPrefix("No audio is arriving") == true)
+        session.receiveAudioLevels(AudioLevelSnapshot())
+        XCTAssertNil(session.lastError)
+        await session.stop()
+        session.start()
+        await waitUntil { session.activeMode != nil }
+        await waitForAudioWatchdog()
+        XCTAssertTrue(session.lastError?.hasPrefix("No audio is arriving") == true)
+        await session.stop()
+    }
+
+    func testAudioDoesNotClearAnUnrelatedProviderFailure() async {
+        let (session, source) = await quietSession()
+        await waitForAudioWatchdog()
+        XCTAssertTrue(session.lastError?.hasPrefix("No audio is arriving") == true)
+        source.resultContinuation.yield(.failure("Provider connection failed"))
+        await waitUntil { session.lastError == "Provider connection failed" }
+        session.receiveAudioLevels(AudioLevelSnapshot())
+        XCTAssertEqual(session.lastError, "Provider connection failed")
+        await session.stop()
+    }
+
     func testWidgetLaunchDoesNotInterruptLocalStop() async {
         let source = ControlledSource()
         let session = CaptionSession(selectedSourceKind: .fake)
