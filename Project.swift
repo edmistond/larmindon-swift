@@ -32,6 +32,11 @@ let iOSInfoPlist: [String: Plist.Value] = sharedPrivacyPlist.merging([
     // two after backgrounding and transcription dies silently. Recording continues under
     // either category `IOSAudioSessionCapturePolicy` selects.
     "UIBackgroundModes": .array([.string("audio")]),
+    "CFBundleURLTypes": .array([.dictionary([
+        "CFBundleURLName": .string("com.davidedmiston.larmindon.captions"),
+        "CFBundleTypeRole": .string("Editor"),
+        "CFBundleURLSchemes": .array([.string("larmindon")]),
+    ])]),
     "UISupportedInterfaceOrientations": .array([
         .string("UIInterfaceOrientationPortrait"),
         .string("UIInterfaceOrientationLandscapeLeft"),
@@ -90,7 +95,31 @@ let project = Project(
             infoPlist: .extendingDefault(with: iOSInfoPlist),
             sources: ["Sources/App/**"],
             resources: ["Resources/**"],
-            dependencies: [.target(name: "LarmindonKit")]
+            dependencies: [
+                .target(name: "LarmindonKit"),
+                .target(name: "LarmindonWidgets"),
+            ]
+        ),
+        .target(
+            name: "LarmindonWidgets",
+            destinations: [.iPhone, .iPad],
+            product: .appExtension,
+            bundleId: "com.davidedmiston.larmindon.widgets",
+            deploymentTargets: .iOS("26.0"),
+            infoPlist: .extendingDefault(with: [
+                "CFBundleDisplayName": "Larmindon Widgets",
+                "NSExtension": .dictionary([
+                    "NSExtensionPointIdentifier": .string("com.apple.widgetkit-extension"),
+                ]),
+            ]),
+            sources: ["Widgets/**", "Sources/Core/CaptionLaunchLink.swift"],
+            resources: ["Resources/Assets.xcassets"],
+            settings: .settings(base: [
+                "PRODUCT_NAME": "LarmindonWidgets",
+                "ASSETCATALOG_COMPILER_APPICON_NAME": "",
+                "APPLICATION_EXTENSION_API_ONLY": "YES",
+                "SKIP_INSTALL": "YES",
+            ])
         ),
         .target(
             name: "Larmindon-macOS",

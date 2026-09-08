@@ -43,6 +43,22 @@ final class CaptionSessionRestartTests: XCTestCase {
         XCTAssertTrue(condition(), "Lifecycle transition did not complete")
     }
 
+    func testWidgetLaunchDoesNotInterruptLocalStop() async {
+        let source = ControlledSource()
+        let session = CaptionSession(selectedSourceKind: .fake)
+        session.sourceFactory = { _, _ in source }
+        session.start()
+        await waitUntil { session.activeMode != nil }
+        let stop = Task { await session.stop() }
+        await waitUntil { source.stopCount == 1 }
+        XCTAssertFalse(session.store.isRunning)
+        XCTAssertFalse(session.startIfIdle(mode: .server))
+        XCTAssertEqual(session.requestedMode, .onDevice)
+        source.finish()
+        await stop.value
+        XCTAssertTrue(session.canStartIfIdle)
+    }
+
     func testRestartDoesNotWaitForRetiredProviderAndIgnoresLateEvents() async {
         let old = DrainingSource()
         let replacement = DrainingSource()

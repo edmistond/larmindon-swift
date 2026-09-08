@@ -139,3 +139,32 @@ jj commit -m "Build SwiftUI Larmindon prototype"
 ```
 
 Git-compatible hosting still works; use whichever commit workflow is appropriate for the checkout.
+
+## Lock Screen caption launcher
+
+The iOS app embeds a circular **Start Captions** widget using the Larmindon glyph.
+After installing and opening the app once, customize the Lock Screen, choose
+**Add Widgets → Larmindon → Start Captions**, and place the circular widget.
+Tapping it opens the caption screen (unlocking the phone if required) and starts
+live captions with the saved On-device or Soniox selection and capture settings.
+An existing, starting, stopping, or interrupted session is left intact. Taps are
+consumed once; they do not queue a restart after the session ends.
+
+The widget opens `larmindon://captions/start`. The app accepts only that action,
+waits until its scene is active, dismisses its settings/microphone sheets, and
+uses the same guarded start operation as the Start Captions button. Credentials
+stay in the app Keychain; no App Group or widget configuration is required.
+Missing credentials and microphone/speech permission failures use the app's
+normal error presentation. Set up Soniox in Settings before using that mode.
+
+For simulator URL routing checks (with the app installed):
+
+```sh
+xcrun simctl openurl booted 'larmindon://captions/start'
+```
+
+Verify both a terminated-app launch and an already-open app, then repeat while
+captions are starting/running. Automated tests cover URL validation, duplicate
+starts, provider preservation, failed-start retries, local teardown, and iOS
+interruption protection. Lock Screen appearance, authentication, and actual
+microphone/transcription startup still require a physical iPhone check.

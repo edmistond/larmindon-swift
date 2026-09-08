@@ -125,6 +125,29 @@ public final class CaptionSession {
         #endif
     }
 
+    /// Includes transitions before `isRunning` becomes true and interrupted sessions.
+    public var canStartIfIdle: Bool {
+        !store.isRunning && transitionTask == nil && localStopTask == nil && !isInterrupted
+    }
+
+    /// A launcher must never turn an existing session into a restart or a Stop.
+    @discardableResult
+    public func startIfIdle(
+        kind: TranscriptionSourceKind? = nil,
+        mode: TranscriptionMode? = nil,
+        vadSensitivity: VADSensitivity? = nil,
+        audioBufferFrameCount: Int? = nil,
+        voiceProcessingEnabled: Bool? = nil,
+        profanityFilterEnabled: Bool? = nil
+    ) -> Bool {
+        guard canStartIfIdle else { return false }
+        start(kind: kind, mode: mode, vadSensitivity: vadSensitivity,
+              audioBufferFrameCount: audioBufferFrameCount,
+              voiceProcessingEnabled: voiceProcessingEnabled,
+              profanityFilterEnabled: profanityFilterEnabled)
+        return true
+    }
+
     public func start(
         kind: TranscriptionSourceKind? = nil,
         mode: TranscriptionMode? = nil,
@@ -160,6 +183,9 @@ public final class CaptionSession {
         transitionTask?.cancel()
         transitionTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                if generation == transitionGeneration { transitionTask = nil }
+            }
             await performStart(
                 sourceKind: sourceKind,
                 mode: requestedMode,
@@ -492,7 +518,8 @@ public final class CaptionSession {
     }
 
     public func releaseMicrophoneControls() {
-        guard !store.isRunning else { return }
+        // A widget may dismiss the panel while its new session is still starting.
+        guard canStartIfIdle else { return }
         routeManager.releaseAudioSession()
         microphoneCapabilities.refresh()
     }
@@ -698,10 +725,15 @@ public final class CaptionSession {
 
     private func scheduleFailureStop() {
         transitionGeneration += 1
+        let generation = transitionGeneration
         transitionTask?.cancel()
         transitionTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                if generation == transitionGeneration { transitionTask = nil }
+            }
             await stopActive(cancelAudioRouteRecovery: true)
+            guard generation == transitionGeneration, !Task.isCancelled else { return }
             speechAnalyzerState = "Error"
         }
     }

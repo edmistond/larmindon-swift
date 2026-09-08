@@ -7,6 +7,9 @@ public struct LarmindonRootView: View {
     #if os(iOS)
     @State private var showMicrophonePanel = false
     @State private var showSettings = false
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var isReadyForLaunch = false
+    @State private var pendingCaptionLaunch = false
     #else
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
@@ -94,9 +97,25 @@ public struct LarmindonRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
-            session.setVoiceProcessingPreference(voiceProcessingEnabled)
-            session.requestMode(transcriptionMode)
+            if session.canStartIfIdle {
+                session.setVoiceProcessingPreference(voiceProcessingEnabled)
+                session.requestMode(transcriptionMode)
+            }
+            #if os(iOS)
+            isReadyForLaunch = true
+            consumeCaptionLaunch()
+            #endif
         }
+        #if os(iOS)
+        .onOpenURL { url in
+            guard CaptionLaunchLink.matches(url) else { return }
+            pendingCaptionLaunch = true
+            consumeCaptionLaunch()
+        }
+        .onChange(of: scenePhase) { _, _ in
+            consumeCaptionLaunch()
+        }
+        #endif
         .onChange(of: voiceProcessingEnabled) { _, newValue in
             session.setVoiceProcessingPreference(newValue)
         }
@@ -152,6 +171,19 @@ public struct LarmindonRootView: View {
             speakerColors: activeTheme.palette.speakerAccents
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .safeAreaInset(edge: .top) {
+            if let error = session.lastError {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(error)
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Open Settings", action: presentSettings)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(.regularMaterial)
+            }
+        }
     }
 
     private func captureControls(placement: CaptionControlsPlacement) -> some View {
@@ -237,19 +269,34 @@ public struct LarmindonRootView: View {
             .minimumScaleFactor(0.75)
     }
 
+    private func startCaptionsIfIdle() {
+        session.startIfIdle(
+            kind: .live,
+            mode: transcriptionMode,
+            vadSensitivity: vadSensitivity,
+            audioBufferFrameCount: audioBufferFrameCount,
+            voiceProcessingEnabled: voiceProcessingEnabled,
+            profanityFilterEnabled: profanityFilterEnabled
+        )
+    }
+
+    #if os(iOS)
+    private func consumeCaptionLaunch() {
+        guard pendingCaptionLaunch, isReadyForLaunch, scenePhase == .active else { return }
+        // Consume even when busy: stopping later must not replay an old widget tap.
+        pendingCaptionLaunch = false
+        showSettings = false
+        showMicrophonePanel = false
+        startCaptionsIfIdle()
+    }
+    #endif
+
     private var startStopButton: some View {
         Button {
             if session.store.isRunning {
                 Task { await session.stop() }
             } else {
-                session.start(
-                    kind: .live,
-                    mode: transcriptionMode,
-                    vadSensitivity: vadSensitivity,
-                    audioBufferFrameCount: audioBufferFrameCount,
-                    voiceProcessingEnabled: voiceProcessingEnabled,
-                    profanityFilterEnabled: profanityFilterEnabled
-                )
+                startCaptionsIfIdle()
             }
         } label: {
             Label(session.store.isRunning ? "Stop Captions" : "Start Captions", systemImage: session.store.isRunning ? "stop.fill" : "play.fill")
