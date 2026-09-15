@@ -12,10 +12,8 @@ public struct CaptionDisplayView: View {
     public let speakerColors: [Color]?
 
     @Environment(\.colorScheme) private var colorScheme
-    @State private var isPinnedToBottom = true
-
-    private let bottomSentinelID = "caption-bottom-sentinel"
-    private let bottomTolerance: CGFloat = 28
+    @State private var scrollState = CaptionScrollState()
+    @State private var scrollPosition = ScrollPosition(edge: .top)
 
     // Volatile text stays nearly as bright as finalized text. It is the newest and most
     // urgent content on screen, so dimming it the way `.secondary` does made it the least
@@ -71,133 +69,84 @@ public struct CaptionDisplayView: View {
     }
 
     public var body: some View {
-        GeometryReader { scrollContainer in
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        if isEmpty {
-                            Text("Ready for captions")
-                                .foregroundStyle(secondaryTextColor)
-                                .font(.system(size: fontSize, weight: .regular, design: .default))
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 16)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                        } else {
-                            ForEach(Array(finalizedChunks.enumerated()), id: \.element.id) { index, chunk in
-                                captionRow(
-                                    text: chunk.text,
-                                    speakerID: chunk.speakerID,
-                                    isVolatile: false,
-                                    position: finalizedBlockPosition(at: index)
-                                )
-                                .id(CaptionLine.finalized(chunk).id)
-                            }
-
-                            ForEach(Array(volatileCaptions.enumerated()), id: \.element.id) { index, caption in
-                                captionRow(
-                                    text: caption.text,
-                                    speakerID: caption.speakerID,
-                                    isVolatile: true,
-                                    position: volatileBlockPosition(at: index)
-                                )
-                                .id(caption.id)
-                            }
-                        }
-
-                        Color.clear
-                            .frame(height: 1)
-                            .id(bottomSentinelID)
-                    }
-                    .padding(.vertical, 24)
-                    .padding(.horizontal, 8)
-                    .frame(
-                        maxWidth: .infinity,
-                        minHeight: scrollContainer.size.height,
-                        alignment: isEmpty ? .center : .topLeading
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(finalizedChunks.enumerated()), id: \.element.id) { index, chunk in
+                    captionRow(
+                        text: chunk.text,
+                        speakerID: chunk.speakerID,
+                        isVolatile: false,
+                        position: finalizedBlockPosition(at: index)
                     )
+                    .id(CaptionLine.finalized(chunk).id)
                 }
-                .scrollEdgeEffectStyle(.soft, for: .top)
-                .onScrollGeometryChange(for: CaptionScrollGeometry.self) { geometry in
-                    CaptionScrollGeometry(
-                        contentOffsetY: geometry.contentOffset.y,
-                        visibleMaxY: geometry.visibleRect.maxY,
-                        contentHeight: geometry.contentSize.height
-                    )
-                } action: { oldGeometry, newGeometry in
-                    updateBottomStickiness(oldGeometry: oldGeometry, newGeometry: newGeometry)
-                }
-                .onAppear {
-                    scrollToBottom(proxy, animated: false)
-                }
-                .onChange(of: scrollSignature) { _, newSignature in
-                    if newSignature.isEmpty {
-                        isPinnedToBottom = true
-                    }
 
-                    if isPinnedToBottom {
-                        scrollToBottom(proxy, animated: false)
-                    }
+                ForEach(Array(volatileCaptions.enumerated()), id: \.element.id) { index, caption in
+                    captionRow(
+                        text: caption.text,
+                        speakerID: caption.speakerID,
+                        isVolatile: true,
+                        position: volatileBlockPosition(at: index)
+                    )
+                    .id(caption.id)
                 }
-                .onChange(of: scrollContainer.size.height) {
-                    if isPinnedToBottom {
-                        scrollToBottom(proxy, animated: false)
-                    }
-                }
-                .onChange(of: fontSize) {
-                    if isPinnedToBottom {
-                        scrollToBottom(proxy, animated: false)
-                    }
-                }
+            }
+            .padding(.vertical, 24)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        // Let the transcript keep its natural height. A viewport-sized wrapper around
+        // short content gives a bottom-aligned sentinel room to pull that content down.
+        .defaultScrollAnchor(.top, for: .alignment)
+        .scrollPosition($scrollPosition)
+        .scrollEdgeEffectStyle(.soft, for: .top)
+        .overlay {
+            if isEmpty {
+                Text("Ready for captions")
+                    .foregroundStyle(secondaryTextColor)
+                    .font(.system(size: fontSize, weight: .regular, design: .default))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .allowsHitTesting(false)
+            }
+        }
+        .onScrollGeometryChange(for: CaptionScrollGeometry.self) { geometry in
+            CaptionScrollGeometry(geometry)
+        } action: { _, geometry in
+            scrollState.updateGeometry(geometry)
+        }
+        .onScrollPhaseChange { _, phase, context in
+            scrollState.updateInteraction(
+                isUserScrolling: phase == .tracking || phase == .interacting || phase == .decelerating,
+                geometry: CaptionScrollGeometry(context.geometry)
+            )
+        }
+        .onChange(of: isEmpty) { _, empty in
+            if empty { scrollState.reset() }
+        }
+        // SwiftUI cancels the previous task when geometry/intent changes or this view
+        // disappears. Re-check after yielding so a pending follow cannot win over a
+        // gesture, a clear, or a newer layout. Text edits with unchanged height do no work.
+        .task(id: scrollRequest) {
+            guard let request = scrollRequest else { return }
+            await Task.yield()
+            guard !Task.isCancelled, scrollRequest == request else { return }
+
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                scrollPosition.scrollTo(edge: request.target == .top ? .top : .bottom)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var scrollSignature: CaptionScrollSignature {
-        if let tail = volatileCaptions.last {
-            return CaptionScrollSignature(
-                lineCount: finalizedChunks.count + volatileCaptions.count,
-                lastLineID: tail.id,
-                lastLineText: tail.text
-            )
-        }
-        return CaptionScrollSignature(
-            lineCount: finalizedChunks.count,
-            lastLineID: finalizedChunks.last.map { CaptionLine.finalized($0).id },
-            lastLineText: finalizedChunks.last?.text
-        )
+    private var scrollRequest: CaptionScrollRequest? {
+        scrollState.request(isEmpty: isEmpty)
     }
 
     private var secondaryTextColor: Color {
         textColor?.opacity(0.65) ?? Color.secondary
-    }
-
-    private func updateBottomStickiness(oldGeometry: CaptionScrollGeometry, newGeometry: CaptionScrollGeometry) {
-        if newGeometry.distanceFromBottom <= bottomTolerance {
-            if !isPinnedToBottom {
-                isPinnedToBottom = true
-            }
-            return
-        }
-
-        let didScrollUp = newGeometry.contentOffsetY < oldGeometry.contentOffsetY - 1
-        if didScrollUp, isPinnedToBottom {
-            isPinnedToBottom = false
-        }
-    }
-
-    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
-        Task { @MainActor in
-            await Task.yield()
-
-            if animated {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(bottomSentinelID, anchor: .bottom)
-                }
-            } else {
-                proxy.scrollTo(bottomSentinelID, anchor: .bottom)
-            }
-        }
     }
 
     /// Where a line sits within a run of consecutive lines from the same speaker.
@@ -325,26 +274,6 @@ private enum SpeakerColor {
             (($0 * 31) + Int($1.value)) % count
         }
         return stableHash
-    }
-}
-
-private struct CaptionScrollSignature: Equatable {
-    let lineCount: Int
-    let lastLineID: String?
-    let lastLineText: String?
-
-    var isEmpty: Bool {
-        lineCount == 0
-    }
-}
-
-private struct CaptionScrollGeometry: Equatable {
-    let contentOffsetY: CGFloat
-    let visibleMaxY: CGFloat
-    let contentHeight: CGFloat
-
-    var distanceFromBottom: CGFloat {
-        max(0, contentHeight - visibleMaxY)
     }
 }
 

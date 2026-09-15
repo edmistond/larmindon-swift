@@ -163,15 +163,9 @@ public struct LarmindonRootView: View {
     }
 
     private var captions: some View {
-        CaptionDisplayView(
-            finalizedChunks: session.store.finalizedChunks,
-            volatileCaptions: session.store.volatileCaptions,
-            fontSize: captionFontSize,
-            textColor: activeTheme.palette.text,
-            speakerColors: activeTheme.palette.speakerAccents
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .safeAreaInset(edge: .top) {
+        // An absent error occupies no space and does not alter the scroll view's safe
+        // area. Keep the caption view at a stable identity when a banner comes and goes.
+        VStack(spacing: 0) {
             if let error = session.lastError {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(error)
@@ -183,7 +177,16 @@ public struct LarmindonRootView: View {
                 .padding(14)
                 .background(.regularMaterial)
             }
+
+            CaptionDisplayView(
+                finalizedChunks: session.store.finalizedChunks,
+                volatileCaptions: session.store.volatileCaptions,
+                fontSize: captionFontSize,
+                textColor: activeTheme.palette.text,
+                speakerColors: activeTheme.palette.speakerAccents
+            )
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func captureControls(placement: CaptionControlsPlacement) -> some View {
