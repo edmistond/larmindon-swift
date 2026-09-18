@@ -14,6 +14,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     public let levelUpdates: AsyncStream<AudioLevelSnapshot>
 
     private let continuation: AsyncStream<CaptionResult>.Continuation
+    private let failureReporter: TranscriptionFailureReporter
     private let levelContinuation: AsyncStream<AudioLevelSnapshot>.Continuation
     private let sensitivity: VADSensitivity
     private let inputDeviceID: UInt32?
@@ -63,6 +64,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             capturedContinuation = continuation
         }
         self.continuation = capturedContinuation
+        failureReporter = TranscriptionFailureReporter(continuation: capturedContinuation)
 
         var capturedLevelContinuation: AsyncStream<AudioLevelSnapshot>.Continuation!
         self.levelUpdates = AsyncStream(bufferingPolicy: .bufferingNewest(16)) { continuation in
@@ -77,6 +79,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
     }
 
     public func stop() async {
+        failureReporter.stop()
         stallCheckTask?.cancel()
         stallCheckTask = nil
 
@@ -201,7 +204,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             capturedAudioContinuation = continuation
         }
 
-        transcriberTask = Task { [audioState, continuation, levelContinuation, transcriber] in
+        transcriberTask = Task { [audioState, continuation, levelContinuation, transcriber, failureReporter] in
             var finalizedRanges = Set<String>()
 
             do {
@@ -226,7 +229,7 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
                     }
                 }
             } catch {
-                continuation.yield(.volatile("Speech transcriber error: \(error.localizedDescription)"))
+                failureReporter.report(error, context: "Speech transcriber error")
             }
         }
 
@@ -272,11 +275,11 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
             analyzerInputContinuation.finish()
         }
 
-        analyzerTask = Task { [analyzer, inputStream, continuation] in
+        analyzerTask = Task { [analyzer, inputStream, failureReporter] in
             do {
                 try await analyzer.start(inputSequence: inputStream)
             } catch {
-                continuation.yield(.volatile("SpeechAnalyzer error: \(error.localizedDescription)"))
+                failureReporter.report(error, context: "SpeechAnalyzer error")
             }
         }
 

@@ -5,6 +5,8 @@ public enum CaptionResult: Equatable, Sendable {
     case finalized(String)
     case volatileSegments([CaptionSegment])
     case finalizedSegments([CaptionSegment])
+    /// Terminal provider or delivery failure. Display as an error and stop the session.
+    /// Cancellation requested by stop() must not emit a failure.
     case failure(String)
 
     /// Whether this result actually carries transcribed words.
