@@ -6,33 +6,139 @@ The app is intentionally plain: open it, start captions, keep the active audio i
 
 ## Requirements
 
-- Xcode 26.5 or newer from the local Apple SDK family used for this prototype.
+- The reproducible local checks use Xcode 27.0 (27A266a), including Swift 6.4.
 - iOS 26 or macOS 26. Larmindon is built around Apple's SpeechAnalyzer APIs and does not support older operating systems.
-- Tuist. If it is not already available, install it with the official installer or your preferred tool manager. In this checkout it may be available through `mise`.
+- Tuist 4.200.1. Install that version explicitly using the official release or a tool manager such as `mise`.
+- Python 3.9+ for the local check runner (standard library only).
 
 ```bash
-mise exec -- tuist version
+mise install tuist@4.200.1
 ```
 
 ## Generate and Open
 
 ```bash
-mise exec -- tuist generate
+mise exec tuist@4.200.1 -- tuist generate
 open Larmindon.xcworkspace
 ```
+
+## Local Quality Checks
+
+The entry point is `./scripts/check.sh`. This is a local development workflow;
+it does not require CI, signing credentials, App Store setup, microphone access,
+or speech-provider API keys. All tool pins live in
+[`scripts/checks-toolchain.json`](scripts/checks-toolchain.json).
+
+Before the first run, select the pinned Xcode using `DEVELOPER_DIR` if it is not
+already active, finish Xcode's first-launch setup, and install its command-line
+components. In Xcode, install the **iOS 26.5** simulator runtime and create an
+**iPhone 17** simulator. The runner checks the Xcode version/build, Swift version,
+Tuist version, and runtime; it never substitutes `OS=latest` or updates tools.
+Tuist may be on `PATH` or installed under `mise` at the pinned version.
+
+Install the development-only linter explicitly, then run the checks:
+
+```bash
+./scripts/check.sh setup
+./scripts/check.sh
+```
+
+`setup` downloads SwiftLint **0.65.1** from its official GitHub release, verifies
+the pinned SHA-256 checksum and version, and stores the binary and license under
+ignored `.build/check-tools/`. It does not install Xcode, Tuist, or global tools.
+Routine checks do not install anything. An absent tool or an incompatible
+version fails with an actionable error. Pin upgrades should be separate changes,
+with the full checks rerun before acceptance.
+
+| Command | Checks |
+| --- | --- |
+| `./scripts/check.sh` | All checks below, plus regression tests for the check runner |
+| `./scripts/check.sh lint` | Fast SwiftLint gate plus unfiltered advisory metrics |
+| `./scripts/check.sh test` | Tuist generation, macOS SwiftPM tests, iOS `CoreTests` |
+| `./scripts/check.sh build` | Tuist generation, macOS app and iOS app/widget builds |
+
+The full command regenerates the ignored Xcode workspace from `Project.swift`
+with Tuist's binary cache disabled. Builds use Debug configuration and
+`CODE_SIGNING_ALLOWED=NO`. The iOS build includes the embedded widget. SwiftPM
+tests alone do not cover the app entry point, widget, or iOS-only tests.
+
+If multiple simulators share the expected name, choose one explicitly:
+
+```bash
+./scripts/check.sh test --simulator YOUR-SIMULATOR-UDID
+```
+
+The selected device must still be on the pinned iOS 26.5 runtime. Find its UDID
+with `xcrun simctl list devices available`. The runner does not create or delete
+devices or change your global Xcode selection.
+
+Each run prints its report directory under `.build/checks/run-…/`. It contains
+JSON lint/metrics reports, a readable metrics summary, the tool pins, build/test
+logs, and (for iOS tests) an `.xcresult` bundle. Nonzero tool/build/test exits fail
+the command. Missing source groups, a missing baseline, and invalid SwiftLint
+rules also fail. Checks use no autofix or formatting writes; the runner hashes
+Git-visible inputs before and after and fails if they changed, without reverting
+anything. Avoid editing the checkout during a full run. Build caches and reports
+are ignored and can be removed when no check is running.
+
+### Lint Policy and Existing Debt
+
+[`.swiftlint.yml`](.swiftlint.yml) explicitly enables force casts/tries, duplicate
+conditions and dictionary keys, unused optional bindings, unhandled throwing
+tasks, invalid or unnecessary suppression commands, and cyclomatic complexity.
+It scans `Sources`, `Tests`, `Widgets`, `Package.swift`, and `Project.swift`.
+SwiftLint runs with `--strict`: a new finding, including complexity **above 10**,
+fails the gate. Complexity above 20 is an error and calls for decomposition.
+
+The reviewed [baseline](.swiftlint-baseline.json) contains only these existing
+complexity exceptions. No correctness-rule exceptions were needed:
+
+| Existing function | Score | Planned work |
+| --- | --- | --- |
+| `AudioRouteManager.apply` | 11 | Separate configuration resolution from application |
+| `CaptionSession.performStart` | 20 | Separate provider creation and lifecycle coordination |
+| `LiveSpeechAnalyzerTranscriptionSource.startSpeechAnalyzerPipeline` | 15 | Extract capture ownership |
+| `SonioxTranscriptionSource.start(audioFrames:)` | 16 | Separate event, send, and connection lifecycles |
+
+These exceptions let tooling land without rewriting startup behavior. The
+separate [metrics configuration](.swiftlint-metrics.yml) reports them without a
+baseline, alongside file, type, function length, and nesting findings. Length
+and nesting are advisory even when SwiftLint labels a finding an error. A native
+baseline is suppression, not a guaranteed complexity ratchet; review the raw
+score when changing an exempt function. Remove its entry when it is improved.
+
+For a deliberate baseline review, write a **candidate**, never over the committed
+file during a routine check:
+
+```bash
+.build/check-tools/0.65.1/swiftlint lint --config .swiftlint.yml --no-cache \
+  --write-baseline .build/checks/proposed-baseline.json
+```
+
+Compare the candidate with the committed file. Remove resolved exceptions;
+explain any newly approved exception and its follow-up in the change description.
+Do not approve all findings simply to make checks pass. The gate's own tests use
+disposable copies to verify that new violations fail and the baseline remains
+portable across checkout paths.
+
+See the [maintenance plan](maintenance-and-modularization-plan.html#phase-1) for
+the remaining work. Formatting configuration/sweep and Swift warnings-as-errors
+are **01C**, not part of this gate yet. CI and release/distribution automation are
+deferred. Passing local tests/builds does not validate physical-device audio,
+SpeechAnalyzer operation, live provider services, or speech quality in noise.
 
 ## Build the iOS Simulator Target
 
 After generation, build the `Larmindon` scheme for an iOS simulator:
 
 ```bash
-xcodebuild -workspace Larmindon.xcworkspace -scheme Larmindon -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' build
+xcodebuild -workspace Larmindon.xcworkspace -scheme Larmindon -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' build
 ```
 
 To exercise the iPad build explicitly, select an installed iPad simulator:
 
 ```bash
-xcodebuild -workspace Larmindon.xcworkspace -scheme Larmindon -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5),OS=latest' build
+xcodebuild -workspace Larmindon.xcworkspace -scheme Larmindon -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5),OS=26.5' build
 ```
 
 Use simulator names that exist on your machine if either example device is not
@@ -130,15 +236,17 @@ On macOS, the input menu tracks devices by stable Core Audio UID and restarts li
 
 ## Source Control
 
-This repository is friendly to Jujutsu workflows. A typical local flow is:
+This repository uses Git. Check the diff, stage only the intended files, and
+create a checkpoint after each change:
 
 ```bash
-jj status
-jj diff
-jj commit -m "Build SwiftUI Larmindon prototype"
+git status
+git diff
+git add path/to/changed-file
+git commit -m "Describe the change"
 ```
 
-Git-compatible hosting still works; use whichever commit workflow is appropriate for the checkout.
+Do not stage unrelated working-tree changes.
 
 ## Lock Screen caption launcher
 

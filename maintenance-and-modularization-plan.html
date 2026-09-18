@@ -160,7 +160,7 @@
           <li><a href="#references">Evidence &amp; references</a></li>
         </ol>
       </nav>
-      <p class="rail-note">A proposal for incremental work.<br>No implementation tasks are marked complete.<br><br>Self-contained · works offline · print styles included</p>
+      <p class="rail-note">01A &amp; 01B implemented locally.<br>Remaining tasks are proposed.<br><br>Self-contained · works offline · print styles included</p>
     </aside>
 
     <main id="main">
@@ -170,7 +170,7 @@
         <p class="lede">A maintenance and modularization plan for Larmindon, preparing the audio pipeline and speech-provider boundaries for what comes next.</p>
         <div class="meta">
           <span><strong>Prepared</strong> <time datetime="2026-09-18">18 September 2026</time></span>
-          <span><strong>Status</strong> Proposed</span>
+          <span><strong>Status</strong> 01A &amp; 01B implemented</span>
           <span><strong>Audited revision</strong> <code>fe9eeb1</code></span>
         </div>
       </header>
@@ -183,7 +183,7 @@
         <div class="callout">
           <p><strong>Recommended investment:</strong> establish deterministic checks, strengthen failure-path tests, finish the provider abstraction, and consolidate capture. Introduce build-enforced module boundaries after those responsibilities have settled.</p>
         </div>
-        <p>This document is a plan, not an implementation record. Task identifiers are intended to make individual changes easy to request, review, and roll back. Proposed type names describe responsibilities; they are not a requirement to introduce a framework or a particular dependency.</p>
+        <p>Tasks 01A and 01B now provide a local check workflow; CI and release automation are deferred. The remaining tasks are proposals. Task identifiers make individual changes easy to request, review, and roll back. Proposed type names describe responsibilities; they are not a requirement to introduce a framework or a particular dependency.</p>
         <p>Existing behavior is the baseline. Structural changes and intentional behavior fixes should be separate changes, with separate evidence. DSP algorithms, Azure integration, and speech-quality claims remain follow-on work.</p>
       </section>
 
@@ -247,28 +247,30 @@
         <h2 id="phase-1-title">Establish deterministic quality gates.</h2>
         <p class="dependency">Prerequisites: none. Start here; keep tooling and mechanical formatting separate.</p>
         <article class="work" id="task-1a">
-          <span class="work-id">01A · Reproducible checks</span>
-          <h3>One local command, the same checks in CI.</h3>
-          <p>Pin Xcode, Tuist, and SwiftLint versions and define a documented check entry point. Start with SwiftLint 0.65.1, which was exercised in this audit, and verify its compatibility with the selected CI toolchain. Use the formatter bundled with that pinned toolchain.</p>
-          <p>Generate the Tuist project in a clean CI checkout. Run package tests on macOS, the <code>CoreTests</code> scheme on iOS Simulator, and builds for both apps and the widget. <code>swift test</code> alone omits the app entry point and widget and does not exercise iOS-only tests.</p>
-          <p>Checks should fail if a required tool is missing or if no intended source files were scanned. Routine checks must not install changing “latest” versions, rewrite files, call paid providers, or require API keys. Optional Git hooks can invoke the same command; CI remains authoritative.</p>
-          <p class="acceptance"><strong>Acceptance:</strong> a fresh checkout can run the documented checks with the pinned tools; local and CI results agree; app/widget build failures are visible; no source file changes after a check.</p>
+          <span class="work-id">01A · Reproducible checks · Implemented</span>
+          <h3>One local command, with explicit setup.</h3>
+          <p><a href="scripts/check.sh"><code>./scripts/check.sh</code></a> is the full check entry point. <a href="scripts/checks-toolchain.json">One toolchain file</a> pins Xcode 27.0 (27A266a), Swift 6.4, Tuist 4.200.1, SwiftLint 0.65.1, and the iOS 26.5 simulator runtime. The bundled formatter is identified by the Xcode pin; formatting enforcement remains 01C.</p>
+          <p>The command regenerates the Tuist workspace, runs package tests on macOS and the <code>CoreTests</code> scheme on iOS Simulator, and builds both apps and the widget without signing. <code>swift test</code> alone omits the app entry point and widget and does not exercise iOS-only tests. The runner also exercises its own failure-path regression tests.</p>
+          <p>Start with the <a href="README.md#local-quality-checks">README setup instructions</a>. <code>./scripts/check.sh setup</code> explicitly installs a checksum-verified linter under ignored <code>.build/</code> storage. Routine checks fail for missing or mismatched tools, missing source groups, invalid lint configuration, or failed build/test commands. They never autofix, install tools, call paid providers, or request credentials. Git-visible inputs are checked for changes after the run.</p>
+          <p>Use <code>./scripts/check.sh lint</code> for quick feedback; <code>test</code> and <code>build</code> select focused subsets. Per-run reports and logs live under <code>.build/checks/</code>. CI checkout jobs, signing, and distribution automation are deferred; the supported near-term workflow is cloning the repository and following these local instructions.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> the documented local command runs with pinned tools; app/widget build failures are visible; checks do not change source inputs. A simulator UDID can be selected explicitly, but the runtime cannot silently drift to “latest.”</p>
+          <p class="evidence"><strong>Validated 18 September 2026:</strong> 12 check-runner tests, 136 macOS tests, 146 iOS simulator tests, and both app/widget builds passed through the local entry point. The source-input integrity check passed. Existing compiler warnings remain visible; warnings-as-errors is deferred to 01C.</p>
         </article>
         <article class="work" id="task-1b">
-          <span class="work-id">01B · Lint and complexity policy</span>
+          <span class="work-id">01B · Lint and complexity policy · Implemented</span>
           <h3>Gate useful signals; record existing debt.</h3>
-          <p>Use an explicit SwiftLint rule list. Begin with force casts/tries, duplicate conditions and dictionary keys, unused optional bindings, unhandled throwing tasks, and invalid suppression commands. Add complexity and body-length reporting. Avoid enabling every rule: the audit’s trial of <code>incompatible_concurrency_annotation</code> requested Swift 5 compatibility annotations that this Swift 6 project does not need.</p>
-          <p>Commit a reviewed baseline of existing findings and fail on new, unapproved violations. Keep baseline changes visible in review; never regenerate it automatically in CI. Existing oversized functions should be retired from the baseline as they are extracted.</p>
-          <p>Use complexity 10 as the initial new-code threshold. Exceptions should be narrow and explain the domain reason. Above 20 should require decomposition before adding more responsibility. SwiftLint’s <code>--strict</code> makes warnings fail, so a warning threshold of 10 becomes a gate when that flag is used.</p>
-          <p>Keep file/type length advisory at first, especially for declarative views. A baseline is a suppression mechanism, not proof that an existing function has not become more complicated. Inspect changes to baselined lifecycle code and track its measured score during the refactor.</p>
-          <p class="acceptance"><strong>Acceptance:</strong> a deliberately introduced violation fails the check; the existing baseline passes; suppressions are scoped and explained; the four measured startup hotspots remain visible in the report.</p>
+          <p><a href=".swiftlint.yml">The gate configuration</a> uses an explicit rule list: force casts/tries, duplicate conditions and dictionary keys, unused optional bindings, unhandled throwing tasks, invalid or unnecessary suppression commands, and cyclomatic complexity. It scans app, framework, widget, test, and build-manifest Swift sources. The audit’s incompatible concurrency-annotation rule remains excluded.</p>
+          <p><a href=".swiftlint-baseline.json">The reviewed baseline</a> contains exactly the four complexity hotspots listed above, allowing this tooling change to preserve startup behavior. No correctness-rule exceptions were needed. Keep baseline changes visible in review; the runner never regenerates it. Retire existing entries as their functions are simplified.</p>
+          <p>New complexity findings above 10 fail because the gate uses <code>--strict</code>. Above 20 is an error and should require decomposition before adding more responsibility. Exceptions should be narrow and explain the domain reason. <a href=".swiftlint-metrics.yml">A separate metrics pass</a> ignores the baseline and reports complexity, function/type/file length, and nesting; length and nesting remain advisory.</p>
+          <p>A baseline is a suppression mechanism, not proof that an existing function has not become more complicated. Inspect changes to baselined lifecycle code and track its raw score during the refactor. <a href="scripts/tests/test_checks.py">Gate regression tests</a> use disposable source copies to exercise new violations, advisory-only findings, configuration errors, baseline portability, and unchanged source inputs.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> deliberately introduced correctness and complexity violations fail; the existing baseline passes; the four measured startup hotspots remain visible in the unfiltered report. Baseline regeneration is an explicit review operation documented in the README.</p>
         </article>
         <article class="work" id="task-1c">
           <span class="work-id">01C · Formatting, warnings, and documentation</span>
           <h3>Make mechanical maintenance inexpensive.</h3>
-          <p>Agree on one formatter configuration, then apply it in a standalone mechanical checkpoint. Use check-only formatting in CI. Do not mix the initial formatting sweep with lifecycle changes or source movement.</p>
+          <p>Agree on one formatter configuration, then apply it in a standalone mechanical checkpoint. Add check-only formatting to the local command. Do not mix the initial formatting sweep with lifecycle changes or source movement.</p>
           <p>Resolve the known deprecated <code>UIWindow(frame:)</code> fallback in the layout tests before enabling Swift compiler warnings-as-errors. Keep SDK/toolchain upgrades separate so newly introduced warnings are attributable. Existing Swift 6 language checking should remain enabled.</p>
-          <p>Update the README’s outdated descriptions of voice processing, themes, the old debug panel, and source-control commands. Document the new check command and the difference between offline tests and physical-device validation.</p>
+          <p>Update the README’s outdated descriptions of voice processing, themes, and the old debug panel. The local check command, validation limits, and current Git workflow are already documented as part of 01A.</p>
           <p class="acceptance"><strong>Acceptance:</strong> a second formatter run produces no changes; checks reject unformatted input; Swift compilation passes with the chosen warnings policy; README instructions match the supported workflow.</p>
         </article>
         <div class="table-wrap">
@@ -436,7 +438,7 @@
         <p class="eyebrow">Where to begin</p>
         <h2 id="starting-title">The first useful milestone.</h2>
         <div class="callout">
-          <p><strong>Begin with 01A and 01B:</strong> pinned, reproducible checks plus a reviewed lint baseline. Then take 02A: a focused regression test and fix for partial-start cleanup. These form a small, useful first slice with no DSP algorithm or provider change.</p>
+          <p><strong>01A and 01B are implemented:</strong> pinned local checks plus a reviewed lint baseline. The recommended next behavioral change is 02A: a focused regression test and fix for partial-start cleanup. Request it separately; no DSP algorithm, provider change, or capture refactor is included in the tooling work.</p>
         </div>
         <p>After that, choose the next boundary according to the upcoming feature:</p>
         <ul>

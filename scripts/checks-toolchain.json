@@ -1,0 +1,11 @@
+{
+  "xcode_version": "27.0",
+  "xcode_build": "27A266a",
+  "swift_version": "6.4",
+  "tuist_version": "4.200.1",
+  "swiftlint_version": "0.65.1",
+  "swiftlint_url": "https://github.com/realm/SwiftLint/releases/download/0.65.1/portable_swiftlint.zip",
+  "swiftlint_sha256": "c1e429b0599cf1b516f369a2d9ec04eaf0e436f3c12b637df8851fa52ff694d0",
+  "simulator_runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5",
+  "simulator_name": "iPhone 17"
+}

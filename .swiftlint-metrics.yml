@@ -1,0 +1,22 @@
+# Unfiltered, advisory report: keep existing debt visible despite the gate baseline.
+only_rules:
+  - cyclomatic_complexity
+  - function_body_length
+  - type_body_length
+  - file_length
+  - nesting
+
+included:
+  - Sources
+  - Tests
+  - Widgets
+  - Package.swift
+  - Project.swift
+
+allow_zero_lintable_files: false
+check_for_updates: false
+
+cyclomatic_complexity:
+  warning: 10
+  error: 20
+  ignores_case_statements: false

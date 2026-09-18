@@ -1,0 +1,27 @@
+# Required local gate. Formatting and length limits are deferred/advisory.
+only_rules:
+  - force_cast
+  - force_try
+  - duplicate_conditions
+  - duplicated_key_in_dictionary_literal
+  - unused_optional_binding
+  - unhandled_throwing_task
+  - invalid_swiftlint_command
+  - superfluous_disable_command
+  - cyclomatic_complexity
+
+included:
+  - Sources
+  - Tests
+  - Widgets
+  - Package.swift
+  - Project.swift
+
+allow_zero_lintable_files: false
+check_for_updates: false
+baseline: .swiftlint-baseline.json
+
+cyclomatic_complexity:
+  warning: 10
+  error: 20
+  ignores_case_statements: false

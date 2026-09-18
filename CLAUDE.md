@@ -23,6 +23,13 @@ reach for it deliberately on grep/search/git/build output where filtering helps.
 
 ## Build & test
 
+Use `./scripts/check.sh` for the full local gate: pinned-tool preflight, lint,
+check-runner regression tests, Tuist generation, macOS and iOS unit tests, and
+unsigned app/widget builds. `lint`, `test`, and `build` select focused subsets.
+See README for explicit setup and `scripts/checks-toolchain.json` for tool pins.
+Do not regenerate `.swiftlint-baseline.json` to hide new violations. Length
+metrics are advisory; formatting enforcement and CI are deferred.
+
 Tuist-generated project (`Project.swift` → `Larmindon.xcworkspace`). Schemes/targets:
 
 - `LarmindonKit` — framework with all the real code (`Sources/Core`, `SpeechPipeline`,
