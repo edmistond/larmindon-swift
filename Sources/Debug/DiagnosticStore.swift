@@ -258,7 +258,7 @@ public actor DiagnosticStore {
         bind(statement, 1, currentSessionID)
 
         var summaries: [DiagnosticSessionSummary] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        while try SQLiteStatementRows.next(statement) {
             summaries.append(
                 DiagnosticSessionSummary(
                     sessionID: text(statement, 0) ?? "",
@@ -288,7 +288,7 @@ public actor DiagnosticStore {
         sqlite3_bind_int64(statement, 1, Int64(limit))
 
         var results: [DiagnosticEvent] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        while try SQLiteStatementRows.next(statement) {
             results.append(
                 DiagnosticEvent(
                     timestamp: Date(timeIntervalSince1970: sqlite3_column_double(statement, 0)),
@@ -420,7 +420,7 @@ public actor DiagnosticStore {
         defer { sqlite3_finalize(statement) }
 
         var results: [T] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        while try SQLiteStatementRows.next(statement) {
             results.append(transform(statement))
         }
         return results
@@ -433,5 +433,20 @@ public actor DiagnosticStore {
     private func text(_ statement: OpaquePointer, _ index: Int32) -> String? {
         guard let cString = sqlite3_column_text(statement, index) else { return nil }
         return String(cString: cString)
+    }
+}
+
+/// Shared by every diagnostic read loop. An error after some rows must throw,
+/// not masquerade as SQLITE_DONE and return an apparently successful partial read.
+enum SQLiteStatementRows {
+    static func next(_ statement: OpaquePointer) throws -> Bool {
+        let result = sqlite3_step(statement)
+        switch result {
+        case SQLITE_ROW: return true
+        case SQLITE_DONE: return false
+        default:
+            let message = String(cString: sqlite3_errmsg(sqlite3_db_handle(statement)))
+            throw DiagnosticStoreError.sql("\(message) (code \(result))")
+        }
     }
 }
