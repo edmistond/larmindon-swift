@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="A phased maintenance plan for Larmindon: deterministic quality gates, safer lifecycle boundaries, modular speech providers, and preparation for an experimental audio processing pipeline.">
+  <title>Larmindon · Maintenance &amp; modularization plan</title>
+  <style>
+    :root {
+      --paper: #f7f5f0;
+      --surface: #fffefa;
+      --ink: #202b32;
+      --muted: #58656b;
+      --accent: #245d69;
+      --rule: #d7ddd7;
+      --wash: #eaf1ee;
+      --warm: #f4ead9;
+      --serif: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-padding-top: 2rem; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.7 var(--sans); }
+    a { color: var(--accent); text-underline-offset: .19em; text-decoration-thickness: 1px; overflow-wrap: anywhere; }
+    a:hover { text-decoration-thickness: 2px; }
+    a:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 5px; border-radius: 2px; }
+    .skip-link { position: absolute; left: 1rem; top: -5rem; z-index: 3; padding: .7rem 1rem; background: var(--surface); }
+    .skip-link:focus { top: 1rem; }
+    .layout { display: grid; grid-template-columns: 230px minmax(0, 900px); gap: 64px; max-width: 1320px; margin: 0 auto; padding: 56px 42px 88px; }
+    .rail { align-self: start; position: sticky; top: 32px; font-size: .82rem; }
+    .brand { margin: 0 0 2rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+    .rail-label, .eyebrow { font-size: .72rem; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+    nav ol { list-style: none; padding: 0; margin: .8rem 0 1.6rem; }
+    nav li { margin: 0; }
+    nav a { display: block; padding: .37rem 0; text-decoration: none; color: var(--muted); }
+    nav a:hover { color: var(--accent); text-decoration: underline; }
+    nav .phase-link { display: grid; grid-template-columns: 26px 1fr; gap: 5px; }
+    nav .phase-link span { color: var(--accent); font-variant-numeric: tabular-nums; }
+    .rail-note { border-top: 1px solid var(--rule); padding-top: 1rem; color: var(--muted); line-height: 1.55; }
+    main { min-width: 0; }
+    header { padding: 0 0 2.3rem; border-bottom: 1px solid var(--rule); }
+    h1, h2, h3 { font-family: var(--serif); font-weight: 600; line-height: 1.16; text-wrap: balance; }
+    h1 { font-size: clamp(2.7rem, 5vw, 4.3rem); letter-spacing: -.035em; margin: .8rem 0 1.3rem; max-width: 800px; }
+    h2 { font-size: 2.1rem; letter-spacing: -.02em; margin: .5rem 0 1.3rem; }
+    h3 { font-size: 1.38rem; margin: 0 0 .8rem; }
+    h4 { font-size: .88rem; margin: 1.3rem 0 .4rem; }
+    p { margin: 0 0 1rem; }
+    .lede { font: 1.4rem/1.55 var(--serif); max-width: 740px; }
+    .meta { display: flex; flex-wrap: wrap; gap: .4rem 1.5rem; font-size: .78rem; color: var(--muted); margin-top: 1.6rem; }
+    .meta strong { color: var(--ink); }
+    section { margin-top: 3.3rem; }
+    ul, ol { padding-left: 1.35rem; margin: .7rem 0 1.2rem; }
+    li { margin: .45rem 0; }
+    li::marker { color: var(--accent); }
+    strong { font-weight: 700; }
+    code { font: .88em/1.5 var(--mono); overflow-wrap: anywhere; background: #edf0eb; padding: .1em .26em; border-radius: 3px; }
+    pre { padding: 1.1rem 1.3rem; background: #edf0eb; border: 1px solid var(--rule); border-radius: 6px; overflow-x: auto; font: .8rem/1.7 var(--mono); }
+    pre code { padding: 0; background: transparent; overflow-wrap: normal; }
+    .callout { margin: 1.5rem 0; padding: 1.2rem 1.4rem; background: var(--wash); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; }
+    .callout.warm { background: var(--warm); border-left-color: #97702d; }
+    .callout p:last-child, .callout ul:last-child { margin-bottom: 0; }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 1.5rem 0; }
+    .metric { padding: 1rem 1.1rem; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; }
+    .metric strong { display: block; font: 2.1rem/1.2 var(--serif); color: var(--accent); margin-bottom: .35rem; }
+    .metric span { font-size: .78rem; color: var(--muted); display: block; line-height: 1.5; }
+    .table-wrap { overflow-x: auto; margin: 1.3rem 0; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+    table { width: 100%; border-collapse: collapse; font-size: .83rem; line-height: 1.55; }
+    caption { text-align: left; padding: 1rem 1.1rem; font-weight: 700; background: var(--wash); }
+    th { text-align: left; color: var(--muted); font-weight: 700; background: #f1f3ee; }
+    th, td { padding: .85rem 1.05rem; vertical-align: top; border-bottom: 1px solid var(--rule); }
+    tbody tr:last-child td, tbody tr:last-child th { border-bottom: 0; }
+    td:first-child { min-width: 135px; }
+    .small { font-size: .83rem; color: var(--muted); }
+    .phase { padding-top: 2.1rem; border-top: 1px solid var(--rule); }
+    .phase-head { display: flex; align-items: center; flex-wrap: wrap; gap: .7rem; margin-bottom: .5rem; }
+    .phase-number { color: var(--accent); font: 750 .75rem/1.5 var(--sans); letter-spacing: .11em; text-transform: uppercase; }
+    .tag { display: inline-block; padding: .18rem .6rem; border: 1px solid var(--rule); border-radius: 20px; font-size: .66rem; letter-spacing: .04em; font-weight: 700; text-transform: uppercase; color: var(--muted); }
+    .dependency { font-size: .82rem; color: var(--muted); margin: -.5rem 0 1.5rem; }
+    .work { margin: 1.3rem 0; padding: 1.5rem; background: var(--surface); border: 1px solid var(--rule); border-radius: 7px; }
+    .work-id { display: block; color: var(--accent); font: 750 .72rem/1.5 var(--sans); letter-spacing: .08em; margin-bottom: .4rem; }
+    .work p:last-child { margin-bottom: 0; }
+    .acceptance { margin: 1.15rem 0 0; padding-top: .9rem; border-top: 1px solid var(--rule); font-size: .89rem; }
+    .evidence { font-size: .78rem; color: var(--muted); margin-top: 1rem; }
+    .flow { padding: 1.3rem; border: 1px solid var(--rule); border-radius: 7px; background: var(--surface); margin: 1.5rem 0; }
+    .flow ol { list-style: none; margin: 0; padding: 0; display: grid; gap: .7rem; }
+    .flow li { margin: 0; padding: .8rem 1rem; background: var(--wash); border-radius: 4px; display: grid; grid-template-columns: 1.5rem 1fr; gap: .5rem; }
+    .flow .step { color: var(--accent); font: 700 .85rem/1.7 var(--mono); }
+    .flow strong { display: block; font-size: .9rem; }
+    .flow small { display: block; font-size: .78rem; color: var(--muted); line-height: 1.5; }
+    figcaption { margin-top: .9rem; font-size: .78rem; color: var(--muted); }
+    .reference-list { font-size: .84rem; }
+    .reference-list li { padding-bottom: .35rem; }
+    footer { margin-top: 3rem; padding-top: 1.3rem; border-top: 1px solid var(--rule); font-size: .78rem; color: var(--muted); }
+    @media (max-width: 1060px) {
+      .layout { grid-template-columns: 185px minmax(0, 1fr); gap: 36px; padding: 36px 28px 64px; }
+      body { font-size: 16px; }
+    }
+    @media (max-width: 760px) {
+      .layout { display: block; padding: 24px 20px 48px; }
+      .rail { position: static; margin-bottom: 2.2rem; }
+      .brand { margin-bottom: .8rem; }
+      nav ol { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; margin-bottom: .5rem; }
+      .rail-label, .rail-note { display: none; }
+      h1 { font-size: 2.65rem; }
+      h2 { font-size: 1.85rem; }
+      .lede { font-size: 1.23rem; }
+      .work { padding: 1.15rem; }
+      th, td { padding: .7rem .8rem; }
+    }
+    @media (max-width: 430px) {
+      .metrics { grid-template-columns: 1fr; }
+      .metric { display: flex; align-items: center; gap: 1rem; }
+      .metric strong { min-width: 85px; margin: 0; }
+    }
+    @media print {
+      @page { margin: 18mm; }
+      body { background: white; color: #172127; font-size: 10pt; line-height: 1.5; }
+      .layout { display: block; padding: 0; max-width: none; }
+      .rail, .skip-link { display: none; }
+      h1 { font-size: 32pt; }
+      h2 { font-size: 22pt; }
+      h3 { font-size: 15pt; }
+      .lede { font-size: 15pt; }
+      section { margin-top: 24pt; }
+      h2, h3, h4, .phase-head, .work-id { break-after: avoid; }
+      .phase { break-before: page; padding-top: 0; border-top: 0; }
+      .work, .callout, .metrics, .flow { break-inside: avoid; }
+      .work { padding: 12pt; }
+      .table-wrap { overflow: visible; }
+      table { font-size: 9pt; }
+      thead { display: table-header-group; }
+      tr { break-inside: avoid; }
+      a { color: inherit; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+      .tag { background: white; }
+      footer { margin-top: 20pt; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to the plan</a>
+  <div class="layout">
+    <aside class="rail" aria-label="Document navigation">
+      <p class="brand">Larmindon</p>
+      <p class="rail-label">Maintenance field guide</p>
+      <nav aria-label="Contents">
+        <ol>
+          <li><a href="#overview">The recommendation</a></li>
+          <li><a href="#baseline">Measured baseline</a></li>
+          <li><a href="#guardrails">Behavior to preserve</a></li>
+          <li><a class="phase-link" href="#phase-1"><span>01</span> Establish quality gates</a></li>
+          <li><a class="phase-link" href="#phase-2"><span>02</span> Protect lifecycle boundaries</a></li>
+          <li><a class="phase-link" href="#phase-3"><span>03</span> Complete provider seams</a></li>
+          <li><a class="phase-link" href="#phase-4"><span>04</span> Unify capture for DSP</a></li>
+          <li><a class="phase-link" href="#phase-5"><span>05</span> Enforce stable modules</a></li>
+          <li><a href="#validation">Validation &amp; rollout</a></li>
+          <li><a href="#starting-point">Where to begin</a></li>
+          <li><a href="#references">Evidence &amp; references</a></li>
+        </ol>
+      </nav>
+      <p class="rail-note">A proposal for incremental work.<br>No implementation tasks are marked complete.<br><br>Self-contained · works offline · print styles included</p>
+    </aside>
+
+    <main id="main">
+      <header>
+        <p class="eyebrow">Engineering plan / September 2026</p>
+        <h1>Cleaning up<br>the landscaping.</h1>
+        <p class="lede">A maintenance and modularization plan for Larmindon, preparing the audio pipeline and speech-provider boundaries for what comes next.</p>
+        <div class="meta">
+          <span><strong>Prepared</strong> <time datetime="2026-09-18">18 September 2026</time></span>
+          <span><strong>Status</strong> Proposed</span>
+          <span><strong>Audited revision</strong> <code>fe9eeb1</code></span>
+        </div>
+      </header>
+
+      <section id="overview" aria-labelledby="overview-title">
+        <p class="eyebrow">The recommendation</p>
+        <h2 id="overview-title">A focused maintenance pass.</h2>
+        <p>The codebase is still manageable. Its highest maintenance costs are concentrated around audio capture, session orchestration, and provider construction. Those are also the areas that custom audio processing and a second server backend would expand.</p>
+        <p>Preserve the useful foundations: small caption models, actor-isolated networking and diagnostics, an injectable WebSocket transport, explicit interruption policies, and regression tests for restart and scrolling behavior.</p>
+        <div class="callout">
+          <p><strong>Recommended investment:</strong> establish deterministic checks, strengthen failure-path tests, finish the provider abstraction, and consolidate capture. Introduce build-enforced module boundaries after those responsibilities have settled.</p>
+        </div>
+        <p>This document is a plan, not an implementation record. Task identifiers are intended to make individual changes easy to request, review, and roll back. Proposed type names describe responsibilities; they are not a requirement to introduce a framework or a particular dependency.</p>
+        <p>Existing behavior is the baseline. Structural changes and intentional behavior fixes should be separate changes, with separate evidence. DSP algorithms, Azure integration, and speech-quality claims remain follow-on work.</p>
+      </section>
+
+      <section id="baseline" aria-labelledby="baseline-title">
+        <p class="eyebrow">Measured baseline</p>
+        <h2 id="baseline-title">What the review actually established.</h2>
+        <div class="metrics" aria-label="Audit measurements">
+          <div class="metric"><strong>10,702</strong><span>production Swift lines<br>across 36 files</span></div>
+          <div class="metric"><strong>136 / 146</strong><span>passing tests<br>macOS / iOS simulator</span></div>
+          <div class="metric"><strong>4</strong><span>functions above SwiftLint’s<br>complexity warning threshold</span></div>
+        </div>
+        <p>The review included 20 Swift test files totaling 3,203 lines. The macOS app and iOS app/widget builds passed with signing disabled. The audit used Xcode 27.0, Swift 6.4, and an iOS 26.5 simulator. It did not validate physical microphones, live speech services, signing, or noisy-environment performance.</p>
+        <div class="table-wrap">
+          <table>
+            <caption>Complexity is concentrated in startup and configuration</caption>
+            <thead><tr><th scope="col">Function</th><th scope="col">SwiftLint score</th><th scope="col">What to improve</th></tr></thead>
+            <tbody>
+              <tr><td><code>CaptionSession.performStart</code></td><td>20</td><td>Separate provider construction, capture startup, and lifecycle coordination.</td></tr>
+              <tr><td><code>SonioxTranscriptionSource.start(audioFrames:)</code></td><td>16</td><td>Separate event consumption, audio sending, and connection supervision.</td></tr>
+              <tr><td><code>LiveSpeechAnalyzerTranscriptionSource.startSpeechAnalyzerPipeline</code></td><td>15</td><td>Separate capture ownership from recognition and conversion.</td></tr>
+              <tr><td><code>AudioRouteManager.apply</code></td><td>11</td><td>Clarify configuration resolution and application without changing route behavior.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>The read-only SwiftLint 0.65.1 metrics pass reported 33 findings across production and tests: four complexity, nine function length, ten type length, and ten file length findings. These counts describe the default rules, not a proposed pass/fail policy.</p>
+        <p>A formatter trial using four-space indentation, 120-column lines, and no extra indentation inside conditional-compilation blocks produced 363 findings, mostly whitespace and wrapping. This measures disagreement with a proposed formatting style, not 363 defects.</p>
+        <div class="table-wrap">
+          <table>
+            <caption>Selected macOS line-coverage results</caption>
+            <thead><tr><th scope="col">Area</th><th scope="col">Coverage</th><th scope="col">Interpretation</th></tr></thead>
+            <tbody>
+              <tr><td>Caption store / scroll policy</td><td>97% / 99%</td><td>Good examples of small, directly testable responsibilities.</td></tr>
+              <tr><td>Soniox source adapter</td><td>89%</td><td>Meaningful offline tests already protect much of the adapter.</td></tr>
+              <tr><td>Shared capture</td><td>10%</td><td>Most engine and capture lifecycle behavior is not exercised.</td></tr>
+              <tr><td>Apple live source</td><td>&lt;1%</td><td>Hardware/framework integration needs injectable boundaries.</td></tr>
+              <tr><td>Concrete URLSession WebSocket transport</td><td>0%</td><td>Mock transport tests do not validate the concrete transport itself.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small">Coverage is a snapshot from the macOS test run. Platform conditionals, generated code, and UI code affect the denominator. It is neither a cross-platform total nor evidence of physical-device correctness. Re-measure after changes.</p>
+      </section>
+
+      <section id="guardrails" aria-labelledby="guardrails-title">
+        <p class="eyebrow">Behavior to preserve</p>
+        <h2 id="guardrails-title">The compatibility contract.</h2>
+        <ul>
+          <li><strong>Saved configuration survives.</strong> Preserve preference keys, serialized enum values, defaults, theme migration, and Keychain service/account identifiers. Add explicit migration tests when a representation changes.</li>
+          <li><strong>Captions retain their meaning.</strong> Preserve finalized order, volatile replacement, speaker boundaries, transcript export, scroll position, and clear behavior.</li>
+          <li><strong>Start and Stop remain predictable.</strong> Preserve generation guards, local teardown ordering, bounded provider finishing, and rejection of stale events from retired providers.</li>
+          <li><strong>Launchers remain idle-only.</strong> A widget launch must not replace a running, starting, stopping, or interrupted session. A consumed tap must not queue a later restart.</li>
+          <li><strong>Interruptions respect user intent.</strong> A deliberate Stop must disarm recovery. Route release must never tear down the replacement session.</li>
+          <li><strong>Audio behavior stays observable.</strong> Preserve requested versus active voice-processing state, selected-input behavior, buffer configuration, and the different meanings of Apple and server activity meters.</li>
+          <li><strong>Provider choice stays explicit.</strong> Preserve the existing Soniox default in server mode. Do not silently fall back to a different provider or send audio to another service.</li>
+          <li><strong>Public surfaces remain compatible.</strong> Keep the app-facing <code>LarmindonKit</code> API and existing initializers through adapters or overloads while implementation moves behind them.</li>
+        </ul>
+        <div class="callout warm"><p><strong>A refactor cannot establish “no breaking changes” by inspection alone.</strong> Each work package needs a scoped comparison against these behaviors. Changes to capture ownership also require a physical-device pass before claiming parity.</p></div>
+      </section>
+
+      <section class="phase" id="phase-1" aria-labelledby="phase-1-title">
+        <div class="phase-head"><span class="phase-number">Phase 01</span><span class="tag">Tooling &amp; baseline</span></div>
+        <h2 id="phase-1-title">Establish deterministic quality gates.</h2>
+        <p class="dependency">Prerequisites: none. Start here; keep tooling and mechanical formatting separate.</p>
+        <article class="work" id="task-1a">
+          <span class="work-id">01A · Reproducible checks</span>
+          <h3>One local command, the same checks in CI.</h3>
+          <p>Pin Xcode, Tuist, and SwiftLint versions and define a documented check entry point. Start with SwiftLint 0.65.1, which was exercised in this audit, and verify its compatibility with the selected CI toolchain. Use the formatter bundled with that pinned toolchain.</p>
+          <p>Generate the Tuist project in a clean CI checkout. Run package tests on macOS, the <code>CoreTests</code> scheme on iOS Simulator, and builds for both apps and the widget. <code>swift test</code> alone omits the app entry point and widget and does not exercise iOS-only tests.</p>
+          <p>Checks should fail if a required tool is missing or if no intended source files were scanned. Routine checks must not install changing “latest” versions, rewrite files, call paid providers, or require API keys. Optional Git hooks can invoke the same command; CI remains authoritative.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> a fresh checkout can run the documented checks with the pinned tools; local and CI results agree; app/widget build failures are visible; no source file changes after a check.</p>
+        </article>
+        <article class="work" id="task-1b">
+          <span class="work-id">01B · Lint and complexity policy</span>
+          <h3>Gate useful signals; record existing debt.</h3>
+          <p>Use an explicit SwiftLint rule list. Begin with force casts/tries, duplicate conditions and dictionary keys, unused optional bindings, unhandled throwing tasks, and invalid suppression commands. Add complexity and body-length reporting. Avoid enabling every rule: the audit’s trial of <code>incompatible_concurrency_annotation</code> requested Swift 5 compatibility annotations that this Swift 6 project does not need.</p>
+          <p>Commit a reviewed baseline of existing findings and fail on new, unapproved violations. Keep baseline changes visible in review; never regenerate it automatically in CI. Existing oversized functions should be retired from the baseline as they are extracted.</p>
+          <p>Use complexity 10 as the initial new-code threshold. Exceptions should be narrow and explain the domain reason. Above 20 should require decomposition before adding more responsibility. SwiftLint’s <code>--strict</code> makes warnings fail, so a warning threshold of 10 becomes a gate when that flag is used.</p>
+          <p>Keep file/type length advisory at first, especially for declarative views. A baseline is a suppression mechanism, not proof that an existing function has not become more complicated. Inspect changes to baselined lifecycle code and track its measured score during the refactor.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> a deliberately introduced violation fails the check; the existing baseline passes; suppressions are scoped and explained; the four measured startup hotspots remain visible in the report.</p>
+        </article>
+        <article class="work" id="task-1c">
+          <span class="work-id">01C · Formatting, warnings, and documentation</span>
+          <h3>Make mechanical maintenance inexpensive.</h3>
+          <p>Agree on one formatter configuration, then apply it in a standalone mechanical checkpoint. Use check-only formatting in CI. Do not mix the initial formatting sweep with lifecycle changes or source movement.</p>
+          <p>Resolve the known deprecated <code>UIWindow(frame:)</code> fallback in the layout tests before enabling Swift compiler warnings-as-errors. Keep SDK/toolchain upgrades separate so newly introduced warnings are attributable. Existing Swift 6 language checking should remain enabled.</p>
+          <p>Update the README’s outdated descriptions of voice processing, themes, the old debug panel, and source-control commands. Document the new check command and the difference between offline tests and physical-device validation.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> a second formatter run produces no changes; checks reject unformatted input; Swift compilation passes with the chosen warnings policy; README instructions match the supported workflow.</p>
+        </article>
+        <div class="table-wrap">
+          <table>
+            <caption>Recommended enforcement levels</caption>
+            <thead><tr><th scope="col">Check</th><th scope="col">Initial policy</th><th scope="col">Later extension</th></tr></thead>
+            <tbody>
+              <tr><td>Builds and existing tests</td><td>Required</td><td>Release builds and oldest-supported-runtime checks when those runners are available.</td></tr>
+              <tr><td>Formatting</td><td>Required after the isolated formatting checkpoint</td><td>Editor integration using the same configuration.</td></tr>
+              <tr><td>Selected SwiftLint rules</td><td>No new unapproved findings</td><td>Shrink the baseline as affected code is improved.</td></tr>
+              <tr><td>Complexity</td><td>Gate new violations; report existing hotspots</td><td>Tighten exceptions after extraction; do not reward meaningless function splitting.</td></tr>
+              <tr><td>Coverage</td><td>Report by responsibility</td><td>Targeted requirements for new pure policies and injectable boundaries.</td></tr>
+              <tr><td><code>@unchecked Sendable</code></td><td>Inventory and explain the existing 17 declarations</td><td>Flag additions against an explicit allowlist; document ownership or locking assumptions.</td></tr>
+              <tr><td>Periphery</td><td>Optional reporting after the core gates work</td><td>Gate reliable unused-code findings once all relevant app/platform targets are indexed.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="phase" id="phase-2" aria-labelledby="phase-2-title">
+        <div class="phase-head"><span class="phase-number">Phase 02</span><span class="tag">Tests &amp; explicit fixes</span></div>
+        <h2 id="phase-2-title">Protect lifecycle boundaries.</h2>
+        <p class="dependency">Prerequisites: reuse the Phase 01 checks as they become available. These tasks can proceed independently of formatting.</p>
+        <article class="work" id="task-2a">
+          <span class="work-id">02A · Capture failure seam</span>
+          <h3>Test cleanup after partial startup.</h3>
+          <p>Introduce the smallest injectable capture-driver boundary needed to simulate acquiring a tap or direct-capture resource and then failing to start. Keep engine-specific behavior in the production implementation.</p>
+          <p>The current <code>AudioCaptureSession</code> acquires resources before setting <code>isRunning</code>, while <code>stop()</code> returns early if that flag is false. Explicit cleanup can therefore be skipped on a failed start. Clean up according to the resources actually acquired, including repeat Stop and cancellation during startup.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> a regression test fails against the current partial-start path and passes with the fix; cleanup happens once; route release follows local capture teardown; a replacement session remains unaffected.</p>
+          <p class="evidence">Evidence: <a href="Sources/SpeechPipeline/AudioCaptureSession.swift">AudioCaptureSession.swift</a>, lines 114–132 and 185–203; <a href="Tests/CoreTests/CaptionSessionRestartTests.swift">existing restart tests</a>.</p>
+        </article>
+        <article class="work" id="task-2b">
+          <span class="work-id">02B · Failure and delivery contracts</span>
+          <h3>Characterize behavior before changing it.</h3>
+          <p>The Apple source currently emits some runtime errors as volatile caption text; Soniox emits <code>.failure</code>, which the session treats as an error. Define the intended common contract and test it. Changing the Apple path to stop on failure is an intentional behavior fix, not a mechanical extraction; keep it in its own change.</p>
+          <p>Exercise Soniox’s bounded result stream under a delayed consumer. It currently shares one dropping queue between partial and final results. Define how partial updates can be coalesced and how finalized events are preserved or overflow is surfaced. Do not solve this by silently switching every queue to unbounded buffering.</p>
+          <p>Separately, make diagnostic SQLite reads distinguish <code>SQLITE_DONE</code> from step errors. Use a checked iteration helper and an injected or induced step-error test; a closed-store test alone only exercises statement preparation.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> terminal errors cannot be mistaken for spoken text under the chosen contract; delayed-consumer tests account for every finalized event; database read failures are reported rather than appearing as successful partial results.</p>
+          <p class="evidence">Evidence: <a href="Sources/SpeechPipeline/LiveSpeechAnalyzerTranscriptionSource.swift">Apple source</a>, lines 225–227 and 272–277; <a href="Sources/SpeechPipeline/SonioxTranscriptionSource.swift">Soniox source</a>, lines 50–55; <a href="Sources/Debug/DiagnosticStore.swift">DiagnosticStore.swift</a>, lines 409–420.</p>
+        </article>
+        <article class="work" id="task-2c">
+          <span class="work-id">02C · Controlled time and transport failures</span>
+          <h3>Make asynchronous tests deliberate.</h3>
+          <p>Inject a clock or narrow scheduling dependency into watchdogs and recovery. Several tests currently wait for the production three-second timeout. Advance test time explicitly and use controlled continuations for lifecycle milestones.</p>
+          <p>Add tests for cancellation at startup boundaries, mid-stream transport closure, send failure, a missing finish acknowledgement, and late events from retired providers. Retain the existing rapid-restart and interruption tests. Add a focused test seam for the concrete URLSession transport rather than assuming fake-transport tests cover its delegate and connection lifecycle.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> watchdog/recovery policy tests do not require multi-second real sleeps; cancellation and failure ordering is reproducible; the suite remains independent of microphones, credentials, and external speech services.</p>
+        </article>
+      </section>
+
+      <section class="phase" id="phase-3" aria-labelledby="phase-3-title">
+        <div class="phase-head"><span class="phase-number">Phase 03</span><span class="tag">Azure preparation</span></div>
+        <h2 id="phase-3-title">Complete the provider seams.</h2>
+        <p class="dependency">Prerequisites: keep lifecycle regression checks green. Prove the boundary with a fake second provider before adding Azure.</p>
+        <article class="work" id="task-3a">
+          <span class="work-id">03A · Typed session configuration</span>
+          <h3>Resolve settings once for each start.</h3>
+          <p>Create a typed settings snapshot that contains provider selection, capture settings, and recognition settings. Keep those concerns distinguishable within the snapshot: profanity handling is recognition configuration, while buffer size and voice processing concern capture.</p>
+          <p>Centralize preference keys, defaults, decoding, and migration. Preserve existing storage formats and when each setting takes effect. Avoid adding more independent optional parameters to <code>CaptionSession.start</code>; retain its current entry points as compatibility adapters initially.</p>
+          <p>Use one credential dependency for session construction, readiness state, and Settings. Distinguish a missing credential from a Keychain access error. Preserve the existing Keychain service and account values.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> existing stored values resolve identically; malformed values fall back explicitly; settings displayed and used at startup agree; missing-key and Keychain-error cases are testable without touching personal credentials.</p>
+        </article>
+        <article class="work" id="task-3b">
+          <span class="work-id">03B · Provider-aware construction</span>
+          <h3>Replace the Soniox-specific startup branch.</h3>
+          <p>Introduce a provider-aware factory and a small audio-input capability such as <code>SessionAudioTranscriptionSource.start(audioFrames:)</code>. Use the capability in <code>CaptionSession</code> instead of a concrete Soniox downcast. Keep background finishing a separate capability, because accepting audio and draining safely are different promises.</p>
+          <p>Thread provider identity through selection, credential lookup, source construction, active state, and diagnostics. The existing provider picker persists a value, but those production paths still hardcode Soniox. Preserve the current default and visible Soniox behavior while completing the wiring.</p>
+          <p>Keep wire protocols inside adapters. Soniox retains its token decoder, sentence accumulator, configuration, and finish handshake. Azure can choose an SDK or transport independently and keep region/endpoint configuration separate from secrets. Do not generalize the Soniox wire model into a universal network protocol.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> a fake second audio-consuming provider starts through the same session path without another concrete-type branch; the selected provider determines credentials and diagnostics; Soniox fixtures and lifecycle tests remain unchanged in outcome.</p>
+          <p class="evidence">Evidence: <a href="Sources/SpeechPipeline/CaptionSession.swift">CaptionSession.swift</a>, lines 275–304 and 571–603; <a href="Sources/UI/PreferencesView.swift">PreferencesView.swift</a>, lines 102–107; <a href="Sources/SpeechPipeline/TranscriptionSource.swift">current source contract</a>.</p>
+        </article>
+        <article class="work" id="task-3c">
+          <span class="work-id">03C · Shared provider contract tests</span>
+          <h3>Specify the behavior every adapter must provide.</h3>
+          <p>Build reusable scenarios for successful start, missing configuration, partial replacement, final append, empty updates, optional speaker information, terminal failure, cancellation, and bounded finishing. Define whether an adapter is single-use; do not accidentally promise restartability for a source whose streams have finished.</p>
+          <p>Use normalized events at the app boundary while retaining provider-specific fixtures and rich timing/token information inside the adapter or a separate evaluation event stream. Keep the UI contract small; future evaluation should not have to reconstruct provider timing from rendered strings.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> Soniox and the fake second provider pass applicable common scenarios; unsupported capabilities are explicit; app-level code does not inspect provider wire events; normal Stop still preserves the current rapid-restart contract.</p>
+        </article>
+      </section>
+
+      <section class="phase" id="phase-4" aria-labelledby="phase-4-title">
+        <div class="phase-head"><span class="phase-number">Phase 04</span><span class="tag">Highest hardware sensitivity</span></div>
+        <h2 id="phase-4-title">Unify capture before adding DSP.</h2>
+        <p class="dependency">Prerequisites: 02A capture lifecycle tests and 03B provider audio-input seam. Keep each ownership change separate from processing changes.</p>
+        <figure class="flow" aria-label="Proposed audio data flow">
+          <ol>
+            <li><span class="step">1</span><div><strong>Route policy and one capture owner</strong><small>AVAudioEngine or the macOS direct Core Audio driver; requested and active state remain distinct.</small></div></li>
+            <li><span class="step">2</span><div><strong>Owned, timed audio frames</strong><small>Stable buffer ownership, sequence/sample position, format identity, and discontinuities.</small></div></li>
+            <li><span class="step">3</span><div><strong>Optional processing chain</strong><small>Initially bypass; bounded handoff to an explicitly isolated processing worker.</small></div></li>
+            <li><span class="step">4</span><div><strong>Selected provider adapter</strong><small>Apple, Soniox, or future Azure; provider-specific conversion happens at the adapter boundary.</small></div></li>
+            <li><span class="step">5</span><div><strong>Normalized caption events → store → UI</strong><small>Keep transcript semantics stable; preserve richer events separately when evaluation needs them.</small></div></li>
+          </ol>
+          <figcaption>Only the selected provider consumes the live stream. Future recording uses explicit fan-out; multiple readers of one AsyncStream are not a broadcast mechanism.</figcaption>
+        </figure>
+        <article class="work" id="task-4a">
+          <span class="work-id">04A · Shared capture drivers</span>
+          <h3>Extract duplication without moving every responsibility at once.</h3>
+          <p>Extract the engine driver, direct macOS capture driver, buffer-copy helpers, and capture telemetry from their duplicated locations. Let both existing paths use adapters over those helpers before transferring all capture ownership to the session.</p>
+          <p>Preserve device selection, channel handling, format negotiation, requested buffer size, voice-processing fallback, and the existing rule that engine configuration and start remain adjacent with no intervening <code>await</code>. Do not normalize both pipelines to 16 kHz mono just because Soniox currently needs that format.</p>
+          <p>Once parity is established, make both providers consume the session-owned frame stream. Keep Apple speech-activity meter semantics and Soniox provider-activity semantics separate from capture itself.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> both paths use the shared drivers; failure/cancellation tests pass; provider inputs and level behavior match the previous path; physical device and route checks pass before removing the old ownership path.</p>
+        </article>
+        <article class="work" id="task-4b">
+          <span class="work-id">04B · Frame ownership and provenance</span>
+          <h3>Make gaps and buffer lifetime explicit.</h3>
+          <p>Extend the frame contract with monotonic sequence, sample start/count, capture host time, format identity, and discontinuity information. Document whether a buffer is immutable after publication or uniquely transferred to one consumer. A <code>let</code> reference to a mutable PCM buffer does not itself establish immutability.</p>
+          <p>Keep queues bounded and expose where drops occur. Distinguish capture loss from converter failure and processing backlog. Sample position should be the canonical audio timeline; diagnostics should not have to infer gaps from wall-clock timestamps.</p>
+          <p>Audit <code>@unchecked Sendable</code> wrappers at this boundary and record their safety assumptions. If a recorder is later added, use bounded explicit fan-out and account for recording loss without blocking the capture callback.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> tests verify ownership, ordering, changing formats, overflow, and discontinuity propagation; metadata addition does not change samples or provider-facing format; drops are observable at the stage where they occur.</p>
+        </article>
+        <article class="work" id="task-4c">
+          <span class="work-id">04C · Bypass processing worker</span>
+          <h3>Prove the new path before changing the signal.</h3>
+          <p>Introduce a serial processing worker outside the main actor with an explicit bounded handoff. The existing sources create main-actor-inherited tasks that perform synchronous conversion; avoid placing denoising or beamforming inside those loops or inside the real-time capture callback.</p>
+          <p>Start with an identity processor. Resolve an immutable processing profile at session start that records requested and active Apple voice processing, ordered custom stages, and configuration identity. Keep Apple voice processing selectable and preserve the current default.</p>
+          <p>Do not add VAD gating, new resampling, denoising, or altered stop-time finalization in this change. A recording/evaluation drain path may eventually need different completion semantics from the responsive UI Stop path; specify that separately.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> bypass preserves sample values, order, frame accounting, and conversion inputs; measured latency and drops remain within an agreed baseline; UI work does not execute custom processing; Stop cancels or drains workers according to the documented lifecycle.</p>
+        </article>
+        <div class="callout warm"><p><strong>Exit condition for this phase:</strong> one capture path, explicit ownership and timing, and a verified bypass worker. Improved recognition in noise is a later experimental outcome, not an acceptance claim for this refactor.</p></div>
+      </section>
+
+      <section class="phase" id="phase-5" aria-labelledby="phase-5-title">
+        <div class="phase-head"><span class="phase-number">Phase 05</span><span class="tag">Boundary enforcement</span></div>
+        <h2 id="phase-5-title">Make the stable architecture visible.</h2>
+        <p class="dependency">Prerequisites: extract logical responsibilities first. Small documentation/UI tasks can happen earlier; build-target splitting should follow the stable seams.</p>
+        <article class="work" id="task-5a">
+          <span class="work-id">05A · Smaller orchestration and views</span>
+          <h3>Give existing responsibilities a home.</h3>
+          <p>Move provider construction, microphone-configuration persistence, and watchdog/recovery scheduling out of <code>CaptionSession</code>. Retain it as the app-facing coordinator and preserve the generation guards and local-stop serialization.</p>
+          <p>Separate theme/palette presentation from provider and capture configuration in <code>UserPreferences.swift</code>. Extract microphone draft state, diagnostic export, and cohesive view sections where doing so improves ownership and testability. Use <code>CaptionScrollState</code> and <code>AudioInterruptionPolicy</code> as local examples of small policy boundaries.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> startup responsibilities can be tested independently; settings and UI behavior remain stable; extraction reduces coupling rather than merely distributing one large type across extension files.</p>
+        </article>
+        <article class="work" id="task-5b">
+          <span class="work-id">05B · Build-enforced dependencies</span>
+          <h3>Introduce a few targets, when they earn their keep.</h3>
+          <p>Start with a small dependency graph: caption/configuration contracts at the base; audio infrastructure and provider adapters depending on those contracts; orchestration and presentation composing them. Provider adapters should not depend on views or on other providers.</p>
+          <p>Do not create a package per helper. Keep <code>LarmindonKit</code> as the compatible app-facing surface and move internal implementations gradually. Update <code>Package.swift</code> and <code>Project.swift</code> together, including test resources and the widget’s shared launch-link source.</p>
+          <p>Add Periphery as a report only after indexing the actual app consumers and relevant platform targets. Review Objective-C/runtime and synthesized-code findings before promoting rules or deleting code. Maintain a short architecture document with dependency direction, capture ownership, and stop/drain semantics.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> forbidden dependencies fail to compile; both build descriptions cover the intended files/resources; existing callers continue to build; no runtime behavior is changed by the target split.</p>
+        </article>
+      </section>
+
+      <section id="validation" aria-labelledby="validation-title">
+        <p class="eyebrow">Validation &amp; rollout</p>
+        <h2 id="validation-title">Evidence appropriate to the change.</h2>
+        <div class="table-wrap">
+          <table>
+            <caption>Choose checks by the boundary being changed</caption>
+            <thead><tr><th scope="col">Change</th><th scope="col">Automated evidence</th><th scope="col">Additional validation</th></tr></thead>
+            <tbody>
+              <tr><td>Formatting / file movement</td><td>Formatter, lint, both build descriptions, affected tests.</td><td>Review the diff for unintended semantic or access-control changes.</td></tr>
+              <tr><td>Settings / credentials</td><td>Migration fixtures, invalid-value handling, injected credential states.</td><td>Upgrade an existing installation; confirm saved preferences and keys remain available.</td></tr>
+              <tr><td>Session / provider lifecycle</td><td>Controlled startup/cancellation, delayed finish, stale events, second fake provider.</td><td>Start–Stop–Start and mode switching; verify errors and activity indicators.</td></tr>
+              <tr><td>Capture / processing</td><td>Acquisition cleanup, ownership, bounded queues, format changes, identity output.</td><td>Physical iPhone/iPad and Mac capture with representative input devices and voice-processing settings.</td></tr>
+              <tr><td>Interruption / background behavior</td><td>Policy and iOS session tests; idle-only launch tests.</td><td>Physical backgrounding, interruption recovery, explicit Stop, and widget launch.</td></tr>
+              <tr><td>Custom DSP, later</td><td>Known-signal and replay checks, bounded resource use, timing/drop accounting.</td><td>Repeatable physical speech-in-noise evaluation with Apple voice-processing control conditions.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>For capture changes, include built-in microphones, a representative external input, Bluetooth where used, and the macOS virtual/aggregate path. Record requested and active processing settings, device/OS, route, and outstanding cases. A passing simulator suite cannot establish these results.</p>
+        <p>Keep commits focused: characterization tests, a behavior fix, a mechanical extraction, and a module move should be independently reviewable. Follow the repository’s checkpoint rule and stage only the files changed for that work. Run focused checks while iterating, then the relevant cross-platform gates before completing a package.</p>
+        <p>Use the previous implementation or the bypass profile as the comparison point. Avoid permanent duplicate production pipelines; transitional adapters should have a stated removal condition.</p>
+      </section>
+
+      <section id="starting-point" aria-labelledby="starting-title">
+        <p class="eyebrow">Where to begin</p>
+        <h2 id="starting-title">The first useful milestone.</h2>
+        <div class="callout">
+          <p><strong>Begin with 01A and 01B:</strong> pinned, reproducible checks plus a reviewed lint baseline. Then take 02A: a focused regression test and fix for partial-start cleanup. These form a small, useful first slice with no DSP algorithm or provider change.</p>
+        </div>
+        <p>After that, choose the next boundary according to the upcoming feature:</p>
+        <ul>
+          <li><strong>Azure comes first:</strong> complete 03A–03C. The proving step is a second fake provider passing through the existing session, before any real service integration.</li>
+          <li><strong>Audio processing comes first:</strong> complete the provider audio-input seam, then 04A–04C. The proving step is unchanged output through a single capture path and bypass worker.</li>
+          <li><strong>General maintenance continues:</strong> take 01C and selected 05A tasks as separate changes. Defer target splitting until dependency direction is clear.</li>
+        </ul>
+        <p>No new runtime dependency is required merely to begin this plan. The initial maintenance work can use the existing Swift/Xcode toolchain and a pinned development-only linter. Algorithm, SDK, and more extensive tooling dependencies should be evaluated with the feature that needs them.</p>
+      </section>
+
+      <section id="references" aria-labelledby="references-title">
+        <p class="eyebrow">Evidence &amp; references</p>
+        <h2 id="references-title">Keep the reasoning traceable.</h2>
+        <p class="small">Source links are relative to this document in the repository. Line numbers in the plan refer to audited revision <code>fe9eeb1</code> and may move as work proceeds. Tool recommendations below were checked against upstream documentation during the review.</p>
+        <ol class="reference-list">
+          <li><a href="Sources/SpeechPipeline/CaptionSession.swift">CaptionSession.swift</a> — provider construction, capture startup, generation guards, local teardown, and recovery.</li>
+          <li><a href="Sources/SpeechPipeline/AudioCaptureSession.swift">AudioCaptureSession.swift</a> and <a href="Sources/SpeechPipeline/LiveSpeechAnalyzerTranscriptionSource.swift">LiveSpeechAnalyzerTranscriptionSource.swift</a> — duplicated capture paths, frame ownership, conversion, and callback handling.</li>
+          <li><a href="Sources/SpeechPipeline/TranscriptionSource.swift">TranscriptionSource.swift</a>, <a href="Sources/SpeechPipeline/SonioxTranscriptionSource.swift">SonioxTranscriptionSource.swift</a>, and <a href="Sources/Networking/WebSocketTransport.swift">WebSocketTransport.swift</a> — existing provider and transport seams.</li>
+          <li><a href="Sources/Core/UserPreferences.swift">UserPreferences.swift</a>, <a href="Sources/Core/ProviderCredentials.swift">ProviderCredentials.swift</a>, and <a href="Sources/UI/PreferencesView.swift">PreferencesView.swift</a> — persisted settings and credential boundaries.</li>
+          <li><a href="Package.swift">Package.swift</a> and <a href="Project.swift">Project.swift</a> — the two build descriptions that must remain aligned.</li>
+          <li><a href="eval-plan.md">Existing evaluation plan</a> — context for later experiments; revalidate its assumptions against the implementation rather than treating it as completed work.</li>
+          <li><a href="https://realm.github.io/SwiftLint/cyclomatic_complexity.html">SwiftLint cyclomatic complexity</a> — built-in metric, warning/error thresholds, and rule behavior.</li>
+          <li><a href="https://github.com/realm/SwiftLint#configuration">SwiftLint configuration</a> — explicit rule sets, baselines, strict mode, and reporting.</li>
+          <li><a href="https://github.com/swiftlang/swift-format">swift-format</a> — bundled formatter, configuration, and check-only linting.</li>
+          <li><a href="https://github.com/peripheryapp/periphery">Periphery</a> — unused-code analysis, target/index coverage requirements, and runtime/synthesized-code limitations.</li>
+          <li><a href="https://learn.microsoft.com/en-us/azure/ai-services/speech-service/how-to-use-audio-input-streams">Microsoft Speech SDK audio input streams</a> — supports supplying audio to recognition separately from microphone ownership.</li>
+        </ol>
+      </section>
+
+      <footer>
+        <p>Larmindon · Maintenance &amp; modularization plan · 18 September 2026<br>This document records proposed work and an audit snapshot. Update task status and validation evidence explicitly as individual changes are completed.</p>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
