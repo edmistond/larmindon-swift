@@ -14,7 +14,7 @@ final class CaptionDisplayLayoutTests: XCTestCase {
         var finalized: [TranscriptChunk] = []
         var volatile: [VolatileCaption] = []
         var height: CGFloat = 560
-        var fontSize: Double = 34
+        var fontSize: Double = 38
     }
 
     private struct FixtureView: View {

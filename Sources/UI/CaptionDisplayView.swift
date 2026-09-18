@@ -12,7 +12,7 @@ public struct CaptionDisplayView: View {
     public let speakerColors: [Color]?
 
     @Environment(\.colorScheme) private var colorScheme
-    @State private var scrollState = CaptionScrollState()
+    @State private var scrollState: CaptionScrollState
     @State private var scrollPosition = ScrollPosition(edge: .top)
 
     // Volatile text stays nearly as bright as finalized text. It is the newest and most
@@ -29,9 +29,10 @@ public struct CaptionDisplayView: View {
     // between utterances, widest at a speaker change — so turn-taking is visible as shape
     // before any text is read. On-device transcription reports no speaker, which collapses
     // every line into one block and leaves the first two tiers doing the work.
-    private var textLineSpacing: CGFloat { CGFloat(fontSize * 0.16) }
-    private var utteranceSpacing: CGFloat { CGFloat(fontSize * 0.5) }
-    private var speakerBlockSpacing: CGFloat { CGFloat(fontSize * 0.6) }
+    private var layoutMetrics: CaptionLayoutMetrics { CaptionLayoutMetrics(fontSize: CGFloat(fontSize)) }
+    private var textLineSpacing: CGFloat { layoutMetrics.lineSpacing }
+    private var utteranceSpacing: CGFloat { layoutMetrics.utteranceSpacing }
+    private var speakerBlockSpacing: CGFloat { layoutMetrics.speakerBlockSpacing }
 
     public init(
         finalizedChunks: [TranscriptChunk],
@@ -43,6 +44,7 @@ public struct CaptionDisplayView: View {
         self.finalizedChunks = finalizedChunks
         self.volatileCaptions = volatileCaptions
         self.fontSize = fontSize
+        self._scrollState = State(initialValue: CaptionScrollState(fontSize: fontSize))
         self.textColor = textColor
         self.speakerColors = speakerColors
     }
@@ -91,7 +93,7 @@ public struct CaptionDisplayView: View {
                     .id(caption.id)
                 }
             }
-            .padding(.vertical, 24)
+            .padding(.vertical, layoutMetrics.verticalPadding)
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
@@ -113,12 +115,13 @@ public struct CaptionDisplayView: View {
         .onScrollGeometryChange(for: CaptionScrollGeometry.self) { geometry in
             CaptionScrollGeometry(geometry)
         } action: { _, geometry in
-            scrollState.updateGeometry(geometry)
+            scrollState.updateGeometry(geometry, fontSize: fontSize)
         }
         .onScrollPhaseChange { _, phase, context in
-            scrollState.updateInteraction(
-                isUserScrolling: phase == .tracking || phase == .interacting || phase == .decelerating,
-                geometry: CaptionScrollGeometry(context.geometry)
+            scrollState.updatePhase(
+                phase,
+                geometry: CaptionScrollGeometry(context.geometry),
+                fontSize: fontSize
             )
         }
         .onChange(of: isEmpty) { _, empty in
