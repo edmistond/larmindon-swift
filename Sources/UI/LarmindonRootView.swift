@@ -33,7 +33,8 @@ public struct LarmindonRootView: View {
     @AppStorage(TranscriptionPreference.modeStorageKey)
     private var transcriptionModeRaw = TranscriptionMode.onDevice.rawValue
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
-    @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
+    @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames
+        .defaultValue
     @AppStorage(VoiceProcessingPreference.storageKey)
     private var voiceProcessingEnabled = VoiceProcessingPreference.defaultValue
     @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
@@ -302,10 +303,13 @@ public struct LarmindonRootView: View {
                 startCaptionsIfIdle()
             }
         } label: {
-            Label(session.store.isRunning ? "Stop Captions" : "Start Captions", systemImage: session.store.isRunning ? "stop.fill" : "play.fill")
-                .fontWeight(.semibold)
-                .frame(maxWidth: .infinity, minHeight: comfortableControlHeight)
-                .contentShape(Rectangle())
+            Label(
+                session.store.isRunning ? "Stop Captions" : "Start Captions",
+                systemImage: session.store.isRunning ? "stop.fill" : "play.fill"
+            )
+            .fontWeight(.semibold)
+            .frame(maxWidth: .infinity, minHeight: comfortableControlHeight)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.borderedProminent)
         .tint(session.store.isRunning ? .red : (activeTheme.palette.tint ?? .accentColor))
@@ -336,7 +340,7 @@ public struct LarmindonRootView: View {
                 session.inputSelectionDidChange()
             }
         )
-            .fixedSize()
+        .fixedSize()
         #else
         InputSelectionMenu(
             routeManager: session.routeManager,
@@ -350,7 +354,7 @@ public struct LarmindonRootView: View {
     #if os(iOS)
     private var microphonePanelSheet: some View {
         MicrophonePanelView(session: session)
-        .presentationDetents([.medium, .large])
+            .presentationDetents([.medium, .large])
     }
 
     private var settingsSheet: some View {

@@ -9,7 +9,7 @@ let package = Package(
         .macOS(.v26),
     ],
     products: [
-        .library(name: "LarmindonKit", targets: ["LarmindonKit"]),
+        .library(name: "LarmindonKit", targets: ["LarmindonKit"])
     ],
     targets: [
         .target(

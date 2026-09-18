@@ -147,7 +147,8 @@ struct CaptionScrollState {
             // Carry the actual drag direction into the coast, rather than interpreting
             // the bottom's elastic rebound as a new upward gesture.
             updateGeometry(geometry, fontSize: fontSize)
-            isCoastingUp = newPhase == .decelerating && phase == .interacting
+            isCoastingUp =
+                newPhase == .decelerating && phase == .interacting
                 && directionalDragTravel < -1
             phase = newPhase
             furthestDragOffset = isCoastingUp ? geometry.clampedOffset : nil
@@ -164,7 +165,8 @@ struct CaptionScrollState {
         }
 
         guard isPinnedToBottom,
-              abs(geometry.maximumOffset - geometry.offsetFromTop) > 1 else { return nil }
+            abs(geometry.maximumOffset - geometry.offsetFromTop) > 1
+        else { return nil }
         return CaptionScrollRequest(target: .bottom, geometry: geometry)
     }
 }

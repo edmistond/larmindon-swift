@@ -28,8 +28,9 @@ public struct KeychainProviderCredentialStore: ProviderCredentialStore {
             return nil
         }
         guard status == errSecSuccess,
-              let data = result as? Data,
-              let credential = String(data: data, encoding: .utf8) else {
+            let data = result as? Data,
+            let credential = String(data: data, encoding: .utf8)
+        else {
             throw ProviderCredentialError.keychain(status)
         }
         return credential

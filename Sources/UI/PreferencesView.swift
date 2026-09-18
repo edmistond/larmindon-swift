@@ -11,7 +11,8 @@ public struct PreferencesView: View {
     @AppStorage(ThemePreference.darkThemeStorageKey)
     private var darkThemeRaw = ThemePreference.defaultDarkTheme.rawValue
     @AppStorage("vadSensitivity") private var vadSensitivityRaw = VADSensitivity.medium.rawValue
-    @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames.defaultValue
+    @AppStorage(AudioCaptureBufferFrames.storageKey) private var audioBufferFrameCount = AudioCaptureBufferFrames
+        .defaultValue
     @AppStorage(VoiceProcessingPreference.storageKey)
     private var voiceProcessingEnabled = VoiceProcessingPreference.defaultValue
     @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
@@ -88,15 +89,19 @@ public struct PreferencesView: View {
 
                 #if os(iOS)
                 Toggle("Voice processing", isOn: $voiceProcessingEnabled)
-                Text("Uses Apple Voice Processing I/O, including system-managed gain correction. Takes effect the next time capture starts.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Uses Apple Voice Processing I/O, including system-managed gain correction. Takes effect the next time capture starts."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 #endif
 
                 Toggle("Filter profanity on device", isOn: $profanityFilterEnabled)
-                Text("Replaces profane words in Apple’s on-device results. Takes effect the next time on-device captioning starts.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Replaces profane words in Apple’s on-device results. Takes effect the next time on-device captioning starts."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Section("Server Transcription") {

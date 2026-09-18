@@ -142,10 +142,11 @@ public final class CaptionSession {
         profanityFilterEnabled: Bool? = nil
     ) -> Bool {
         guard canStartIfIdle else { return false }
-        start(kind: kind, mode: mode, vadSensitivity: vadSensitivity,
-              audioBufferFrameCount: audioBufferFrameCount,
-              voiceProcessingEnabled: voiceProcessingEnabled,
-              profanityFilterEnabled: profanityFilterEnabled)
+        start(
+            kind: kind, mode: mode, vadSensitivity: vadSensitivity,
+            audioBufferFrameCount: audioBufferFrameCount,
+            voiceProcessingEnabled: voiceProcessingEnabled,
+            profanityFilterEnabled: profanityFilterEnabled)
         return true
     }
 
@@ -247,7 +248,8 @@ public final class CaptionSession {
             resultTask = Task { @MainActor [weak self, source] in
                 for await result in source.results {
                     guard let self, !Task.isCancelled,
-                          generation == self.transitionGeneration else { return }
+                        generation == self.transitionGeneration
+                    else { return }
                     self.handle(result)
                 }
             }
@@ -256,7 +258,8 @@ public final class CaptionSession {
             levelTask = Task { @MainActor [weak self, source] in
                 for await snapshot in source.levelUpdates {
                     guard let self, !Task.isCancelled,
-                          generation == self.transitionGeneration else { return }
+                        generation == self.transitionGeneration
+                    else { return }
                     self.receiveAudioLevels(snapshot)
                 }
             }
@@ -274,7 +277,8 @@ public final class CaptionSession {
 
             guard generation == transitionGeneration, !Task.isCancelled else { return }
             if sourceKind == .live, mode == .server,
-               let sonioxSource = source as? SonioxTranscriptionSource {
+                let sonioxSource = source as? SonioxTranscriptionSource
+            {
                 let capture = AudioCaptureSession(
                     inputDeviceID: routeManager.preferredInputDeviceID,
                     bufferFrameCount: audioBufferFrameCount,
@@ -285,7 +289,8 @@ public final class CaptionSession {
                 captureLevelTask = Task {
                     for await snapshot in capture.levelUpdates {
                         guard !Task.isCancelled,
-                              generation == self.transitionGeneration else { return }
+                            generation == self.transitionGeneration
+                        else { return }
                         self.receiveAudioLevels(snapshot)
                     }
                 }
@@ -293,7 +298,8 @@ public final class CaptionSession {
                     audioFrames: capture.frames
                 )
                 guard generation == transitionGeneration,
-                      !Task.isCancelled else {
+                    !Task.isCancelled
+                else {
                     await sonioxSource.stop()
                     return
                 }
@@ -309,7 +315,8 @@ public final class CaptionSession {
             }
 
             guard generation == transitionGeneration,
-                  !Task.isCancelled else {
+                !Task.isCancelled
+            else {
                 await source.stop()
                 return
             }
@@ -587,9 +594,11 @@ public final class CaptionSession {
                     profanityFilterEnabled: profanityFilterEnabled
                 )
             case .server:
-                guard let key = try credentialStore.credential(
-                    for: .soniox
-                ), !key.isEmpty else {
+                guard
+                    let key = try credentialStore.credential(
+                        for: .soniox
+                    ), !key.isEmpty
+                else {
                     throw TranscriptionSourceError.unavailable(
                         "Soniox API key not configured. Add it in Settings."
                     )
@@ -615,8 +624,10 @@ public final class CaptionSession {
     private func adoptMicrophoneConfigurationForCurrentInput() {
         #if os(iOS)
         routeManager.refresh()
-        guard let inputPortID = routeManager.preferredInputID
-            ?? routeManager.currentRouteInputs.first?.id else {
+        guard
+            let inputPortID = routeManager.preferredInputID
+                ?? routeManager.currentRouteInputs.first?.id
+        else {
             return
         }
 
@@ -632,7 +643,8 @@ public final class CaptionSession {
         storedConfiguration: MicrophoneCaptureConfiguration?
     ) -> MicrophoneCaptureConfiguration {
         guard let storedConfiguration,
-              storedConfiguration.inputPortID == inputPortID else {
+            storedConfiguration.inputPortID == inputPortID
+        else {
             return MicrophoneCaptureConfiguration(inputPortID: inputPortID)
         }
         return storedConfiguration
@@ -694,13 +706,15 @@ public final class CaptionSession {
         guard snapshot != audioLevels else { return }
 
         let now = ContinuousClock.now
-        let isLevelOnlyChange = snapshot.speechDetected == audioLevels.speechDetected
+        let isLevelOnlyChange =
+            snapshot.speechDetected == audioLevels.speechDetected
             && snapshot.vadState == audioLevels.vadState
             && snapshot.observedCallbackFrameLength == audioLevels.observedCallbackFrameLength
 
         if isLevelOnlyChange,
-           let lastLevelOnlyPublish,
-           now - lastLevelOnlyPublish < Self.levelOnlyPublishInterval {
+            let lastLevelOnlyPublish,
+            now - lastLevelOnlyPublish < Self.levelOnlyPublishInterval
+        {
             return
         }
 
@@ -715,16 +729,18 @@ public final class CaptionSession {
         silentCaptureTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(3))
             guard let self,
-                  !Task.isCancelled,
-                  generation == transitionGeneration,
-                  store.isRunning,
-                  !didReceiveAudioSinceStart else {
+                !Task.isCancelled,
+                generation == transitionGeneration,
+                store.isRunning,
+                !didReceiveAudioSinceStart
+            else {
                 return
             }
 
             let inputName = routeManager.currentInputName
             #if os(iOS)
-            let warning = requestedVoiceProcessingEnabled
+            let warning =
+                requestedVoiceProcessingEnabled
                 ? """
                 No audio is arriving from “\(inputName)”. Try turning off voice \
                 processing in Settings, then Stop and Start.
@@ -777,8 +793,8 @@ public final class CaptionSession {
                 routeManager.currentRouteInputs.first?.name ?? "none",
             "preferred_input_name":
                 routeManager.availableInputs
-                    .first { $0.id == routeManager.preferredInputID }?
-                    .name ?? "none",
+                .first { $0.id == routeManager.preferredInputID }?
+                .name ?? "none",
             "outputs": routeManager.currentRouteOutputs
                 .map {
                     "\(DiagnosticRedaction.identifier($0.id)):\($0.kind)"
@@ -1018,10 +1034,11 @@ private enum MicrophoneConfigurationStore {
 
     static func load(inputPortID: String) -> MicrophoneCaptureConfiguration? {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let configurations = try? JSONDecoder().decode(
+            let configurations = try? JSONDecoder().decode(
                 [String: MicrophoneCaptureConfiguration].self,
                 from: data
-              ) else {
+            )
+        else {
             return nil
         }
         return configurations[inputPortID]
@@ -1030,10 +1047,11 @@ private enum MicrophoneConfigurationStore {
     static func save(_ configuration: MicrophoneCaptureConfiguration, inputPortID: String) {
         var configurations: [String: MicrophoneCaptureConfiguration] = [:]
         if let data = UserDefaults.standard.data(forKey: storageKey),
-           let stored = try? JSONDecoder().decode(
-            [String: MicrophoneCaptureConfiguration].self,
-            from: data
-           ) {
+            let stored = try? JSONDecoder().decode(
+                [String: MicrophoneCaptureConfiguration].self,
+                from: data
+            )
+        {
             configurations = stored
         }
         configurations[inputPortID] = configuration

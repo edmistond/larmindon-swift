@@ -231,7 +231,7 @@ public struct SonioxProviderError: LocalizedError, Equatable, Sendable {
     public var retryDisposition: SonioxRetryDisposition {
         switch type {
         case "request_timeout", "max_duration_reached", "limit_exceeded",
-             "internal_error", "service_unavailable":
+            "internal_error", "service_unavailable":
             return .newRequestMaySucceed
         default:
             return .doNotRetry
@@ -317,22 +317,26 @@ struct SonioxWireResponse: Decodable {
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        tokens = try container.decodeIfPresent(
-            [SonioxToken].self,
-            forKey: .tokens
-        ) ?? []
-        finalAudioProcessedMilliseconds = try container.decodeIfPresent(
-            Int.self,
-            forKey: .finalAudioProcessedMilliseconds
-        ) ?? 0
-        totalAudioProcessedMilliseconds = try container.decodeIfPresent(
-            Int.self,
-            forKey: .totalAudioProcessedMilliseconds
-        ) ?? 0
-        finished = try container.decodeIfPresent(
-            Bool.self,
-            forKey: .finished
-        ) ?? false
+        tokens =
+            try container.decodeIfPresent(
+                [SonioxToken].self,
+                forKey: .tokens
+            ) ?? []
+        finalAudioProcessedMilliseconds =
+            try container.decodeIfPresent(
+                Int.self,
+                forKey: .finalAudioProcessedMilliseconds
+            ) ?? 0
+        totalAudioProcessedMilliseconds =
+            try container.decodeIfPresent(
+                Int.self,
+                forKey: .totalAudioProcessedMilliseconds
+            ) ?? 0
+        finished =
+            try container.decodeIfPresent(
+                Bool.self,
+                forKey: .finished
+            ) ?? false
         errorCode = try container.decodeIfPresent(Int.self, forKey: .errorCode)
         errorType = try container.decodeIfPresent(String.self, forKey: .errorType)
         errorMessage = try container.decodeIfPresent(

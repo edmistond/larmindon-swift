@@ -82,7 +82,7 @@ final class CaptionStoreTests: XCTestCase {
             CaptionSegment(text: "Answer.", speakerID: "2"),
         ])
         store.replaceVolatile([
-            CaptionSegment(text: "Follow-up.", speakerID: "1"),
+            CaptionSegment(text: "Follow-up.", speakerID: "1")
         ])
 
         XCTAssertEqual(

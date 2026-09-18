@@ -85,7 +85,8 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertFalse(isDirectory.boolValue)
         XCTAssertEqual(bundleURL.pathExtension, "zip")
 
-        let size = try FileManager.default
+        let size =
+            try FileManager.default
             .attributesOfItem(atPath: bundleURL.path)[.size] as? Int ?? 0
         XCTAssertGreaterThan(size, 0)
     }
@@ -147,7 +148,7 @@ final class DiagnosticsTests: XCTestCase {
                 sessionID: UUID(),
                 category: "lifecycle",
                 name: "did_enter_background"
-            ),
+            )
         ])
         await earlier.close()
 

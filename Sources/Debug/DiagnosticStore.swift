@@ -84,7 +84,8 @@ public actor DiagnosticStore {
             nil
         )
         guard result == SQLITE_OK, let handle else {
-            let message = handle.map { String(cString: sqlite3_errmsg($0)) }
+            let message =
+                handle.map { String(cString: sqlite3_errmsg($0)) }
                 ?? "code \(result)"
             sqlite3_close_v2(handle)
             throw DiagnosticStoreError.open(message)
@@ -225,11 +226,12 @@ public actor DiagnosticStore {
     /// of a blob after the fact.
     static func encodeFields(_ fields: [String: String]) -> String {
         guard !fields.isEmpty,
-              let data = try? JSONSerialization.data(
+            let data = try? JSONSerialization.data(
                 withJSONObject: fields,
                 options: [.sortedKeys]
-              ),
-              let json = String(data: data, encoding: .utf8) else {
+            ),
+            let json = String(data: data, encoding: .utf8)
+        else {
             return "{}"
         }
         return json
@@ -240,7 +242,8 @@ public actor DiagnosticStore {
     /// Sessions from previous launches that never recorded an end. The current session is
     /// excluded because it is, by definition, still running.
     public func sessionsEndedUnexpectedly(excluding currentSessionID: String) throws
-        -> [DiagnosticSessionSummary] {
+        -> [DiagnosticSessionSummary]
+    {
         let statement = try prepare(
             """
             SELECT s.session_id, s.started_at, s.ended_at, s.end_reason,
@@ -301,9 +304,10 @@ public actor DiagnosticStore {
 
     static func decodeFields(_ json: String?) -> [String: String] {
         guard let json,
-              let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data)
-                as? [String: String] else {
+            let data = json.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data)
+                as? [String: String]
+        else {
             return [:]
         }
         return object
@@ -391,7 +395,8 @@ public actor DiagnosticStore {
         }
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
-              let statement else {
+            let statement
+        else {
             throw DiagnosticStoreError.sql(String(cString: sqlite3_errmsg(database)))
         }
         return statement
@@ -400,7 +405,8 @@ public actor DiagnosticStore {
     private func step(_ statement: OpaquePointer) throws {
         let result = sqlite3_step(statement)
         guard result == SQLITE_DONE || result == SQLITE_ROW else {
-            let message = database.map { String(cString: sqlite3_errmsg($0)) }
+            let message =
+                database.map { String(cString: sqlite3_errmsg($0)) }
                 ?? "code \(result)"
             throw DiagnosticStoreError.sql(message)
         }

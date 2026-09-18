@@ -68,7 +68,8 @@ final class CaptionDisplayLayoutTests: XCTestCase {
         // UIKit can remove its navigation-bar inset when the banner moves the scroll
         // view away from that edge. Compare the usable viewport, not raw insets.
         XCTAssertLessThan(viewportHeight(scroll), originalViewportHeight)
-        XCTAssertGreaterThan(scroll.convert(scroll.bounds, to: window).minY + scroll.adjustedContentInset.top, originalTop)
+        XCTAssertGreaterThan(
+            scroll.convert(scroll.bounds, to: window).minY + scroll.adjustedContentInset.top, originalTop)
         assertAtTop(scroll)
 
         session.sourceFactory = { _, _ in QuietSource() }
@@ -92,7 +93,7 @@ final class CaptionDisplayLayoutTests: XCTestCase {
         for text in [
             "I th", "I think you", "I think you can read",
             "I think you can read for another 5 minutes",
-            "I think you can read for another 5 minutes along, then it's time to go upstairs."
+            "I think you can read for another 5 minutes along, then it's time to go upstairs.",
         ] {
             fixture.volatile = [VolatileCaption(text: text, speakerID: "1")]
             await settle()
@@ -115,9 +116,10 @@ final class CaptionDisplayLayoutTests: XCTestCase {
         let scroll = try XCTUnwrap(findScrollView(in: window))
 
         for index in 0..<12 {
-            fixture.finalized.append(TranscriptChunk(
-                text: "Caption \(index). Another sentence in the conversation.", speakerID: "1"
-            ))
+            fixture.finalized.append(
+                TranscriptChunk(
+                    text: "Caption \(index). Another sentence in the conversation.", speakerID: "1"
+                ))
             await settle()
             if scroll.contentSize.height > viewportHeight(scroll) + 1 {
                 assertAtBottom(scroll)
@@ -210,8 +212,9 @@ final class CaptionDisplayLayoutTests: XCTestCase {
     }
 
     private func assertAtBottom(_ scroll: UIScrollView, file: StaticString = #filePath, line: UInt = #line) {
-        let expected = max(-scroll.adjustedContentInset.top,
-                           scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+        let expected = max(
+            -scroll.adjustedContentInset.top,
+            scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
         XCTAssertEqual(scroll.contentOffset.y, expected, accuracy: 1, file: file, line: line)
     }
 }

@@ -128,7 +128,8 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
 
         #if os(macOS)
         if let inputDeviceID,
-           MacOSAudioCaptureStrategy.forDevice(AudioDeviceID(inputDeviceID)) == .coreAudioDevice {
+            MacOSAudioCaptureStrategy.forDevice(AudioDeviceID(inputDeviceID)) == .coreAudioDevice
+        {
             usesDirectMacOSCapture = true
             directCaptureFormat = try MacOSDirectAudioDeviceCapture.captureFormat(
                 deviceID: AudioDeviceID(inputDeviceID)
@@ -144,7 +145,8 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
         // block awaits, so the engine must not be mutated yet: configuring the input node
         // and starting the engine have to stay adjacent, or an intervening HAL change
         // invalidates the configuration and `start()` fails with -10875.
-        let hintFormat = directCaptureFormat
+        let hintFormat =
+            directCaptureFormat
             ?? selectedDeviceFormat
             ?? inputNode.outputFormat(forBus: 0)
 
@@ -167,10 +169,11 @@ public final class LiveSpeechAnalyzerTranscriptionSource: TranscriptionSource {
 
         let modules: [any SpeechModule] = [detector, transcriber]
         let analyzer = SpeechAnalyzer(modules: modules)
-        let analysisFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
-            compatibleWith: modules,
-            considering: hintFormat
-        ) ?? hintFormat
+        let analysisFormat =
+            await SpeechAnalyzer.bestAvailableAudioFormat(
+                compatibleWith: modules,
+                considering: hintFormat
+            ) ?? hintFormat
         // The real capture format is resolved later and may differ from the hint; the
         // converter re-creates itself whenever its input format changes, so conversion to
         // `analysisFormat` holds either way.
@@ -530,7 +533,8 @@ enum MacOSAudioCaptureStrategy: Equatable {
         // rate and engine start fails with kAudioUnitErr_FormatNotSupported. Read any
         // other device directly instead.
         if let defaultInputDeviceID = macOSDefaultInputDeviceID(),
-           deviceID != defaultInputDeviceID {
+            deviceID != defaultInputDeviceID
+        {
             return .coreAudioDevice
         }
 
@@ -586,12 +590,14 @@ private final class MacOSDirectAudioDeviceCapture: @unchecked Sendable {
     static func captureFormat(deviceID: AudioDeviceID) throws -> AVAudioFormat {
         try validateInputStreamFormats(deviceID: deviceID)
         let sampleRate = try macOSInputDeviceNominalSampleRate(deviceID: deviceID)
-        guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: sampleRate,
-            channels: 1,
-            interleaved: false
-        ) else {
+        guard
+            let format = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: sampleRate,
+                channels: 1,
+                interleaved: false
+            )
+        else {
             throw TranscriptionSourceError.unavailable(
                 "Could not build direct Core Audio format for macOS audio device \(deviceID)"
             )
@@ -610,10 +616,12 @@ private final class MacOSDirectAudioDeviceCapture: @unchecked Sendable {
             deviceID,
             ioQueue
         ) { [captureFormat, sink] _, inputData, _, _, _ in
-            guard let buffer = Self.makeMonoBuffer(
-                from: inputData,
-                format: captureFormat
-            ) else {
+            guard
+                let buffer = Self.makeMonoBuffer(
+                    from: inputData,
+                    format: captureFormat
+                )
+            else {
                 return
             }
             sink.handle(buffer: buffer)
@@ -681,8 +689,9 @@ private final class MacOSDirectAudioDeviceCapture: @unchecked Sendable {
 
             let requiredFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked
             guard format.mFormatID == kAudioFormatLinearPCM,
-                  format.mBitsPerChannel == 32,
-                  format.mFormatFlags & requiredFlags == requiredFlags else {
+                format.mBitsPerChannel == 32,
+                format.mFormatFlags & requiredFlags == requiredFlags
+            else {
                 throw TranscriptionSourceError.unavailable(
                     "Direct Core Audio capture requires 32-bit float PCM input for macOS audio device \(deviceID)"
                 )
@@ -756,13 +765,14 @@ private final class MacOSDirectAudioDeviceCapture: @unchecked Sendable {
             )
         }
         guard let frameCount = sources.map(\.frameCount).min(),
-              frameCount > 0,
-              frameCount <= Int(UInt32.max),
-              let outputBuffer = AVAudioPCMBuffer(
-                  pcmFormat: format,
-                  frameCapacity: AVAudioFrameCount(frameCount)
-              ),
-              let output = outputBuffer.floatChannelData?[0] else {
+            frameCount > 0,
+            frameCount <= Int(UInt32.max),
+            let outputBuffer = AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: AVAudioFrameCount(frameCount)
+            ),
+            let output = outputBuffer.floatChannelData?[0]
+        else {
             return nil
         }
 
@@ -793,12 +803,14 @@ private func macOSInputDeviceCaptureFormat(deviceID: AudioDeviceID) throws -> AV
     let sampleRate = try macOSInputDeviceNominalSampleRate(deviceID: deviceID)
     let channelCount = try macOSInputDeviceInputChannelCount(deviceID: deviceID)
 
-    guard let format = AVAudioFormat(
-        commonFormat: .pcmFormatFloat32,
-        sampleRate: sampleRate,
-        channels: channelCount,
-        interleaved: false
-    ) else {
+    guard
+        let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sampleRate,
+            channels: channelCount,
+            interleaved: false
+        )
+    else {
         throw TranscriptionSourceError.unavailable(
             "Could not build input format for macOS audio device \(deviceID): \(channelCount) ch at \(sampleRate) Hz"
         )
@@ -961,10 +973,12 @@ private final class DynamicAudioBufferConverter: @unchecked Sendable {
         let outputCapacity = AVAudioFrameCount(
             max(1, ceil(Double(buffer.frameLength) * sampleRateRatio) + 16)
         )
-        guard let outputBuffer = AVAudioPCMBuffer(
-            pcmFormat: outputFormat,
-            frameCapacity: outputCapacity
-        ) else {
+        guard
+            let outputBuffer = AVAudioPCMBuffer(
+                pcmFormat: outputFormat,
+                frameCapacity: outputCapacity
+            )
+        else {
             return nil
         }
 
@@ -1012,10 +1026,8 @@ private final class AudioConverterInputProvider: @unchecked Sendable {
 
 private extension AVAudioFormat {
     func isEquivalent(to other: AVAudioFormat) -> Bool {
-        commonFormat == other.commonFormat &&
-            sampleRate == other.sampleRate &&
-            channelCount == other.channelCount &&
-            isInterleaved == other.isInterleaved
+        commonFormat == other.commonFormat && sampleRate == other.sampleRate && channelCount == other.channelCount
+            && isInterleaved == other.isInterleaved
     }
 }
 
@@ -1131,7 +1143,8 @@ extension AVAudioPCMBuffer {
 
         for index in 0..<min(sourceBuffers.count, destinationBuffers.count) {
             guard let source = sourceBuffers[index].mData,
-                  let destination = destinationBuffers[index].mData else {
+                let destination = destinationBuffers[index].mData
+            else {
                 continue
             }
             memcpy(destination, source, Int(sourceBuffers[index].mDataByteSize))

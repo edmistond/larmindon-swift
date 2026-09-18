@@ -190,7 +190,8 @@ public struct CaptionDisplayView: View {
             isBlockStart = true
         }
 
-        let isBlockEnd = index == volatileCaptions.count - 1
+        let isBlockEnd =
+            index == volatileCaptions.count - 1
             || volatileCaptions[index + 1].speakerID != speakerID
 
         return BlockPosition(isBlockStart: isBlockStart, isBlockEnd: isBlockEnd)

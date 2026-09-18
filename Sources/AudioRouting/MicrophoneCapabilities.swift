@@ -246,7 +246,7 @@ private extension MicrophoneCapabilityMonitor {
                 MicrophoneCapabilityItem(
                     label: "Data sources",
                     value: "Not reported for this route"
-                ),
+                )
             ]
         } else {
             dataSourceItems = dataSources.flatMap { source in
@@ -296,13 +296,14 @@ private extension MicrophoneCapabilityMonitor {
             MicrophoneCapabilityItem(label: "Maximum channels", value: "\(session.maximumInputNumberOfChannels)"),
             MicrophoneCapabilityItem(label: "Requested channels", value: "\(session.preferredInputNumberOfChannels)"),
         ]
-        channelItems.append(contentsOf: channels.map { channel in
-            MicrophoneCapabilityItem(
-                id: "channel-\(channel.channelNumber)",
-                label: "Channel \(channel.channelNumber)",
-                value: channel.channelName
-            )
-        })
+        channelItems.append(
+            contentsOf: channels.map { channel in
+                MicrophoneCapabilityItem(
+                    id: "channel-\(channel.channelNumber)",
+                    label: "Channel \(channel.channelNumber)",
+                    value: channel.channelName
+                )
+            })
 
         let activeOrientation = stereoOrientationDescription(session.inputOrientation)
         let preferredOrientation = stereoOrientationDescription(session.preferredInputOrientation)
@@ -452,41 +453,46 @@ private extension MicrophoneCapabilityMonitor {
 #if os(macOS)
 private extension MicrophoneCapabilityMonitor {
     static func macOSSnapshot(deviceID: AudioDeviceID) -> MicrophoneCapabilitySnapshot {
-        let name = stringProperty(
-            deviceID: deviceID,
-            selector: kAudioObjectPropertyName,
-            scope: kAudioObjectPropertyScopeGlobal
-        ) ?? "Unknown Input"
-        let uid = stringProperty(
-            deviceID: deviceID,
-            selector: kAudioDevicePropertyDeviceUID,
-            scope: kAudioObjectPropertyScopeGlobal
-        ) ?? "Unavailable"
-        let manufacturer = stringProperty(
-            deviceID: deviceID,
-            selector: kAudioObjectPropertyManufacturer,
-            scope: kAudioObjectPropertyScopeGlobal
-        ) ?? "Unavailable"
+        let name =
+            stringProperty(
+                deviceID: deviceID,
+                selector: kAudioObjectPropertyName,
+                scope: kAudioObjectPropertyScopeGlobal
+            ) ?? "Unknown Input"
+        let uid =
+            stringProperty(
+                deviceID: deviceID,
+                selector: kAudioDevicePropertyDeviceUID,
+                scope: kAudioObjectPropertyScopeGlobal
+            ) ?? "Unavailable"
+        let manufacturer =
+            stringProperty(
+                deviceID: deviceID,
+                selector: kAudioObjectPropertyManufacturer,
+                scope: kAudioObjectPropertyScopeGlobal
+            ) ?? "Unavailable"
         let channelCount = inputChannelCount(deviceID: deviceID)
         let dataSources = dataSourceDescriptions(deviceID: deviceID)
 
         var channelItems = [
-            MicrophoneCapabilityItem(label: "Input channels", value: "\(channelCount)"),
+            MicrophoneCapabilityItem(label: "Input channels", value: "\(channelCount)")
         ]
         if channelCount > 0 {
-            channelItems.append(contentsOf: (1...channelCount).map { channel in
-                let channelName = stringProperty(
-                    deviceID: deviceID,
-                    selector: kAudioObjectPropertyElementName,
-                    scope: kAudioDevicePropertyScopeInput,
-                    element: AudioObjectPropertyElement(channel)
-                ) ?? "Not reported"
-                return MicrophoneCapabilityItem(
-                    id: "channel-\(channel)",
-                    label: "Channel \(channel)",
-                    value: channelName
-                )
-            })
+            channelItems.append(
+                contentsOf: (1...channelCount).map { channel in
+                    let channelName =
+                        stringProperty(
+                            deviceID: deviceID,
+                            selector: kAudioObjectPropertyElementName,
+                            scope: kAudioDevicePropertyScopeInput,
+                            element: AudioObjectPropertyElement(channel)
+                        ) ?? "Not reported"
+                    return MicrophoneCapabilityItem(
+                        id: "channel-\(channel)",
+                        label: "Channel \(channel)",
+                        value: channelName
+                    )
+                })
         }
 
         return MicrophoneCapabilitySnapshot(
@@ -638,7 +644,8 @@ private extension MicrophoneCapabilityMonitor {
         )
         var dataSize: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize) == noErr,
-              let storage = malloc(Int(dataSize)) else {
+            let storage = malloc(Int(dataSize))
+        else {
             return 0
         }
         defer { free(storage) }
@@ -677,8 +684,9 @@ private extension MicrophoneCapabilityMonitor {
         var dataSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         var address = AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: element)
         guard AudioObjectHasProperty(deviceID, &address),
-              AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &result) == noErr,
-              let result else {
+            AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &result) == noErr,
+            let result
+        else {
             return nil
         }
         return result.takeRetainedValue() as String
@@ -783,8 +791,9 @@ private extension MicrophoneCapabilityMonitor {
         )
         var dataSize: UInt32 = 0
         guard AudioObjectHasProperty(deviceID, &address),
-              AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize) == noErr,
-              dataSize > 0 else {
+            AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize) == noErr,
+            dataSize > 0
+        else {
             return []
         }
         let count = Int(dataSize) / MemoryLayout<T>.stride

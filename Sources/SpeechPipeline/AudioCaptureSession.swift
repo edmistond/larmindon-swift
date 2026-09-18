@@ -51,15 +51,13 @@ public final class AudioCaptureSession {
         self.diagnostics = diagnostics
         self.telemetry = AudioCaptureTelemetry(diagnostics: diagnostics)
 
-        var frameContinuation:
-            AsyncStream<CapturedAudioFrame>.Continuation!
+        var frameContinuation: AsyncStream<CapturedAudioFrame>.Continuation!
         frames = AsyncStream(bufferingPolicy: .bufferingNewest(32)) {
             frameContinuation = $0
         }
         self.frameContinuation = frameContinuation
 
-        var levelContinuation:
-            AsyncStream<AudioLevelSnapshot>.Continuation!
+        var levelContinuation: AsyncStream<AudioLevelSnapshot>.Continuation!
         levelUpdates = AsyncStream(bufferingPolicy: .bufferingNewest(16)) {
             levelContinuation = $0
         }
@@ -77,8 +75,9 @@ public final class AudioCaptureSession {
 
         #if os(macOS)
         if let inputDeviceID,
-           MacOSAudioCaptureStrategy.forDevice(AudioDeviceID(inputDeviceID))
-                == .coreAudioDevice {
+            MacOSAudioCaptureStrategy.forDevice(AudioDeviceID(inputDeviceID))
+                == .coreAudioDevice
+        {
             strategy = "core_audio_device"
             activeVoiceProcessingEnabled = false
             captureFormat = try SharedMacOSAudioDeviceCapture.captureFormat(
@@ -319,9 +318,10 @@ final class ServerAudioLevelReporter: @unchecked Sendable {
         }
         lastPublishedAt = timestamp
 
-        let isProviderActive = lastProviderActivityAt.map {
-            timestamp - $0 < activityWindow
-        } ?? false
+        let isProviderActive =
+            lastProviderActivityAt.map {
+                timestamp - $0 < activityWindow
+            } ?? false
 
         return AudioLevelSnapshot(
             rawInputLevel: smoothedLevel,
@@ -380,12 +380,14 @@ private final class SharedMacOSAudioDeviceCapture: @unchecked Sendable {
         let sampleRate = try sharedMacOSNominalSampleRate(
             deviceID: deviceID
         )
-        guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: sampleRate,
-            channels: 1,
-            interleaved: false
-        ) else {
+        guard
+            let format = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: sampleRate,
+                channels: 1,
+                interleaved: false
+            )
+        else {
             throw TranscriptionSourceError.unavailable(
                 "Could not build direct Core Audio capture format."
             )
@@ -402,10 +404,12 @@ private final class SharedMacOSAudioDeviceCapture: @unchecked Sendable {
             deviceID,
             ioQueue
         ) { [captureFormat, onBuffer] _, inputData, _, _, _ in
-            guard let buffer = Self.makeMonoBuffer(
-                from: inputData,
-                format: captureFormat
-            ) else {
+            guard
+                let buffer = Self.makeMonoBuffer(
+                    from: inputData,
+                    format: captureFormat
+                )
+            else {
                 return
             }
             onBuffer(buffer)
@@ -469,9 +473,10 @@ private final class SharedMacOSAudioDeviceCapture: @unchecked Sendable {
             let requiredFlags =
                 kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked
             guard status == noErr,
-                  format.mFormatID == kAudioFormatLinearPCM,
-                  format.mBitsPerChannel == 32,
-                  format.mFormatFlags & requiredFlags == requiredFlags else {
+                format.mFormatID == kAudioFormatLinearPCM,
+                format.mBitsPerChannel == 32,
+                format.mFormatFlags & requiredFlags == requiredFlags
+            else {
                 throw TranscriptionSourceError.unavailable(
                     "Direct Core Audio capture requires packed 32-bit float PCM."
                 )
@@ -530,11 +535,13 @@ private final class SharedMacOSAudioDeviceCapture: @unchecked Sendable {
         let sources = buffers.compactMap {
             buffer -> SharedMacOSFloatInput? in
             guard let data = buffer.mData,
-                  buffer.mNumberChannels > 0 else {
+                buffer.mNumberChannels > 0
+            else {
                 return nil
             }
             let channels = Int(buffer.mNumberChannels)
-            let frameCount = Int(buffer.mDataByteSize)
+            let frameCount =
+                Int(buffer.mDataByteSize)
                 / (MemoryLayout<Float>.size * channels)
             guard frameCount > 0 else { return nil }
             return SharedMacOSFloatInput(
@@ -544,12 +551,13 @@ private final class SharedMacOSAudioDeviceCapture: @unchecked Sendable {
             )
         }
         guard let frameCount = sources.map(\.frameCount).min(),
-              frameCount > 0,
-              let output = AVAudioPCMBuffer(
-                  pcmFormat: format,
-                  frameCapacity: AVAudioFrameCount(frameCount)
-              ),
-              let samples = output.floatChannelData?[0] else {
+            frameCount > 0,
+            let output = AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: AVAudioFrameCount(frameCount)
+            ),
+            let samples = output.floatChannelData?[0]
+        else {
             return nil
         }
         output.frameLength = AVAudioFrameCount(frameCount)
@@ -558,9 +566,10 @@ private final class SharedMacOSAudioDeviceCapture: @unchecked Sendable {
             for source in sources {
                 var sourceSample = Float(0)
                 for channel in 0..<source.channelCount {
-                    sourceSample += source.samples[
-                        frame * source.channelCount + channel
-                    ]
+                    sourceSample +=
+                        source.samples[
+                            frame * source.channelCount + channel
+                        ]
                 }
                 mixed += sourceSample / Float(source.channelCount)
             }

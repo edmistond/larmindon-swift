@@ -201,7 +201,8 @@ public struct MicrophonePanelView: View {
         diagnosticExportError = nil
         Task {
             do {
-                let transcript = includeTranscriptInExport
+                let transcript =
+                    includeTranscriptInExport
                     ? session.store.fullTranscript
                     : nil
                 diagnosticExportURL = try await session.diagnostics
@@ -266,9 +267,11 @@ public struct MicrophonePanelView: View {
                         ?? "Not capturing"
                 )
             )
-            Text("Apple Voice Processing I/O runs before VAD and transcription. Changes take effect when capture restarts.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(
+                "Apple Voice Processing I/O runs before VAD and transcription. Changes take effect when capture restarts."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -328,7 +331,7 @@ public struct MicrophonePanelView: View {
                         session.inputSelectionDidChange()
                     }
                 )
-                    .fixedSize()
+                .fixedSize()
             }
 
             Picker("Microphone position", selection: dataSourceSelection) {
@@ -452,7 +455,8 @@ public struct MicrophonePanelView: View {
     private func synchronizeDraft() {
         let currentInputID = session.routeManager.currentRouteInputs.first?.id
         if session.microphoneConfiguration.inputPortID == nil
-            || session.microphoneConfiguration.inputPortID == currentInputID {
+            || session.microphoneConfiguration.inputPortID == currentInputID
+        {
             draftConfiguration = session.microphoneConfiguration
         } else {
             draftConfiguration = MicrophoneCaptureConfiguration(inputPortID: currentInputID)
@@ -500,7 +504,9 @@ private struct SessionLevelsSection: View {
     var body: some View {
         Section("Levels") {
             row("Raw input", session.audioLevels.rawInputLevel.formatted(.number.precision(.fractionLength(2))))
-            row("VAD-gated display", session.audioLevels.processedInputLevel.formatted(.number.precision(.fractionLength(2))))
+            row(
+                "VAD-gated display",
+                session.audioLevels.processedInputLevel.formatted(.number.precision(.fractionLength(2))))
             row("VAD state", session.audioLevels.vadState)
             row("VAD active", session.audioLevels.speechDetected ? "Yes" : "No")
             row("Configured buffer", "\(configuredBufferFrameCount) frames")
@@ -652,5 +658,5 @@ private struct MicrophonePatternDiagram: View {
 
 #Preview {
     MicrophonePanelView(session: CaptionSession())
-    .frame(width: 640, height: 760)
+        .frame(width: 640, height: 760)
 }

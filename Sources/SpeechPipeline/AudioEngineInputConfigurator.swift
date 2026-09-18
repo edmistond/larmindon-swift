@@ -110,14 +110,16 @@ func macOSDefaultInputDeviceID() -> AudioDeviceID? {
         mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMain
     )
-    guard AudioObjectGetPropertyData(
-        AudioObjectID(kAudioObjectSystemObject),
-        &address,
-        0,
-        nil,
-        &dataSize,
-        &deviceID
-    ) == noErr, deviceID != 0 else {
+    guard
+        AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            &dataSize,
+            &deviceID
+        ) == noErr, deviceID != 0
+    else {
         return nil
     }
     return deviceID

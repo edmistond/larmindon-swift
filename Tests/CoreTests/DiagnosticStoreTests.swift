@@ -72,7 +72,7 @@ final class DiagnosticStoreTests: XCTestCase {
                 category: "audio_route",
                 name: "audio_interruption",
                 fields: ["decision": "give_up_attempts_exhausted", "attempt": "4"]
-            ),
+            )
         ])
 
         let stored = try await store.recentEvents().first
@@ -108,7 +108,7 @@ final class DiagnosticStoreTests: XCTestCase {
             event(
                 session: UUID(uuidString: killed)!,
                 at: Date(timeIntervalSince1970: 1_060)
-            ),
+            )
         ])
 
         let unexpected = try await store.sessionsEndedUnexpectedly(excluding: current)

@@ -17,13 +17,15 @@ let appSettings: SettingsDictionary = [
 /// Tuist's per-target defaults set `CODE_SIGN_IDENTITY = "-"` (ad hoc) for macOS, which
 /// outranks the project-level team above, so the identity has to be set on the targets.
 let certificateSigning: SettingsDictionary = [
-    "CODE_SIGN_IDENTITY": "Apple Development",
+    "CODE_SIGN_IDENTITY": "Apple Development"
 ]
 
 let sharedPrivacyPlist: [String: Plist.Value] = [
     "CFBundleDisplayName": "Larmindon",
-    "NSMicrophoneUsageDescription": "Larmindon captures microphone audio for live captions. Audio stays on device in On-device mode and is sent to the selected provider only in Server mode.",
-    "NSSpeechRecognitionUsageDescription": "Larmindon uses Apple Speech APIs to transcribe live microphone audio on device.",
+    "NSMicrophoneUsageDescription":
+        "Larmindon captures microphone audio for live captions. Audio stays on device in On-device mode and is sent to the selected provider only in Server mode.",
+    "NSSpeechRecognitionUsageDescription":
+        "Larmindon uses Apple Speech APIs to transcribe live microphone audio on device.",
 ]
 
 let iOSInfoPlist: [String: Plist.Value] = sharedPrivacyPlist.merging([
@@ -32,11 +34,13 @@ let iOSInfoPlist: [String: Plist.Value] = sharedPrivacyPlist.merging([
     // two after backgrounding and transcription dies silently. Recording continues under
     // either category `IOSAudioSessionCapturePolicy` selects.
     "UIBackgroundModes": .array([.string("audio")]),
-    "CFBundleURLTypes": .array([.dictionary([
-        "CFBundleURLName": .string("com.davidedmiston.larmindon.captions"),
-        "CFBundleTypeRole": .string("Editor"),
-        "CFBundleURLSchemes": .array([.string("larmindon")]),
-    ])]),
+    "CFBundleURLTypes": .array([
+        .dictionary([
+            "CFBundleURLName": .string("com.davidedmiston.larmindon.captions"),
+            "CFBundleTypeRole": .string("Editor"),
+            "CFBundleURLSchemes": .array([.string("larmindon")]),
+        ])
+    ]),
     "UISupportedInterfaceOrientations": .array([
         .string("UIInterfaceOrientationPortrait"),
         .string("UIInterfaceOrientationLandscapeLeft"),
@@ -53,7 +57,7 @@ let iOSInfoPlist: [String: Plist.Value] = sharedPrivacyPlist.merging([
 
 let macOSInfoPlist: [String: Plist.Value] = sharedPrivacyPlist.merging([
     // Only the App Store needs a category, but xcodebuild warns on every build without one.
-    "LSApplicationCategoryType": "public.app-category.utilities",
+    "LSApplicationCategoryType": "public.app-category.utilities"
 ]) { _, newValue in newValue }
 
 let project = Project(
@@ -109,7 +113,7 @@ let project = Project(
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "Larmindon Widgets",
                 "NSExtension": .dictionary([
-                    "NSExtensionPointIdentifier": .string("com.apple.widgetkit-extension"),
+                    "NSExtensionPointIdentifier": .string("com.apple.widgetkit-extension")
                 ]),
             ]),
             sources: ["Widgets/**", "Sources/Core/CaptionLaunchLink.swift"],

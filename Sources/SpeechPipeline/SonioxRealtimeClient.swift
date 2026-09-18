@@ -23,8 +23,7 @@ public actor SonioxRealtimeClient {
     private let decoder: JSONDecoder
 
     private var sentAudioBytes = 0
-    private var eventContinuation:
-        AsyncThrowingStream<SonioxRealtimeEvent, any Error>.Continuation?
+    private var eventContinuation: AsyncThrowingStream<SonioxRealtimeEvent, any Error>.Continuation?
     private var receiveTask: Task<Void, Never>?
     private var finishContinuation: CheckedContinuation<Void, any Error>?
 
@@ -57,10 +56,12 @@ public actor SonioxRealtimeClient {
         do {
             try await transport.connect()
             let configurationData = try encoder.encode(configuration)
-            guard let configurationText = String(
-                data: configurationData,
-                encoding: .utf8
-            ) else {
+            guard
+                let configurationText = String(
+                    data: configurationData,
+                    encoding: .utf8
+                )
+            else {
                 throw SonioxRealtimeClientError.invalidConfiguration(
                     "The configuration could not be encoded as UTF-8."
                 )

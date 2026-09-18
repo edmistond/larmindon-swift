@@ -9,10 +9,8 @@ actor FakeWebSocketTransport: WebSocketTransport {
     private(set) var closeCodes: [WebSocketCloseCode] = []
 
     private var queuedMessages: [WebSocketMessage] = []
-    private var receiveWaiters:
-        [CheckedContinuation<WebSocketMessage, any Error>] = []
-    private var binaryCountWaiters:
-        [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+    private var receiveWaiters: [CheckedContinuation<WebSocketMessage, any Error>] = []
+    private var binaryCountWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
     private var isConnected = false
 
     func connect() async throws {
@@ -84,8 +82,7 @@ actor FakeWebSocketTransport: WebSocketTransport {
     }
 
     private func resumeSatisfiedBinaryWaiters() {
-        var pending:
-            [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        var pending: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
         for waiter in binaryCountWaiters {
             if sentBinaryMessages.count >= waiter.count {
                 waiter.continuation.resume()

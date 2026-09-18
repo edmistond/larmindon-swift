@@ -188,9 +188,14 @@ final class CaptionScrollStateTests: XCTestCase {
                 let bottom = 3000 - viewport + 30
                 var state = CaptionScrollState(fontSize: fontSize)
                 state.updateGeometry(geometry(height: 3000, offset: bottom, viewport: viewport, top: 80, bottom: 30))
-                state.updatePhase(.interacting, geometry: geometry(height: 3000, offset: bottom, viewport: viewport, top: 80, bottom: 30))
-                state.updateGeometry(geometry(height: 3000, offset: bottom - 800, viewport: viewport, top: 80, bottom: 30))
-                state.updatePhase(.decelerating, geometry: geometry(height: 3000, offset: bottom - 800, viewport: viewport, top: 80, bottom: 30))
+                state.updatePhase(
+                    .interacting,
+                    geometry: geometry(height: 3000, offset: bottom, viewport: viewport, top: 80, bottom: 30))
+                state.updateGeometry(
+                    geometry(height: 3000, offset: bottom - 800, viewport: viewport, top: 80, bottom: 30))
+                state.updatePhase(
+                    .decelerating,
+                    geometry: geometry(height: 3000, offset: bottom - 800, viewport: viewport, top: 80, bottom: 30))
 
                 let tooFar = bottom - metrics.trailingPadding - metrics.lineAdvance * 1.5
                 state.updateGeometry(geometry(height: 3000, offset: tooFar, viewport: viewport, top: 80, bottom: 30))
@@ -198,7 +203,8 @@ final class CaptionScrollStateTests: XCTestCase {
                 let nearText = bottom - metrics.trailingPadding - metrics.lineAdvance * 0.75
                 state.updateGeometry(geometry(height: 3000, offset: nearText, viewport: viewport, top: 80, bottom: 30))
                 XCTAssertTrue(state.isPinnedToBottom)
-                state.updatePhase(.idle, geometry: geometry(height: 3000, offset: nearText, viewport: viewport, top: 80, bottom: 30))
+                state.updatePhase(
+                    .idle, geometry: geometry(height: 3000, offset: nearText, viewport: viewport, top: 80, bottom: 30))
                 XCTAssertEqual(state.request(isEmpty: false)?.target, .bottom)
             }
         }
@@ -236,7 +242,7 @@ final class CaptionScrollStateTests: XCTestCase {
         state.updateGeometry(geometry(height: 1400, offset: 800))
         state.updatePhase(.interacting, geometry: geometry(height: 1400, offset: 800))
         state.updateGeometry(geometry(height: 1400, offset: 780))
-        XCTAssertTrue(state.isPinnedToBottom) // Still inside the near-text region.
+        XCTAssertTrue(state.isPinnedToBottom)  // Still inside the near-text region.
         state.updatePhase(.decelerating, geometry: geometry(height: 1400, offset: 775))
         state.updateGeometry(geometry(height: 1400, offset: 400))
         XCTAssertFalse(state.isPinnedToBottom)
@@ -280,7 +286,8 @@ final class CaptionScrollStateTests: XCTestCase {
         state.updatePhase(.interacting, geometry: geometry(height: 1400, offset: 800))
         state.updateGeometry(geometry(height: 1400, offset: 400))
         state.updatePhase(.idle, geometry: geometry(height: 1400, offset: 400))
-        let gap = CaptionLayoutMetrics(fontSize: 38).trailingPadding
+        let gap =
+            CaptionLayoutMetrics(fontSize: 38).trailingPadding
             + CaptionLayoutMetrics(fontSize: 38).lineAdvance * 0.9
         state.updateGeometry(geometry(height: 1400, offset: 800 - gap))
         XCTAssertFalse(state.isPinnedToBottom)
@@ -310,11 +317,12 @@ final class CaptionScrollStateTests: XCTestCase {
         top: CGFloat = 0,
         bottom: CGFloat = 0
     ) -> CaptionScrollGeometry {
-        CaptionScrollGeometry(ScrollGeometry(
-            contentOffset: CGPoint(x: 0, y: offset),
-            contentSize: CGSize(width: 430, height: height),
-            contentInsets: EdgeInsets(top: top, leading: 0, bottom: bottom, trailing: 0),
-            containerSize: CGSize(width: 430, height: viewport)
-        ))
+        CaptionScrollGeometry(
+            ScrollGeometry(
+                contentOffset: CGPoint(x: 0, y: offset),
+                contentSize: CGSize(width: 430, height: height),
+                contentInsets: EdgeInsets(top: top, leading: 0, bottom: bottom, trailing: 0),
+                containerSize: CGSize(width: 430, height: viewport)
+            ))
     }
 }

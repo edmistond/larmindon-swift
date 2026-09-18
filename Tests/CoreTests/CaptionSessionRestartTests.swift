@@ -33,7 +33,8 @@ final class CaptionSessionRestartTests: XCTestCase {
     }
 
     private final class DrainingSource: ControlledSource,
-        BackgroundFinishingTranscriptionSource {}
+        BackgroundFinishingTranscriptionSource
+    {}
 
     private func waitUntil(_ condition: () -> Bool) async {
         let deadline = ContinuousClock.now + .seconds(2)

@@ -28,7 +28,7 @@ struct LarmindonApp: App {
         #if os(macOS)
         Window("Microphone", id: LarmindonWindowID.microphone) {
             MicrophonePanelView(session: session)
-            .frame(minWidth: 560, idealWidth: 640, minHeight: 620, idealHeight: 760)
+                .frame(minWidth: 560, idealWidth: 640, minHeight: 620, idealHeight: 760)
         }
         .defaultSize(width: 640, height: 760)
 

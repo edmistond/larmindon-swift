@@ -47,8 +47,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 )
         )
 
-        var capturedContinuation:
-            AsyncStream<CaptionResult>.Continuation!
+        var capturedContinuation: AsyncStream<CaptionResult>.Continuation!
         results = AsyncStream(bufferingPolicy: .bufferingNewest(64)) {
             capturedContinuation = $0
         }
@@ -413,7 +412,8 @@ struct SonioxSentenceAccumulator {
         to segments: inout [CaptionSegment]
     ) {
         guard let previous = segments.last,
-              previous.speakerID == segment.speakerID else {
+            previous.speakerID == segment.speakerID
+        else {
             segments.append(segment)
             return
         }
@@ -457,7 +457,8 @@ struct SonioxSentenceAccumulator {
 
             var boundaryEnd = index + 1
             while boundaryEnd < characters.count,
-                  closingCharacters.contains(characters[boundaryEnd]) {
+                closingCharacters.contains(characters[boundaryEnd])
+            {
                 boundaryEnd += 1
             }
 
@@ -569,10 +570,12 @@ final class SonioxPCMConverter: @unchecked Sendable {
         let capacity = AVAudioFrameCount(
             max(1, ceil(Double(buffer.frameLength) * ratio) + 16)
         )
-        guard let output = AVAudioPCMBuffer(
-            pcmFormat: outputFormat,
-            frameCapacity: capacity
-        ) else {
+        guard
+            let output = AVAudioPCMBuffer(
+                pcmFormat: outputFormat,
+                frameCapacity: capacity
+            )
+        else {
             return nil
         }
 
@@ -587,8 +590,9 @@ final class SonioxPCMConverter: @unchecked Sendable {
             inputProvider.nextBuffer(inputStatus: inputStatus)
         }
         guard status != .error,
-              output.frameLength > 0,
-              let samples = output.int16ChannelData?[0] else {
+            output.frameLength > 0,
+            let samples = output.int16ChannelData?[0]
+        else {
             return nil
         }
         return Data(

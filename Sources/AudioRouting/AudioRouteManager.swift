@@ -58,9 +58,10 @@ public final class AudioRouteManager {
     ) async throws {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
-        let requestedInputKind = configuration.inputPortID.flatMap { inputPortID in
-            availableInputs.first(where: { $0.id == inputPortID })?.kind
-        } ?? session.preferredInput?.portType.rawValue
+        let requestedInputKind =
+            configuration.inputPortID.flatMap { inputPortID in
+                availableInputs.first(where: { $0.id == inputPortID })?.kind
+            } ?? session.preferredInput?.portType.rawValue
             ?? session.currentRoute.inputs.first?.portType.rawValue
         let policy = IOSAudioSessionCapturePolicy(
             inputKind: requestedInputKind,
@@ -182,7 +183,8 @@ public final class AudioRouteManager {
         let defaultInput = MacAudioDeviceProvider.defaultInputDevice()
         availableInputs = inputs
         if let preferredInputID,
-           let preferredInput = inputs.first(where: { $0.id == preferredInputID }) {
+            let preferredInput = inputs.first(where: { $0.id == preferredInputID })
+        {
             preferredInputDeviceID = preferredInput.systemDeviceID
             preferredInputName = preferredInput.name
             currentInputName = preferredInput.name
@@ -302,7 +304,8 @@ public final class AudioRouteManager {
         from notification: Notification
     ) -> AudioInterruptionEvent? {
         guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: rawType) else {
+            let type = AVAudioSession.InterruptionType(rawValue: rawType)
+        else {
             return nil
         }
 
@@ -490,7 +493,8 @@ private enum MacAudioDeviceProvider {
             return []
         }
 
-        return deviceIDs
+        return
+            deviceIDs
             .filter(isInputDevice)
             .compactMap(routePort)
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -524,7 +528,8 @@ private enum MacAudioDeviceProvider {
             return []
         }
 
-        return deviceIDs
+        return
+            deviceIDs
             .filter(isInputDevice)
             .compactMap { deviceID in
                 routePort(for: deviceID).map { (deviceID, $0) }
@@ -540,7 +545,8 @@ private enum MacAudioDeviceProvider {
             mElement: kAudioObjectPropertyElementMain
         )
         guard AudioObjectGetPropertyData(systemObjectID, &address, 0, nil, &dataSize, &deviceID) == noErr,
-              deviceID != 0 else {
+            deviceID != 0
+        else {
             return nil
         }
         return deviceID
@@ -554,7 +560,8 @@ private enum MacAudioDeviceProvider {
         )
         var dataSize: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize) == noErr,
-              dataSize > 0 else {
+            dataSize > 0
+        else {
             return false
         }
 
@@ -567,14 +574,16 @@ private enum MacAudioDeviceProvider {
         let audioBufferList = rawBufferList.bindMemory(to: AudioBufferList.self, capacity: 1)
         let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
 
-        guard AudioObjectGetPropertyData(
-            deviceID,
-            &address,
-            0,
-            nil,
-            &dataSize,
-            audioBufferList
-        ) == noErr else {
+        guard
+            AudioObjectGetPropertyData(
+                deviceID,
+                &address,
+                0,
+                nil,
+                &dataSize,
+                audioBufferList
+            ) == noErr
+        else {
             return false
         }
 
@@ -582,19 +591,22 @@ private enum MacAudioDeviceProvider {
     }
 
     private static func routePort(for deviceID: AudioObjectID) -> AudioRoutePort? {
-        guard let uid = stringProperty(
-            kAudioDevicePropertyDeviceUID,
-            scope: kAudioObjectPropertyScopeGlobal,
-            deviceID: deviceID
-        ) else {
+        guard
+            let uid = stringProperty(
+                kAudioDevicePropertyDeviceUID,
+                scope: kAudioObjectPropertyScopeGlobal,
+                deviceID: deviceID
+            )
+        else {
             return nil
         }
 
-        let name = stringProperty(
-            kAudioObjectPropertyName,
-            scope: kAudioObjectPropertyScopeGlobal,
-            deviceID: deviceID
-        ) ?? uid
+        let name =
+            stringProperty(
+                kAudioObjectPropertyName,
+                scope: kAudioObjectPropertyScopeGlobal,
+                deviceID: deviceID
+            ) ?? uid
 
         return AudioRoutePort(id: uid, name: name, kind: "CoreAudio", systemDeviceID: deviceID)
     }
@@ -612,7 +624,8 @@ private enum MacAudioDeviceProvider {
             mElement: kAudioObjectPropertyElementMain
         )
         guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &property) == noErr,
-              let property else {
+            let property
+        else {
             return nil
         }
         return property.takeUnretainedValue() as String

@@ -76,7 +76,8 @@ final class UserPreferencesTests: XCTestCase {
 
         ThemePreference.migrateLegacySettings(in: defaults)
 
-        XCTAssertEqual(defaults.string(forKey: ThemePreference.modeStorageKey), ThemeSelectionMode.followSystem.rawValue)
+        XCTAssertEqual(
+            defaults.string(forKey: ThemePreference.modeStorageKey), ThemeSelectionMode.followSystem.rawValue)
         XCTAssertEqual(defaults.string(forKey: ThemePreference.lightThemeStorageKey), AppTheme.light.rawValue)
         XCTAssertEqual(defaults.string(forKey: ThemePreference.darkThemeStorageKey), AppTheme.dark.rawValue)
     }

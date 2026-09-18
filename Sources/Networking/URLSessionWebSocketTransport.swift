@@ -104,7 +104,8 @@ public actor URLSessionWebSocketTransport: WebSocketTransport {
 
     public func close(code: WebSocketCloseCode) async {
         guard let task = webSocketTask else { return }
-        let foundationCode = URLSessionWebSocketTask.CloseCode(rawValue: code.rawValue)
+        let foundationCode =
+            URLSessionWebSocketTask.CloseCode(rawValue: code.rawValue)
             ?? .goingAway
         task.cancel(with: foundationCode, reason: nil)
         tearDown()
@@ -166,7 +167,8 @@ public actor URLSessionWebSocketTransport: WebSocketTransport {
             return WebSocketTransportError.closed(closeDetails)
         }
         if let task = webSocketTask,
-           task.closeCode != .invalid {
+            task.closeCode != .invalid
+        {
             return WebSocketTransportError.closed(
                 WebSocketCloseDetails(
                     code: task.closeCode.rawValue,

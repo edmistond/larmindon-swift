@@ -59,8 +59,10 @@ final class CaptionSessionInterruptionTests: XCTestCase {
         await waitUntil { !notifier.notifiedReasons.isEmpty }
 
         XCTAssertEqual(notifier.notifiedReasons, [.interruptionEndedWithoutResume])
-        XCTAssertEqual(session.lastError, AudioInterruptionFailureReason
-            .interruptionEndedWithoutResume.message)
+        XCTAssertEqual(
+            session.lastError,
+            AudioInterruptionFailureReason
+                .interruptionEndedWithoutResume.message)
         XCTAssertFalse(session.store.isRunning)
         // Resolved, not still pending: the session is stopped, not interrupted.
         XCTAssertFalse(session.isInterrupted)
