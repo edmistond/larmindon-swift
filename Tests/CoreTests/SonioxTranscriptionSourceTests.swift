@@ -90,9 +90,10 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         let source = SonioxTranscriptionSource(
             apiKey: "test-key",
             diagnostics: diagnostics,
-            transport: transport,
-            gracefulShutdownTimeout: .milliseconds(150)
+            transport: transport
         )
+        let delay = ManualDelay()
+        source.delay = delay.dependency
         let (frames, frameContinuation) =
             AsyncStream<CapturedAudioFrame>.makeStream()
 
@@ -101,34 +102,72 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
 
         let stopTask = Task { await source.stop() }
 
-        // Polled rather than awaited directly: if the watchdog regresses, this fails the
-        // assertion instead of hanging the whole suite.
-        var didForceClose = false
-        for _ in 0..<100 {
-            if await transport.closeCodes.contains(.goingAway) {
-                didForceClose = true
-                break
-            }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-
-        XCTAssertTrue(
-            didForceClose,
-            "the shutdown watchdog should force the socket closed when the server "
-                + "never acknowledges finish"
-        )
-
-        if didForceClose {
-            await stopTask.value
-        } else {
-            stopTask.cancel()
-        }
+        await transport.waitForBinaryMessageCount(1)
+        await delay.waitUntilScheduled(.seconds(5))
+        let beforeDeadline = await transport.closeCodes
+        XCTAssertTrue(beforeDeadline.isEmpty)
+        await delay.advance(by: .seconds(5))
+        await stopTask.value
+        let closeCodes = await transport.closeCodes
+        XCTAssertTrue(closeCodes.contains(.goingAway))
+        var results: [CaptionResult] = []
+        for await result in source.results { results.append(result) }
+        XCTAssertFalse(
+            results.contains {
+                if case .failure = $0 { return true }; return false
+            })
 
         let events = await diagnostics.snapshot()
         XCTAssertTrue(
             events.contains { $0.name == "soniox_finish_timeout" },
             "a forced shutdown should leave a diagnostic breadcrumb"
         )
+    }
+
+    func testDelayedConsumerGetsExplicitFailureWhenFinalCaptionsOverflow() async throws {
+        let transport = FakeWebSocketTransport()
+        let source = SonioxTranscriptionSource(apiKey: "test-key", transport: transport)
+        let frames = AsyncStream<CapturedAudioFrame> { $0.finish() }
+        try await source.start(audioFrames: frames)
+        for index in 0..<40 {
+            await transport.enqueue(
+                .text(
+                    """
+                    {"tokens":[{"text":"Sentence \(index).","is_final":true}]}
+                    """))
+        }
+        await transport.enqueue(.text("{\"tokens\":[],\"finished\":true}"))
+        await source.stop()
+        var results: [CaptionResult] = []
+        for await result in source.results { results.append(result) }
+        XCTAssertEqual(results.last, .failure(BoundedCaptionResults.overflowMessage))
+        XCTAssertLessThanOrEqual(results.count, 64)
+    }
+
+    func testCancelledConsumerStillAllowsProviderToFinishGracefully() async throws {
+        let transport = FakeWebSocketTransport()
+        let diagnostics = DiagnosticRecorder(capacity: 100)
+        let source = SonioxTranscriptionSource(apiKey: "test-key", diagnostics: diagnostics, transport: transport)
+        let consumer = Task { for await _ in source.results {} }
+        let (frames, frameContinuation) = AsyncStream<CapturedAudioFrame>.makeStream()
+        try await source.start(audioFrames: frames)
+        consumer.cancel()
+        await consumer.value
+        frameContinuation.finish()
+        let stop = Task { await source.stop() }
+        await transport.waitForBinaryMessageCount(1)
+        await transport.enqueue(.text("{\"tokens\":[{\"text\":\"Late sentence.\",\"is_final\":true}]}"))
+        let deadline = ContinuousClock.now + .seconds(1)
+        while ContinuousClock.now < deadline {
+            if await diagnostics.snapshot().contains(where: { $0.name == "soniox_update" }) { break }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        let events = await diagnostics.snapshot()
+        XCTAssertTrue(events.contains { $0.name == "soniox_update" })
+        await transport.enqueue(.text("{\"tokens\":[],\"finished\":true}"))
+        await stop.value
+        let closeCodes = await transport.closeCodes
+        XCTAssertEqual(closeCodes, [.normalClosure])
     }
 
     func testSpeakerSegmentsFollowTokenSpeakerBoundaries() throws {

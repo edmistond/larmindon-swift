@@ -24,7 +24,8 @@ public actor SonioxRealtimeClient {
 
     private var sentAudioBytes = 0
     private var eventContinuation: AsyncThrowingStream<SonioxRealtimeEvent, any Error>.Continuation?
-    private var receiveTask: Task<Void, Never>?
+    private(set) var receiveTask: Task<Void, Never>?
+    private var terminalError: SonioxRealtimeClientError?
     private var finishContinuation: CheckedContinuation<Void, any Error>?
 
     public init(
@@ -55,6 +56,7 @@ public actor SonioxRealtimeClient {
 
         do {
             try await transport.connect()
+            try requireConnecting()
             let configurationData = try encoder.encode(configuration)
             guard
                 let configurationText = String(
@@ -67,10 +69,17 @@ public actor SonioxRealtimeClient {
                 )
             }
             try await transport.sendText(configurationText)
+            try requireConnecting()
         } catch {
-            state = .failed
-            await transport.close(code: .goingAway)
-            throw mapError(error)
+            if Task.isCancelled || state == .cancelled {
+                await cancel()
+                // A non-cooperative connect may have completed after cancellation.
+                await transport.close(code: .goingAway)
+                throw SonioxRealtimeClientError.cancelled
+            }
+            let failure = mapError(error)
+            await fail(with: failure)
+            throw failure
         }
 
         let (stream, continuation) = AsyncThrowingStream<
@@ -91,6 +100,11 @@ public actor SonioxRealtimeClient {
             await self?.receiveLoop()
         }
         return stream
+    }
+
+    private func requireConnecting() throws {
+        try Task.checkCancellation()
+        guard state == .connecting else { throw terminalError ?? .cancelled }
     }
 
     public func sendAudio(_ pcmData: Data) async throws {
@@ -143,6 +157,8 @@ public actor SonioxRealtimeClient {
         }
 
         try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            guard state == .finishing else { throw terminalError ?? .cancelled }
             try await withCheckedThrowingContinuation { continuation in
                 finishContinuation = continuation
             }
@@ -172,9 +188,9 @@ public actor SonioxRealtimeClient {
     public func cancel() async {
         guard state != .cancelled, state != .finished else { return }
         state = .cancelled
+        terminalError = .cancelled
         receiveTask?.cancel()
         receiveTask = nil
-        await transport.close(code: .goingAway)
         eventContinuation?.finish(
             throwing: SonioxRealtimeClientError.cancelled
         )
@@ -183,12 +199,14 @@ public actor SonioxRealtimeClient {
             throwing: SonioxRealtimeClientError.cancelled
         )
         finishContinuation = nil
+        await transport.close(code: .goingAway)
     }
 
     private func receiveLoop() async {
         do {
             while !Task.isCancelled {
                 let message = try await transport.receive()
+                guard !Task.isCancelled, state == .streaming || state == .finishing else { return }
                 guard case .text(let text) = message else {
                     throw SonioxRealtimeClientError.unexpectedBinaryMessage
                 }
@@ -286,10 +304,12 @@ public actor SonioxRealtimeClient {
             return
         }
         state = .failed
+        terminalError = error
         eventContinuation?.finish(throwing: error)
         eventContinuation = nil
         finishContinuation?.resume(throwing: error)
         finishContinuation = nil
+        receiveTask?.cancel()
         receiveTask = nil
         await transport.close(code: .goingAway)
     }

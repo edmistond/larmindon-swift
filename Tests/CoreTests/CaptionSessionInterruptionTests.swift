@@ -164,5 +164,52 @@ final class CaptionSessionInterruptionTests: XCTestCase {
 
         XCTAssertTrue(notifier.notifiedReasons.isEmpty)
     }
+    func testFailedRecoveryUsesControlledBackoffThenNotifiesOnce() async {
+        let notifier = SpyNotifier()
+        let session = makeRecoverableSession(notifier: notifier)
+        let delay = ManualDelay()
+        session.delay = delay.dependency
+        var attempts = 0
+        session.sourceFactory = { _, _ in
+            attempts += 1
+            throw TranscriptionSourceError.unavailable("Simulated restart failure")
+        }
+        session.store.isRunning = true
+        session.routeManager.onAudioInterruption?(.mediaServicesReset)
+        for (index, interval) in [Duration.milliseconds(500), .seconds(1), .seconds(2)].enumerated() {
+            await delay.waitUntilScheduled(interval)
+            XCTAssertEqual(attempts, index + 1)
+            XCTAssertTrue(notifier.notifiedReasons.isEmpty)
+            await delay.advance(by: interval)
+        }
+        await waitUntil { !notifier.notifiedReasons.isEmpty }
+        XCTAssertEqual(attempts, 4)
+        XCTAssertEqual(notifier.notifiedReasons, [.restartAttemptsExhausted])
+        XCTAssertFalse(session.store.isRunning)
+        await session.stop()
+    }
+
+    func testStopCancelsRecoveryBackoffWithoutStartingAgain() async {
+        let notifier = SpyNotifier()
+        let session = makeRecoverableSession(notifier: notifier)
+        let delay = ManualDelay()
+        session.delay = delay.dependency
+        var attempts = 0
+        session.sourceFactory = { _, _ in
+            attempts += 1
+            throw TranscriptionSourceError.unavailable("Simulated restart failure")
+        }
+        session.store.isRunning = true
+        session.routeManager.onAudioInterruption?(.mediaServicesReset)
+        await delay.waitUntilScheduled(.milliseconds(500))
+        let recovery = session.interruptionRecoveryTask
+        await session.stop()
+        await delay.advance(by: .seconds(60))
+        await recovery?.value
+        XCTAssertEqual(attempts, 1)
+        XCTAssertTrue(notifier.notifiedReasons.isEmpty)
+        XCTAssertFalse(session.store.isRunning)
+    }
+
 }
 #endif

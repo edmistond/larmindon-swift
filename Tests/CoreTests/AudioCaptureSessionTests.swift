@@ -106,4 +106,40 @@ final class AudioCaptureSessionTests: XCTestCase {
         XCTAssertEqual(replacementDriver.stopCount, 1)
     }
 
+    private final class CaptureOwningSource: TranscriptionSource {
+        let name = "Capture owner"
+        let results = AsyncStream<CaptionResult> { $0.finish() }
+        let levelUpdates = AsyncStream<AudioLevelSnapshot> { $0.finish() }
+        let gate = AsyncGate()
+        var didRelease = false
+        func start() async throws {}
+        func stop() async {
+            await gate.suspend()
+            didRelease = true
+        }
+    }
+
+    func testRouteReleaseWaitsForLocalCaptureAndSourceTeardown() async throws {
+        let driver = Driver()
+        let capture = AudioCaptureSession(driver: driver)
+        let source = CaptureOwningSource()
+        try await capture.start()
+        var didReleaseRoute = false
+        let stop = Task {
+            await CaptionSessionTeardown.stopLocalResources(capture: capture, source: source) {
+                XCTAssertFalse(driver.ownsResource)
+                XCTAssertTrue(source.didRelease)
+                didReleaseRoute = true
+            }
+        }
+        await source.gate.waitUntilEntered()
+        XCTAssertEqual(driver.stopCount, 1)
+        XCTAssertFalse(didReleaseRoute)
+        await source.gate.release()
+        await stop.value
+        XCTAssertTrue(didReleaseRoute)
+        await capture.stop()
+        XCTAssertEqual(driver.stopCount, 1)
+    }
+
 }

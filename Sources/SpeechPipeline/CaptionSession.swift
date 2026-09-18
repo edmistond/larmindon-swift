@@ -46,7 +46,10 @@ public final class CaptionSession {
     /// Device the running capture was started against, so device-list churn can be told
     /// apart from the selected input actually changing.
     private var activeInputDeviceID: UInt32?
-    private var silentCaptureTask: Task<Void, Never>?
+    @ObservationIgnored
+    var delay = AsyncDelay.continuous
+    @ObservationIgnored
+    private(set) var silentCaptureTask: Task<Void, Never>?
     private var didReceiveAudioSinceStart = false
     private var silentCaptureWarning: String?
     /// When `audioLevels` was last written for a level-only change. See `publishAudioLevels`.
@@ -68,7 +71,8 @@ public final class CaptionSession {
     /// would start recording on its own.
     private var wasRunningBeforeInterruption = false
     private var interruptionAttempt = 0
-    private var interruptionRecoveryTask: Task<Void, Never>?
+    @ObservationIgnored
+    private(set) var interruptionRecoveryTask: Task<Void, Never>?
     private var didPrepareFailureNotifier = false
     #endif
 
@@ -457,11 +461,9 @@ public final class CaptionSession {
         let source = activeSource
         activeCapture = nil
         activeSource = nil
-        await capture?.stop()
-        if let source, !(source is any BackgroundFinishingTranscriptionSource) {
-            await source.stop()
+        await CaptionSessionTeardown.stopLocalResources(capture: capture, source: source) {
+            routeManager.releaseAudioSession()
         }
-        routeManager.releaseAudioSession()
         if let source = source as? any BackgroundFinishingTranscriptionSource {
             // Captures only the retired provider: completion cannot touch this session,
             // its audio route, or the replacement provider. Soniox retains its watchdog.
@@ -726,8 +728,8 @@ public final class CaptionSession {
     /// up only as a level meter that never moves. Say so rather than looking hung.
     private func startSilentCaptureWatchdog(generation: Int) {
         silentCaptureTask?.cancel()
-        silentCaptureTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(3))
+        silentCaptureTask = Task { @MainActor [weak self, delay] in
+            try? await delay.sleep(.seconds(3))
             guard let self,
                 !Task.isCancelled,
                 generation == transitionGeneration,
@@ -917,9 +919,9 @@ public final class CaptionSession {
 
     private func scheduleInterruptionRecovery(after delay: Duration?) {
         interruptionRecoveryTask?.cancel()
-        interruptionRecoveryTask = Task { @MainActor [weak self] in
+        interruptionRecoveryTask = Task { @MainActor [weak self, scheduler = self.delay] in
             if let delay {
-                try? await Task.sleep(for: delay)
+                try? await scheduler.sleep(delay)
             }
             guard let self, !Task.isCancelled else { return }
 

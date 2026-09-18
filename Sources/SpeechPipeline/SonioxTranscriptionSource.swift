@@ -7,7 +7,8 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     public let results: AsyncStream<CaptionResult>
     public let levelUpdates: AsyncStream<AudioLevelSnapshot>
 
-    private let continuation: AsyncStream<CaptionResult>.Continuation
+    private let delivery = BoundedCaptionResults()
+    private var didEndDelivery = false
     private let diagnostics: DiagnosticRecorder
     private let client: SonioxRealtimeClient
     private let converter = SonioxPCMConverter()
@@ -23,6 +24,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     /// Set when the shutdown watchdog gave up on the graceful path, so the cancellation it
     /// causes is not reported to the user as a provider failure.
     private var didForceShutdown = false
+    var delay = AsyncDelay.continuous
     private let gracefulShutdownTimeout: Duration
 
     public init(
@@ -47,11 +49,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 )
         )
 
-        var capturedContinuation: AsyncStream<CaptionResult>.Continuation!
-        results = AsyncStream(bufferingPolicy: .bufferingNewest(64)) {
-            capturedContinuation = $0
-        }
-        continuation = capturedContinuation
+        results = delivery.stream
         levelUpdates = AsyncStream { $0.finish() }
     }
 
@@ -64,6 +62,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     public func start(
         audioFrames: AsyncStream<CapturedAudioFrame>
     ) async throws {
+        try await requireActiveStartup()
         sentenceAccumulator = SonioxSentenceAccumulator()
         let events = try await client.start()
         await diagnostics.record(
@@ -79,167 +78,194 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             ]
         )
 
-        eventTask = Task {
-            do {
-                for try await event in events {
-                    switch event {
-                    case .transcript(let update):
-                        let finalizedSegments =
-                            sentenceAccumulator.consume(
-                                finalizedTokens:
-                                    update.newlyFinalizedTokens
-                            )
-                        if !finalizedSegments.isEmpty {
-                            continuation.yield(
-                                .finalizedSegments(finalizedSegments)
-                            )
-                        }
-                        continuation.yield(
-                            .volatileSegments(
-                                sentenceAccumulator.preview(
-                                    nonFinalTokens:
-                                        update.nonFinalTokens
-                                )
-                            )
+        try await requireActiveStartup()
+        eventTask = Task { await consumeEvents(events) }
+        audioTask = Task { await sendAudio(audioFrames) }
+        pingTask = Task { await sendPings() }
+    }
+
+    private func consumeEvents(_ events: AsyncThrowingStream<SonioxRealtimeEvent, any Error>) async {
+        do {
+            for try await event in events {
+                switch event {
+                case .transcript(let update):
+                    let finalizedSegments =
+                        sentenceAccumulator.consume(
+                            finalizedTokens:
+                                update.newlyFinalizedTokens
                         )
-                        await diagnostics.record(
-                            category: "transcript",
-                            name: "soniox_update",
-                            fields: [
-                                "final_tokens":
-                                    String(update.newlyFinalizedTokens.count),
-                                "volatile_tokens":
-                                    String(update.nonFinalTokens.count),
-                                "final_audio_ms":
-                                    String(
-                                        update.metrics
-                                            .finalizedAudioMilliseconds
-                                    ),
-                                "processing_lag_ms":
-                                    String(
-                                        update.metrics
-                                            .processingLagMilliseconds
-                                    ),
-                                "speaker_ids":
-                                    Set(
-                                        update.newlyFinalizedTokens
-                                            .compactMap(\.speaker)
-                                    )
-                                    .sorted()
-                                    .joined(separator: ","),
-                            ]
-                        )
-                    case .finished(let completion):
-                        let trailingSegments =
-                            sentenceAccumulator.finish()
-                        if !trailingSegments.isEmpty {
-                            continuation.yield(
-                                .finalizedSegments(trailingSegments)
-                            )
-                        }
-                        await diagnostics.record(
-                            category: "provider",
-                            name: "soniox_finished",
-                            fields: [
-                                "final_audio_ms":
-                                    String(
-                                        completion.metrics
-                                            .finalizedAudioMilliseconds
-                                    ),
-                                "bytes_sent": String(bytesSent),
-                            ]
+                    if !finalizedSegments.isEmpty {
+                        publish(
+                            .finalizedSegments(finalizedSegments)
                         )
                     }
-                }
-            } catch {
-                guard !isStopping else {
+                    publish(
+                        .volatileSegments(
+                            sentenceAccumulator.preview(
+                                nonFinalTokens:
+                                    update.nonFinalTokens
+                            )
+                        )
+                    )
+                    await diagnostics.record(
+                        category: "transcript",
+                        name: "soniox_update",
+                        fields: [
+                            "final_tokens":
+                                String(update.newlyFinalizedTokens.count),
+                            "volatile_tokens":
+                                String(update.nonFinalTokens.count),
+                            "final_audio_ms":
+                                String(
+                                    update.metrics
+                                        .finalizedAudioMilliseconds
+                                ),
+                            "processing_lag_ms":
+                                String(
+                                    update.metrics
+                                        .processingLagMilliseconds
+                                ),
+                            "speaker_ids":
+                                Set(
+                                    update.newlyFinalizedTokens
+                                        .compactMap(\.speaker)
+                                )
+                                .sorted()
+                                .joined(separator: ","),
+                        ]
+                    )
+                case .finished(let completion):
+                    let trailingSegments =
+                        sentenceAccumulator.finish()
+                    if !trailingSegments.isEmpty {
+                        publish(
+                            .finalizedSegments(trailingSegments)
+                        )
+                    }
                     await diagnostics.record(
                         category: "provider",
-                        name: "soniox_cancelled",
-                        fields: ["message": error.localizedDescription]
+                        name: "soniox_finished",
+                        fields: [
+                            "final_audio_ms":
+                                String(
+                                    completion.metrics
+                                        .finalizedAudioMilliseconds
+                                ),
+                            "bytes_sent": String(bytesSent),
+                        ]
                     )
-                    return
                 }
-                continuation.yield(.failure(error.localizedDescription))
+            }
+        } catch {
+            guard !isStopping else {
                 await diagnostics.record(
                     category: "provider",
-                    name: "soniox_error",
+                    name: "soniox_cancelled",
+                    fields: ["message": error.localizedDescription]
+                )
+                return
+            }
+            publish(.failure(error.localizedDescription))
+            await diagnostics.record(
+                category: "provider",
+                name: "soniox_error",
+                fields: [
+                    "type": String(describing: type(of: error)),
+                    "message": error.localizedDescription,
+                ]
+            )
+        }
+    }
+
+    private func sendAudio(_ audioFrames: AsyncStream<CapturedAudioFrame>) async {
+        for await frame in audioFrames {
+            guard !Task.isCancelled else { break }
+            guard let data = converter.convert(frame.buffer) else {
+                await diagnostics.record(
+                    category: "audio",
+                    name: "soniox_conversion_failed",
                     fields: [
-                        "type": String(describing: type(of: error)),
-                        "message": error.localizedDescription,
+                        "input_rate":
+                            String(frame.buffer.format.sampleRate),
+                        "input_channels":
+                            String(frame.buffer.format.channelCount),
                     ]
                 )
+                continue
             }
-        }
-
-        audioTask = Task {
-            for await frame in audioFrames {
-                guard !Task.isCancelled else { break }
-                guard let data = converter.convert(frame.buffer) else {
-                    await diagnostics.record(
-                        category: "audio",
-                        name: "soniox_conversion_failed",
-                        fields: [
-                            "input_rate":
-                                String(frame.buffer.format.sampleRate),
-                            "input_channels":
-                                String(frame.buffer.format.channelCount),
-                        ]
-                    )
-                    continue
-                }
-                do {
-                    try await client.sendAudio(data)
-                    bytesSent += data.count
-                    if bytesSent.isMultiple(of: 320_000) {
-                        await diagnostics.record(
-                            category: "network",
-                            name: "soniox_audio_sent",
-                            fields: ["bytes": String(bytesSent)]
-                        )
-                    }
-                } catch {
-                    continuation.yield(
-                        .failure(error.localizedDescription)
-                    )
-                    return
-                }
-            }
-        }
-
-        pingTask = Task {
-            let clock = ContinuousClock()
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(for: .seconds(15))
-                    guard !Task.isCancelled else { return }
-                    let started = clock.now
-                    try await client.sendPing()
-                    let duration = started.duration(to: clock.now)
-                    let components = duration.components
-                    let milliseconds =
-                        components.seconds * 1_000
-                        + components.attoseconds / 1_000_000_000_000_000
+            do {
+                try await client.sendAudio(data)
+                bytesSent += data.count
+                if bytesSent.isMultiple(of: 320_000) {
                     await diagnostics.record(
                         category: "network",
-                        name: "websocket_ping",
-                        fields: [
-                            "latency_ms": String(milliseconds)
-                        ]
+                        name: "soniox_audio_sent",
+                        fields: ["bytes": String(bytesSent)]
                     )
-                } catch is CancellationError {
-                    return
-                } catch {
-                    await diagnostics.record(
-                        category: "network",
-                        name: "websocket_ping_failed",
-                        fields: [
-                            "message": error.localizedDescription
-                        ]
-                    )
-                    return
                 }
+            } catch {
+                guard !isStopping else { return }
+                publish(
+                    .failure(error.localizedDescription)
+                )
+                return
             }
+        }
+    }
+
+    private func sendPings() async {
+        let clock = ContinuousClock()
+        while !Task.isCancelled {
+            do {
+                try await delay.sleep(.seconds(15))
+                guard !Task.isCancelled else { return }
+                let started = clock.now
+                try await client.sendPing()
+                let duration = started.duration(to: clock.now)
+                let components = duration.components
+                let milliseconds =
+                    components.seconds * 1_000
+                    + components.attoseconds / 1_000_000_000_000_000
+                await diagnostics.record(
+                    category: "network",
+                    name: "websocket_ping",
+                    fields: [
+                        "latency_ms": String(milliseconds)
+                    ]
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                await diagnostics.record(
+                    category: "network",
+                    name: "websocket_ping_failed",
+                    fields: [
+                        "message": error.localizedDescription
+                    ]
+                )
+                return
+            }
+        }
+    }
+
+    private func requireActiveStartup() async throws {
+        guard !Task.isCancelled, !isStopping else {
+            await client.cancel()
+            throw CancellationError()
+        }
+    }
+
+    private func publish(_ result: CaptionResult) {
+        guard !didEndDelivery else { return }
+        guard delivery.yield(result) else {
+            didEndDelivery = true
+            // CaptionSession cancels its consumer before retiring the provider.
+            // That must still allow the existing graceful finish to drain.
+            guard delivery.didFail else { return }
+            audioTask?.cancel()
+            pingTask?.cancel()
+            Task { await client.cancel() }
+            return
         }
     }
 
@@ -281,7 +307,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 // surfacing it would put an error caption on screen every time a stop
                 // timed out.
                 if !didForceShutdown {
-                    continuation.yield(.failure(error.localizedDescription))
+                    publish(.failure(error.localizedDescription))
                 }
                 await client.cancel()
             }
@@ -293,7 +319,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             await eventTask.value
         }
         eventTask = nil
-        continuation.finish()
+        delivery.finish()
     }
 
     /// Bounds the graceful shutdown.
@@ -310,7 +336,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     private func startShutdownWatchdog() -> Task<Void, Never> {
         Task { [weak self] in
             guard let self else { return }
-            try? await Task.sleep(for: gracefulShutdownTimeout)
+            try? await delay.sleep(gracefulShutdownTimeout)
             guard !Task.isCancelled else { return }
 
             didForceShutdown = true

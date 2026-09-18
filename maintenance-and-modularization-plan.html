@@ -260,7 +260,7 @@
           <span class="work-id">01B · Lint and complexity policy · Implemented</span>
           <h3>Gate useful signals; record existing debt.</h3>
           <p><a href=".swiftlint.yml">The gate configuration</a> uses an explicit rule list: force casts/tries, duplicate conditions and dictionary keys, unused optional bindings, unhandled throwing tasks, invalid or unnecessary suppression commands, and cyclomatic complexity. It scans app, framework, widget, test, and build-manifest Swift sources. The audit’s incompatible concurrency-annotation rule remains excluded.</p>
-          <p><a href=".swiftlint-baseline.json">The reviewed baseline</a> contains exactly the four complexity hotspots listed above, allowing this tooling change to preserve startup behavior. No correctness-rule exceptions were needed. Keep baseline changes visible in review; the runner never regenerates it. Retire existing entries as their functions are simplified.</p>
+          <p><a href=".swiftlint-baseline.json">The reviewed baseline</a> originally contained the four complexity hotspots listed above, allowing the tooling change to preserve startup behavior. Phase 02 retires the Soniox exception after separating its event, audio-send, and ping loops; three exceptions remain. No correctness-rule exceptions were needed. Keep baseline changes visible in review; the runner never regenerates it. Retire existing entries as their functions are simplified.</p>
           <p>New complexity findings above 10 fail because the gate uses <code>--strict</code>. Above 20 is an error and should require decomposition before adding more responsibility. Exceptions should be narrow and explain the domain reason. <a href=".swiftlint-metrics.yml">A separate metrics pass</a> ignores the baseline and reports complexity, function/type/file length, and nesting; length and nesting remain advisory.</p>
           <p>A baseline is a suppression mechanism, not proof that an existing function has not become more complicated. Inspect changes to baselined lifecycle code and track its raw score during the refactor. <a href="scripts/tests/test_checks.py">Gate regression tests</a> use disposable source copies to exercise new violations, advisory-only findings, configuration errors, baseline portability, and unchanged source inputs.</p>
           <p class="acceptance"><strong>Acceptance:</strong> deliberately introduced correctness and complexity violations fail; the existing baseline passes; the four measured startup hotspots remain visible in the unfiltered report. Baseline regeneration is an explicit review operation documented in the README.</p>
@@ -295,22 +295,24 @@
       </section>
 
       <section class="phase" id="phase-2" aria-labelledby="phase-2-title">
-        <div class="phase-head"><span class="phase-number">Phase 02</span><span class="tag">Tests &amp; explicit fixes</span></div>
+        <div class="phase-head"><span class="phase-number">Phase 02</span><span class="tag">Implemented · 18 September 2026</span></div>
         <h2 id="phase-2-title">Protect lifecycle boundaries.</h2>
         <p class="dependency">Prerequisites: reuse the Phase 01 checks as they become available. These tasks can proceed independently of formatting.</p>
         <article class="work" id="task-2a">
           <span class="work-id">02A · Capture failure seam</span>
           <h3>Test cleanup after partial startup.</h3>
+          <p class="evidence"><strong>Implemented:</strong> a capture driver and permission seam exercise startup without opening a microphone. Cleanup follows resource ownership, cancels pending startup, and runs once. The regression first failed with zero resource releases, then passed with the fix (<code>ba3c11f</code>). Tests also cover local teardown before route release and replacement isolation.</p>
           <p>Introduce the smallest injectable capture-driver boundary needed to simulate acquiring a tap or direct-capture resource and then failing to start. Keep engine-specific behavior in the production implementation.</p>
-          <p>The current <code>AudioCaptureSession</code> acquires resources before setting <code>isRunning</code>, while <code>stop()</code> returns early if that flag is false. Explicit cleanup can therefore be skipped on a failed start. Clean up according to the resources actually acquired, including repeat Stop and cancellation during startup.</p>
+          <p>At audit time, <code>AudioCaptureSession</code> acquired resources before setting <code>isRunning</code>, while <code>stop()</code> returned early if that flag was false. Explicit cleanup could therefore be skipped on a failed start. Clean up according to the resources actually acquired, including repeat Stop and cancellation during startup.</p>
           <p class="acceptance"><strong>Acceptance:</strong> a regression test fails against the current partial-start path and passes with the fix; cleanup happens once; route release follows local capture teardown; a replacement session remains unaffected.</p>
           <p class="evidence">Evidence: <a href="Sources/SpeechPipeline/AudioCaptureSession.swift">AudioCaptureSession.swift</a>, lines 114–132 and 185–203; <a href="Tests/CoreTests/CaptionSessionRestartTests.swift">existing restart tests</a>.</p>
         </article>
         <article class="work" id="task-2b">
           <span class="work-id">02B · Failure and delivery contracts</span>
           <h3>Characterize behavior before changing it.</h3>
-          <p>The Apple source currently emits some runtime errors as volatile caption text; Soniox emits <code>.failure</code>, which the session treats as an error. Define the intended common contract and test it. Changing the Apple path to stop on failure is an intentional behavior fix, not a mechanical extraction; keep it in its own change.</p>
-          <p>Exercise Soniox’s bounded result stream under a delayed consumer. It currently shares one dropping queue between partial and final results. Define how partial updates can be coalesced and how finalized events are preserved or overflow is surfaced. Do not solve this by silently switching every queue to unbounded buffering.</p>
+          <p class="evidence"><strong>Implemented:</strong> Apple transcriber/analyzer errors now emit one terminal <code>.failure</code>, never spoken text; intentional cancellation stays silent (<code>f1fbfcb</code>). Soniox keeps its 64-event bound and permits replacement of partial previews. If a finalized event is evicted, it closes delivery with an explicit error and retires the connection. This overflow policy is recorded in Blinken. Every SQLite read loop now checks step results; a real integer-overflow query proves that failure after a successful row throws.</p>
+          <p>At audit time, the Apple source emitted some runtime errors as volatile caption text; Soniox emitted <code>.failure</code>, which the session treats as an error. Define the intended common contract and test it. Changing the Apple path to stop on failure is an intentional behavior fix, not a mechanical extraction; keep it in its own change.</p>
+          <p>Exercise Soniox’s bounded result stream under a delayed consumer. At audit time, it shared one dropping queue between partial and final results. Define how partial updates can be coalesced and how finalized events are preserved or overflow is surfaced. Do not solve this by silently switching every queue to unbounded buffering.</p>
           <p>Separately, make diagnostic SQLite reads distinguish <code>SQLITE_DONE</code> from step errors. Use a checked iteration helper and an injected or induced step-error test; a closed-store test alone only exercises statement preparation.</p>
           <p class="acceptance"><strong>Acceptance:</strong> terminal errors cannot be mistaken for spoken text under the chosen contract; delayed-consumer tests account for every finalized event; database read failures are reported rather than appearing as successful partial results.</p>
           <p class="evidence">Evidence: <a href="Sources/SpeechPipeline/LiveSpeechAnalyzerTranscriptionSource.swift">Apple source</a>, lines 225–227 and 272–277; <a href="Sources/SpeechPipeline/SonioxTranscriptionSource.swift">Soniox source</a>, lines 50–55; <a href="Sources/Debug/DiagnosticStore.swift">DiagnosticStore.swift</a>, lines 409–420.</p>
@@ -318,9 +320,11 @@
         <article class="work" id="task-2c">
           <span class="work-id">02C · Controlled time and transport failures</span>
           <h3>Make asynchronous tests deliberate.</h3>
-          <p>Inject a clock or narrow scheduling dependency into watchdogs and recovery. Several tests currently wait for the production three-second timeout. Advance test time explicitly and use controlled continuations for lifecycle milestones.</p>
+          <p class="evidence"><strong>Implemented:</strong> injected monotonic delays and controlled continuations replace multi-second watchdog waits. Tests cover startup cancellation, recovery backoff, explicit Stop during backoff, mid-stream closure, send failure, missing finish acknowledgement, and retired-provider events. The concrete URLSession transport has a small connection-driver seam plus delegate-bridge tests. Connection identity guards prevent old callbacks and operations from changing a replacement connection.</p>
+          <p>Inject a clock or narrow scheduling dependency into watchdogs and recovery. Several original tests waited for the production three-second timeout. Advance test time explicitly and use controlled continuations for lifecycle milestones.</p>
           <p>Add tests for cancellation at startup boundaries, mid-stream transport closure, send failure, a missing finish acknowledgement, and late events from retired providers. Retain the existing rapid-restart and interruption tests. Add a focused test seam for the concrete URLSession transport rather than assuming fake-transport tests cover its delegate and connection lifecycle.</p>
           <p class="acceptance"><strong>Acceptance:</strong> watchdog/recovery policy tests do not require multi-second real sleeps; cancellation and failure ordering is reproducible; the suite remains independent of microphones, credentials, and external speech services.</p>
+          <p class="evidence"><strong>Validation:</strong> full pinned local gate: formatting and lint, 17 runner tests, macOS SwiftPM tests, iOS simulator tests, and unsigned macOS/iOS app and widget builds. Physical capture, actual Apple recognition, and live Soniox service behavior remain unverified on target hardware.</p>
         </article>
       </section>
 
@@ -442,7 +446,7 @@
         <p class="eyebrow">Where to begin</p>
         <h2 id="starting-title">The first useful milestone.</h2>
         <div class="callout">
-          <p><strong>Phase 01 is implemented:</strong> pinned local checks, a reviewed lint baseline, consistent formatting, compiler warning enforcement, and current workflow documentation. The recommended next behavioral change is 02A: a focused regression test and fix for partial-start cleanup. Request it separately; no DSP algorithm, provider change, or capture refactor is included in the tooling work.</p>
+          <p><strong>Phases 01 and 02 are implemented:</strong> deterministic local quality checks, partial-start cleanup, explicit failure and overflow contracts, checked SQLite reads, and controlled lifecycle/transport tests. Physical microphone, interruption, and live-provider validation remain device checks. The next structural milestone is Phase 03; DSP and unified capture remain Phase 04 work.</p>
         </div>
         <p>After that, choose the next boundary according to the upcoming feature:</p>
         <ul>

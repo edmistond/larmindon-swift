@@ -60,25 +60,29 @@ final class CaptionSessionRestartTests: XCTestCase {
         func stop() async {}
     }
 
+    private let manualDelay = ManualDelay()
+
     private func quietSession() async -> (CaptionSession, QuietSource) {
         let source = QuietSource()
         let session = CaptionSession(selectedSourceKind: .fake)
         session.sourceFactory = { _, _ in source }
+        session.delay = manualDelay.dependency
         session.start()
         await waitUntil { session.activeMode != nil }
         return (session, source)
     }
 
-    private func waitForAudioWatchdog() async {
-        // Exercise the production three-second timeout, with scheduling headroom.
-        try? await Task.sleep(for: .milliseconds(3200))
+    private func waitForAudioWatchdog(_ session: CaptionSession) async {
+        await manualDelay.waitUntilScheduled(.seconds(3))
+        await manualDelay.advance(by: .seconds(3))
+        await session.silentCaptureTask?.value
     }
 
     func testSessionOwnedCapturePreventsNoAudioWarningEvenForUnchangedZeroLevels() async {
         let (session, _) = await quietSession()
         // The exact delivery boundary used by captureLevelTask in the Soniox path.
         session.receiveAudioLevels(AudioLevelSnapshot())
-        await waitForAudioWatchdog()
+        await waitForAudioWatchdog(session)
         XCTAssertNil(session.lastError)
         XCTAssertTrue(session.store.isRunning)
         await session.stop()
@@ -88,33 +92,35 @@ final class CaptionSessionRestartTests: XCTestCase {
         let (session, source) = await quietSession()
         source.levelContinuation.yield(AudioLevelSnapshot(rawInputLevel: 0.5))
         await waitUntil { session.audioLevels.rawInputLevel == 0.5 }
-        await waitForAudioWatchdog()
+        await waitForAudioWatchdog(session)
         XCTAssertNil(session.lastError)
         await session.stop()
     }
 
     func testLateAudioClearsWarningAndNewSessionStillDetectsMissingAudio() async {
         let (session, _) = await quietSession()
-        await waitForAudioWatchdog()
+        await waitForAudioWatchdog(session)
         XCTAssertTrue(session.lastError?.hasPrefix("No audio is arriving") == true)
         session.receiveAudioLevels(AudioLevelSnapshot())
         XCTAssertNil(session.lastError)
         await session.stop()
         session.start()
         await waitUntil { session.activeMode != nil }
-        await waitForAudioWatchdog()
+        await waitForAudioWatchdog(session)
         XCTAssertTrue(session.lastError?.hasPrefix("No audio is arriving") == true)
         await session.stop()
     }
 
     func testAudioDoesNotClearAnUnrelatedProviderFailure() async {
         let (session, source) = await quietSession()
-        await waitForAudioWatchdog()
+        await waitForAudioWatchdog(session)
         XCTAssertTrue(session.lastError?.hasPrefix("No audio is arriving") == true)
         source.resultContinuation.yield(.failure("Provider connection failed"))
         await waitUntil { session.lastError == "Provider connection failed" }
         session.receiveAudioLevels(AudioLevelSnapshot())
         XCTAssertEqual(session.lastError, "Provider connection failed")
+        await waitUntil { !session.store.isRunning }
+        XCTAssertFalse(session.lastVolatileResult.contains("Provider connection failed"))
         await session.stop()
     }
 
@@ -216,4 +222,50 @@ final class CaptionSessionRestartTests: XCTestCase {
         replacement.finish()
         await waitUntil { replacement.finished }
     }
+    private final class SuspendedStartupSource: TranscriptionSource {
+        let name = "Suspended startup"
+        let results = AsyncStream<CaptionResult> { $0.finish() }
+        let levelUpdates = AsyncStream<AudioLevelSnapshot> { $0.finish() }
+        let gate = AsyncGate()
+        var stopCount = 0
+        func start() async throws { await gate.suspend() }
+        func stop() async { stopCount += 1 }
+    }
+
+    func testCancelledStartupCannotChangeTheReplacementSession() async {
+        let old = SuspendedStartupSource()
+        let replacement = QuietSource()
+        let session = CaptionSession(selectedSourceKind: .fake)
+        var count = 0
+        session.sourceFactory = { _, _ in
+            count += 1
+            return count == 1 ? old : replacement
+        }
+        session.start()
+        await old.gate.waitUntilEntered()
+        session.start()
+        await waitUntil { session.activeMode != nil }
+        await old.gate.release()
+        await waitUntil { old.stopCount == 2 }
+        XCTAssertEqual(session.speechAnalyzerState, "Running Quiet")
+        XCTAssertTrue(session.store.isRunning)
+        XCTAssertNil(session.lastError)
+        await session.stop()
+    }
+
+    func testStoppedWatchdogCannotWarnDuringReplacementSession() async {
+        let (session, _) = await quietSession()
+        await manualDelay.waitUntilScheduled(.seconds(3))
+        let oldWatchdog = session.silentCaptureTask
+        await session.stop()
+        session.start()
+        await waitUntil { session.activeMode != nil }
+        session.receiveAudioLevels(AudioLevelSnapshot())
+        await manualDelay.advance(by: .seconds(3))
+        await oldWatchdog?.value
+        XCTAssertNil(session.lastError)
+        XCTAssertTrue(session.store.isRunning)
+        await session.stop()
+    }
+
 }

@@ -201,6 +201,93 @@ final class SonioxRealtimeClientTests: XCTestCase {
         XCTAssertEqual(state, .failed)
     }
 
+    func testCancelDuringConnectCannotResurrectStreaming() async throws {
+        let transport = FakeWebSocketTransport()
+        let gate = AsyncGate()
+        await transport.pauseConnect(on: gate)
+        let client = makeClient(transport: transport)
+        let start = Task { try await client.start() }
+        await gate.waitUntilEntered()
+        await client.cancel()
+        await gate.release()
+        do { _ = try await start.value; XCTFail("Cancelled connect must fail") } catch {
+            XCTAssertEqual(error as? SonioxRealtimeClientError, .cancelled)
+        }
+        let state = await client.state
+        let messages = await transport.sentTextMessages
+        XCTAssertEqual(state, .cancelled)
+        XCTAssertTrue(messages.isEmpty)
+    }
+
+    func testTaskCancellationWhileSendingConfigurationCannotStartReceiver() async throws {
+        let transport = FakeWebSocketTransport()
+        let gate = AsyncGate()
+        await transport.pauseText(on: gate)
+        let client = makeClient(transport: transport)
+        let start = Task { try await client.start() }
+        await gate.waitUntilEntered()
+        start.cancel()
+        await gate.release()
+        do { _ = try await start.value; XCTFail("Cancelled configuration must fail") } catch {
+            XCTAssertEqual(error as? SonioxRealtimeClientError, .cancelled)
+        }
+        let state = await client.state
+        XCTAssertEqual(state, .cancelled)
+    }
+
+    func testAudioSendFailureTerminatesTheEventStream() async throws {
+        let transport = FakeWebSocketTransport()
+        let client = makeClient(transport: transport)
+        let stream = try await client.start()
+        await transport.failBinary(with: .operationFailed("send failed"))
+        do { try await client.sendAudio(Data([1, 2])); XCTFail("Send must fail") } catch {
+            XCTAssertTrue(error.localizedDescription.contains("send failed"))
+        }
+        var iterator = stream.makeAsyncIterator()
+        do { _ = try await iterator.next(); XCTFail("Failure must reach the event consumer") } catch {
+            XCTAssertTrue(error.localizedDescription.contains("send failed"))
+        }
+        let state = await client.state
+        XCTAssertEqual(state, .failed)
+    }
+
+    func testClosureWhileFinishFrameIsSuspendedDoesNotLeaveFinishWaitingForever() async throws {
+        let transport = FakeWebSocketTransport()
+        let client = makeClient(transport: transport)
+        let stream = try await client.start()
+        let gate = AsyncGate()
+        await transport.pauseBinary(on: gate)
+        let finish = Task { try await client.finish() }
+        await gate.waitUntilEntered()
+        await transport.close(code: .goingAway)
+        var iterator = stream.makeAsyncIterator()
+        do { _ = try await iterator.next(); XCTFail("Close must terminate the stream") } catch {}
+        await gate.release()
+        do { try await finish.value; XCTFail("Finish must fail after closure") } catch {}
+        let state = await client.state
+        XCTAssertEqual(state, .failed)
+    }
+
+    func testLateFinishedResponseCannotOverwriteCancelledState() async throws {
+        let transport = FakeWebSocketTransport()
+        let client = makeClient(transport: transport)
+        let stream = try await client.start()
+        let receiver = await client.receiveTask
+        let gate = AsyncGate()
+        await transport.pauseReceive(on: gate)
+        await transport.enqueue(.text("{\"tokens\":[],\"finished\":true}"))
+        await gate.waitUntilEntered()
+        await client.cancel()
+        await gate.release()
+        await receiver?.value
+        let state = await client.state
+        XCTAssertEqual(state, .cancelled)
+        var iterator = stream.makeAsyncIterator()
+        do { _ = try await iterator.next(); XCTFail("Cancelled stream must throw") } catch {
+            XCTAssertEqual(error as? SonioxRealtimeClientError, .cancelled)
+        }
+    }
+
     private func makeClient(
         transport: FakeWebSocketTransport
     ) -> SonioxRealtimeClient {

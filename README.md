@@ -134,9 +134,10 @@ complexity exceptions. No correctness-rule exceptions were needed:
 | `AudioRouteManager.apply` | 11 | Separate configuration resolution from application |
 | `CaptionSession.performStart` | 20 | Separate provider creation and lifecycle coordination |
 | `LiveSpeechAnalyzerTranscriptionSource.startSpeechAnalyzerPipeline` | 15 | Extract capture ownership |
-| `SonioxTranscriptionSource.start(audioFrames:)` | 16 | Separate event, send, and connection lifecycles |
 
-These exceptions let tooling land without rewriting startup behavior. The
+Phase 02 separated Soniox event consumption, audio sending, and pings into focused
+methods, retiring its complexity exception. The remaining exceptions let tooling
+land without rewriting the other startup paths. The
 separate [metrics configuration](.swiftlint-metrics.yml) reports them without a
 baseline, alongside file, type, function length, and nesting findings. Length
 and nesting are advisory even when SwiftLint labels a finding an error. A native
@@ -157,10 +158,19 @@ Do not approve all findings simply to make checks pass. The gate's own tests use
 disposable copies to verify that new violations fail and the baseline remains
 portable across checkout paths.
 
-See the [maintenance plan](maintenance-and-modularization-plan.html#phase-1) for
-the remaining work. **01A–01C** are implemented locally; CI and
+See the [maintenance plan](maintenance-and-modularization-plan.html#phase-2) for
+the remaining work. **01A–01C and 02A–02C** are implemented locally; CI and
 release/distribution automation are deferred. Passing local tests/builds does not validate physical-device audio,
 SpeechAnalyzer operation, live provider services, or speech quality in noise.
+
+Phase 02 keeps all lifecycle tests offline. Capture acquisition, transport startup,
+shutdown deadlines, and interruption backoff have narrow injectable dependencies;
+production still uses the same capture strategies and monotonic delays. Terminal
+recognition errors use `CaptionResult.failure`, including Apple runtime errors.
+Soniox retains a 64-event result buffer: partial previews may be replaced, but
+losing a finalized event terminates delivery with an explicit error. Diagnostic
+SQLite reads throw on step errors, including failures after earlier successful rows.
+
 
 ## Build the iOS Simulator Target
 

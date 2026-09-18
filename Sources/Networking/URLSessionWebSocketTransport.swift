@@ -1,239 +1,162 @@
 import Foundation
 
 public actor URLSessionWebSocketTransport: WebSocketTransport {
-    private let endpoint: URL
-    private var session: URLSession?
-    private var webSocketTask: URLSessionWebSocketTask?
-    private var delegate: WebSocketDelegate?
-    private var connectContinuation: CheckedContinuation<Void, any Error>?
-    private var closeDetails: WebSocketCloseDetails?
+    typealias ConnectionFactory =
+        @Sendable (
+            @escaping @Sendable (WebSocketConnectionEvent) async -> Void
+        ) -> any WebSocketConnection
+
+    private final class Attempt {
+        let id: UUID
+        let driver: any WebSocketConnection
+        var isOpen = false
+        var error: WebSocketTransportError?
+        var continuation: CheckedContinuation<Void, any Error>?
+
+        init(id: UUID, driver: any WebSocketConnection) {
+            self.id = id
+            self.driver = driver
+        }
+    }
+
+    private let makeConnection: ConnectionFactory
+    private var connection: Attempt?
 
     public init(endpoint: URL) {
-        self.endpoint = endpoint
+        makeConnection = { URLSessionWebSocketConnection(endpoint: endpoint, onEvent: $0) }
+    }
+
+    init(makeConnection: @escaping ConnectionFactory) {
+        self.makeConnection = makeConnection
     }
 
     public func connect() async throws {
-        guard webSocketTask == nil else {
+        guard connection == nil else {
             throw WebSocketTransportError.connectionFailed("A connection is already active.")
         }
-
-        closeDetails = nil
-        let delegate = WebSocketDelegate(owner: self)
-        let session = URLSession(
-            configuration: .default,
-            delegate: delegate,
-            delegateQueue: nil
-        )
-        let task = session.webSocketTask(with: endpoint)
-        self.delegate = delegate
-        self.session = session
-        webSocketTask = task
-
+        try Task.checkCancellation()
+        let id = UUID()
+        let driver = makeConnection { [weak self] event in
+            await self?.handle(event, id: id)
+        }
+        let attempt = Attempt(id: id, driver: driver)
+        connection = attempt
         do {
             try await withTaskCancellationHandler {
+                try Task.checkCancellation()
                 try await withCheckedThrowingContinuation { continuation in
-                    connectContinuation = continuation
-                    task.resume()
+                    attempt.continuation = continuation
+                    driver.resume()
                 }
             } onCancel: {
-                Task {
-                    await self.cancelConnectionAttempt()
-                }
+                Task { await self.cancelConnectionAttempt(id: id) }
             }
+            try Task.checkCancellation()
+            try validate(attempt)
         } catch {
-            tearDown()
+            endConnection(id: id, error: .connectionFailed(error.localizedDescription), code: .goingAway)
             throw error
         }
     }
 
     public func sendText(_ text: String) async throws {
-        let task = try connectedTask()
-        do {
-            try await task.send(.string(text))
-        } catch {
-            throw resolvedError(error)
-        }
+        try await send(.text(text))
     }
 
     public func sendBinary(_ data: Data) async throws {
-        let task = try connectedTask()
+        try await send(.binary(data))
+    }
+
+    private func send(_ message: WebSocketMessage) async throws {
+        let attempt = try connectedAttempt()
         do {
-            try await task.send(.data(data))
+            try await attempt.driver.send(message)
+            try validate(attempt)
         } catch {
-            throw resolvedError(error)
+            throw resolvedError(error, attempt: attempt)
         }
     }
 
     public func receive() async throws -> WebSocketMessage {
-        let task = try connectedTask()
+        let attempt = try connectedAttempt()
         do {
-            switch try await task.receive() {
-            case .string(let text):
-                return .text(text)
-            case .data(let data):
-                return .binary(data)
-            @unknown default:
-                throw WebSocketTransportError.unsupportedMessage
-            }
+            let message = try await attempt.driver.receive()
+            try validate(attempt)
+            return message
         } catch {
-            throw resolvedError(error)
+            throw resolvedError(error, attempt: attempt)
         }
     }
 
     public func sendPing() async throws {
-        let task = try connectedTask()
+        let attempt = try connectedAttempt()
         do {
-            try await withCheckedThrowingContinuation {
-                (continuation: CheckedContinuation<Void, any Error>) in
-                task.sendPing { error in
-                    if let error {
-                        continuation.resume(
-                            throwing: WebSocketTransportError.operationFailed(
-                                error.localizedDescription
-                            )
-                        )
-                    } else {
-                        continuation.resume()
-                    }
-                }
-            }
+            try await attempt.driver.sendPing()
+            try validate(attempt)
         } catch {
-            throw resolvedError(error)
+            throw resolvedError(error, attempt: attempt)
         }
     }
 
     public func close(code: WebSocketCloseCode) async {
-        guard let task = webSocketTask else { return }
-        let foundationCode =
-            URLSessionWebSocketTask.CloseCode(rawValue: code.rawValue)
-            ?? .goingAway
-        task.cancel(with: foundationCode, reason: nil)
-        tearDown()
-    }
-
-    fileprivate func didOpen() {
-        connectContinuation?.resume()
-        connectContinuation = nil
-    }
-
-    fileprivate func didClose(code: Int, reason: Data?) {
-        closeDetails = WebSocketCloseDetails(
-            code: code,
-            reason: reason.flatMap { String(data: $0, encoding: .utf8) }
+        guard let connection else { return }
+        endConnection(
+            id: connection.id,
+            error: .closed(WebSocketCloseDetails(code: code.rawValue, reason: nil)),
+            code: code
         )
-        if let connectContinuation {
-            connectContinuation.resume(
-                throwing: WebSocketTransportError.closed(closeDetails!)
+    }
+
+    private func handle(_ event: WebSocketConnectionEvent, id: UUID) {
+        guard let connection, connection.id == id else { return }
+        switch event {
+        case .opened:
+            guard connection.continuation != nil else { return }
+            connection.isOpen = true
+            connection.continuation?.resume()
+            connection.continuation = nil
+        case .closed(let details):
+            endConnection(id: id, error: .closed(details))
+        case .completed(let errorDescription):
+            endConnection(
+                id: id,
+                error: .connectionFailed(errorDescription ?? "The connection ended.")
             )
-            self.connectContinuation = nil
         }
     }
 
-    fileprivate func didComplete(errorDescription: String?) {
-        guard let connectContinuation else { return }
-        if let errorDescription {
-            connectContinuation.resume(
-                throwing: WebSocketTransportError.connectionFailed(errorDescription)
-            )
-        } else if let closeDetails {
-            connectContinuation.resume(
-                throwing: WebSocketTransportError.closed(closeDetails)
-            )
-        } else {
-            connectContinuation.resume(
-                throwing: WebSocketTransportError.connectionFailed(
-                    "The connection ended before opening."
-                )
-            )
-        }
-        self.connectContinuation = nil
+    private func connectedAttempt() throws -> Attempt {
+        guard let connection, connection.isOpen else { throw WebSocketTransportError.notConnected }
+        return connection
     }
 
-    private func connectedTask() throws -> URLSessionWebSocketTask {
-        guard let webSocketTask else {
-            throw WebSocketTransportError.notConnected
-        }
-        return webSocketTask
+    private func validate(_ attempt: Attempt) throws {
+        if let error = attempt.error { throw error }
+        guard connection?.id == attempt.id, attempt.isOpen else { throw WebSocketTransportError.notConnected }
     }
 
-    private func resolvedError(_ error: any Error) -> any Error {
-        if error is CancellationError {
-            return error
-        }
-        if let transportError = error as? WebSocketTransportError {
-            return transportError
-        }
-        if let closeDetails {
-            return WebSocketTransportError.closed(closeDetails)
-        }
-        if let task = webSocketTask,
-            task.closeCode != .invalid
-        {
-            return WebSocketTransportError.closed(
-                WebSocketCloseDetails(
-                    code: task.closeCode.rawValue,
-                    reason: task.closeReason.flatMap {
-                        String(data: $0, encoding: .utf8)
-                    }
-                )
-            )
-        }
+    private func resolvedError(_ error: any Error, attempt: Attempt) -> any Error {
+        if error is CancellationError { return error }
+        if let terminalError = attempt.error { return terminalError }
+        if let details = attempt.driver.closeDetails { return WebSocketTransportError.closed(details) }
+        if let transportError = error as? WebSocketTransportError { return transportError }
         return WebSocketTransportError.operationFailed(error.localizedDescription)
     }
 
-    private func cancelConnectionAttempt() {
-        connectContinuation?.resume(throwing: CancellationError())
-        connectContinuation = nil
-        webSocketTask?.cancel(with: .goingAway, reason: nil)
-        tearDown()
+    private func cancelConnectionAttempt(id: UUID) {
+        guard let connection, connection.id == id else { return }
+        connection.continuation?.resume(throwing: CancellationError())
+        connection.continuation = nil
+        endConnection(id: id, error: .connectionFailed("Connection cancelled."), code: .goingAway)
     }
 
-    private func tearDown() {
-        webSocketTask = nil
-        session?.invalidateAndCancel()
-        session = nil
-        delegate = nil
-    }
-}
-
-private final class WebSocketDelegate: NSObject, URLSessionWebSocketDelegate,
-    @unchecked Sendable
-{
-    private weak var owner: URLSessionWebSocketTransport?
-
-    init(owner: URLSessionWebSocketTransport) {
-        self.owner = owner
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        webSocketTask: URLSessionWebSocketTask,
-        didOpenWithProtocol protocol: String?
-    ) {
-        Task {
-            await owner?.didOpen()
-        }
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        webSocketTask: URLSessionWebSocketTask,
-        didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
-        reason: Data?
-    ) {
-        Task {
-            await owner?.didClose(code: closeCode.rawValue, reason: reason)
-        }
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didCompleteWithError error: (any Error)?
-    ) {
-        let errorDescription = error?.localizedDescription
-        Task {
-            await owner?.didComplete(errorDescription: errorDescription)
-        }
+    private func endConnection(id: UUID, error: WebSocketTransportError, code: WebSocketCloseCode? = nil) {
+        guard let connection, connection.id == id else { return }
+        connection.error = error
+        connection.continuation?.resume(throwing: error)
+        connection.continuation = nil
+        self.connection = nil
+        if let code { connection.driver.cancel(code: code) }
+        connection.driver.invalidate()
     }
 }
