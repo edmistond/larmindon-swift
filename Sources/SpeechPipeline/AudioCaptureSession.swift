@@ -22,52 +22,128 @@ public final class AudioCaptureSession {
 
     private let frameContinuation: AsyncStream<CapturedAudioFrame>.Continuation
     private let levelContinuation: AsyncStream<AudioLevelSnapshot>.Continuation
-    private let inputDeviceID: UInt32?
-    private let bufferFrameCount: AVAudioFrameCount
-    private let requestedVoiceProcessingEnabled: Bool
+    private let driver: any AudioCaptureDriving
+    private let requestPermission: @MainActor () async throws -> Void
     private let diagnostics: DiagnosticRecorder
-    private let audioEngine = AVAudioEngine()
     private let telemetry: AudioCaptureTelemetry
     private let levelReporter = ServerAudioLevelReporter()
-    private var isTapInstalled = false
-    private var isRunning = false
+    private enum State { case idle, starting, running, stopped }
+    private var state = State.idle
+    private var ownsDriverResources = false
     private var stallCheckTask: Task<Void, Never>?
 
-    #if os(macOS)
-    private var directCapture: SharedMacOSAudioDeviceCapture?
-    #endif
-
-    public init(
+    public convenience init(
         inputDeviceID: UInt32?,
         bufferFrameCount: Int,
         voiceProcessingEnabled: Bool,
         diagnostics: DiagnosticRecorder = .shared
     ) {
-        self.inputDeviceID = inputDeviceID
-        self.bufferFrameCount = AVAudioFrameCount(
-            AudioCaptureBufferFrames.clamped(bufferFrameCount)
+        self.init(
+            driver: SystemAudioCaptureDriver(
+                inputDeviceID: inputDeviceID,
+                bufferFrameCount: bufferFrameCount,
+                voiceProcessingEnabled: voiceProcessingEnabled
+            ),
+            requestPermission: { try await MicrophonePermission.ensureGranted() },
+            diagnostics: diagnostics
         )
-        self.requestedVoiceProcessingEnabled = voiceProcessingEnabled
+    }
+
+    init(
+        driver: any AudioCaptureDriving,
+        requestPermission: @escaping @MainActor () async throws -> Void = {},
+        diagnostics: DiagnosticRecorder = .shared
+    ) {
+        self.driver = driver
+        self.requestPermission = requestPermission
         self.diagnostics = diagnostics
-        self.telemetry = AudioCaptureTelemetry(diagnostics: diagnostics)
-
-        var frameContinuation: AsyncStream<CapturedAudioFrame>.Continuation!
-        frames = AsyncStream(bufferingPolicy: .bufferingNewest(32)) {
-            frameContinuation = $0
-        }
-        self.frameContinuation = frameContinuation
-
-        var levelContinuation: AsyncStream<AudioLevelSnapshot>.Continuation!
-        levelUpdates = AsyncStream(bufferingPolicy: .bufferingNewest(16)) {
-            levelContinuation = $0
-        }
-        self.levelContinuation = levelContinuation
+        telemetry = AudioCaptureTelemetry(diagnostics: diagnostics)
+        (frames, frameContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(32))
+        (levelUpdates, levelContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(16))
     }
 
     public func start() async throws {
-        guard !isRunning else { return }
-        try await MicrophonePermission.ensureGranted()
+        if state == .running { return }
+        guard state == .idle else { throw CancellationError() }
+        state = .starting
+        do {
+            try await requestPermission()
+            try Task.checkCancellation()
+            guard state == .starting else { throw CancellationError() }
+            let sink = SharedAudioCaptureSink(
+                frameContinuation: frameContinuation,
+                levelContinuation: levelContinuation,
+                telemetry: telemetry,
+                levelReporter: levelReporter
+            )
+            // A driver may acquire a tap before throwing. Ownership begins before start.
+            ownsDriverResources = true
+            let info = try driver.start(onBuffer: sink.handle)
+            activeVoiceProcessingEnabled = info.voiceProcessingEnabled
+            state = .running
+            stallCheckTask = telemetry.scheduleStallCheck(fields: info.fields)
+            await diagnostics.record(category: "audio", name: "capture_started", fields: info.fields)
+            try Task.checkCancellation()
+            guard state == .running else { throw CancellationError() }
+        } catch {
+            await stop()
+            throw error
+        }
+    }
 
+    /// Marks the provider as alive, turning the level meter's hot state on.
+    public func noteProviderActivity() {
+        levelReporter.noteProviderActivity()
+    }
+
+    public func stop() async {
+        stallCheckTask?.cancel()
+        stallCheckTask = nil
+        guard state != .stopped else { return }
+        state = .stopped
+        if ownsDriverResources {
+            driver.stop()
+            ownsDriverResources = false
+        }
+        frameContinuation.finish()
+        levelContinuation.finish()
+        await diagnostics.record(
+            category: "audio", name: "capture_stopped", fields: telemetry.snapshot().diagnosticFields
+        )
+    }
+}
+
+struct AudioCaptureStartInfo {
+    let voiceProcessingEnabled: Bool
+    let fields: [String: String]
+}
+
+/// A single capture attempt. stop() also releases resources acquired by a failed start.
+@MainActor
+protocol AudioCaptureDriving: AnyObject {
+    func start(onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) throws -> AudioCaptureStartInfo
+    func stop()
+}
+
+@MainActor
+private final class SystemAudioCaptureDriver: AudioCaptureDriving {
+    private let inputDeviceID: UInt32?
+    private let bufferFrameCount: AVAudioFrameCount
+    private let requestedVoiceProcessingEnabled: Bool
+    private let audioEngine = AVAudioEngine()
+    private var isTapInstalled = false
+    private var activeVoiceProcessingEnabled: Bool?
+    #if os(macOS)
+    private var directCapture: SharedMacOSAudioDeviceCapture?
+    #endif
+
+    init(inputDeviceID: UInt32?, bufferFrameCount: Int, voiceProcessingEnabled: Bool) {
+        self.inputDeviceID = inputDeviceID
+        self.bufferFrameCount = AVAudioFrameCount(AudioCaptureBufferFrames.clamped(bufferFrameCount))
+        self.requestedVoiceProcessingEnabled = voiceProcessingEnabled
+    }
+
+    func start(onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) throws -> AudioCaptureStartInfo {
         let inputNode = audioEngine.inputNode
         let captureFormat: AVAudioFormat
         var strategy = "audio_engine"
@@ -103,94 +179,54 @@ public final class AudioCaptureSession {
         activeVoiceProcessingEnabled = resolved.activeVoiceProcessingEnabled
         #endif
 
-        let sink = SharedAudioCaptureSink(
-            frameContinuation: frameContinuation,
-            levelContinuation: levelContinuation,
-            telemetry: telemetry,
-            levelReporter: levelReporter
-        )
-
         #if os(macOS)
         if strategy == "core_audio_device", let inputDeviceID {
             let capture = try SharedMacOSAudioDeviceCapture(
                 deviceID: AudioDeviceID(inputDeviceID),
                 captureFormat: captureFormat,
-                onBuffer: sink.handle
+                onBuffer: onBuffer
             )
             directCapture = capture
             try capture.start()
         } else {
-            installEngineTap(on: inputNode, sink: sink)
+            installEngineTap(on: inputNode, onBuffer: onBuffer)
             try audioEngine.start()
         }
         #else
-        installEngineTap(on: inputNode, sink: sink)
+        installEngineTap(on: inputNode, onBuffer: onBuffer)
         try audioEngine.start()
         #endif
 
-        isRunning = true
-        stallCheckTask = telemetry.scheduleStallCheck(
-            fields: [
-                "strategy": strategy,
-                "sample_rate": String(captureFormat.sampleRate),
-                "channels": String(captureFormat.channelCount),
-                "voice_processing_active":
-                    activeVoiceProcessingEnabled.map(String.init) ?? "false",
-            ]
-        )
-
-        await diagnostics.record(
-            category: "audio",
-            name: "capture_started",
+        return AudioCaptureStartInfo(
+            voiceProcessingEnabled: activeVoiceProcessingEnabled ?? false,
             fields: [
                 "strategy": strategy,
                 "sample_rate": String(captureFormat.sampleRate),
                 "channels": String(captureFormat.channelCount),
                 "format": String(describing: captureFormat.commonFormat),
                 "buffer_frames": String(bufferFrameCount),
-                "voice_processing_requested":
-                    String(requestedVoiceProcessingEnabled),
-                "voice_processing_active":
-                    activeVoiceProcessingEnabled.map(String.init) ?? "false",
-                "voice_processing_skipped":
-                    configuration?.voiceProcessingSkippedReason ?? "none",
+                "voice_processing_requested": String(requestedVoiceProcessingEnabled),
+                "voice_processing_active": activeVoiceProcessingEnabled.map(String.init) ?? "false",
+                "voice_processing_skipped": configuration?.voiceProcessingSkippedReason ?? "none",
             ]
         )
     }
 
-    /// Marks the provider as alive, turning the level meter's hot state on. See
-    /// `ServerAudioLevelReporter` for why the meter reports backend output rather than input
-    /// loudness in server mode.
-    public func noteProviderActivity() {
-        levelReporter.noteProviderActivity()
-    }
-
-    /// Installs the tap with a nil format so the node's own format is used verbatim.
-    /// Passing a format that disagrees with the bus makes `installTap` raise an
-    /// Objective-C exception, which Swift cannot catch and which takes the app down.
+    // Nil format preserves the node's exact bus format and avoids an Objective-C exception.
     private func installEngineTap(
         on inputNode: AVAudioInputNode,
-        sink: SharedAudioCaptureSink
+        onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void
     ) {
         inputNode.installTap(
             onBus: 0,
             bufferSize: bufferFrameCount,
             format: nil,
-            block: makeSharedAudioTapHandler(sink: sink)
+            block: makeSharedAudioTapHandler(onBuffer: onBuffer)
         )
         isTapInstalled = true
     }
 
-    public func stop() async {
-        stallCheckTask?.cancel()
-        stallCheckTask = nil
-
-        guard isRunning else {
-            frameContinuation.finish()
-            levelContinuation.finish()
-            return
-        }
-
+    func stop() {
         #if os(macOS)
         directCapture?.stop()
         directCapture = nil
@@ -200,15 +236,6 @@ public final class AudioCaptureSession {
             isTapInstalled = false
         }
         audioEngine.stop()
-        isRunning = false
-        frameContinuation.finish()
-        levelContinuation.finish()
-
-        await diagnostics.record(
-            category: "audio",
-            name: "capture_stopped",
-            fields: telemetry.snapshot().diagnosticFields
-        )
     }
 }
 
@@ -339,10 +366,10 @@ final class ServerAudioLevelReporter: @unchecked Sendable {
 // closure outside AudioCaptureSession prevents it from inheriting @MainActor
 // isolation and triggering Swift's runtime executor check on that queue.
 private func makeSharedAudioTapHandler(
-    sink: SharedAudioCaptureSink
+    onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void
 ) -> (AVAudioPCMBuffer, AVAudioTime) -> Void {
     { buffer, _ in
-        sink.handle(buffer)
+        onBuffer(buffer)
     }
 }
 
