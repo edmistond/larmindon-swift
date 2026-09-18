@@ -25,7 +25,7 @@ class GateTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         for name in ("Sources", "Tests", "Widgets"):
             shutil.copytree(checks.ROOT / name, self.root / name)
-        for name in ("Package.swift", "Project.swift", ".swiftlint.yml",
+        for name in ("Package.swift", "Project.swift", ".swift-format", ".swiftlint.yml",
                      ".swiftlint-metrics.yml", ".swiftlint-baseline.json"):
             shutil.copy2(checks.ROOT / name, self.root / name)
         self.reports = self.root / "reports"
@@ -33,6 +33,35 @@ class GateTests(unittest.TestCase):
     def lint(self):
         with contextlib.redirect_stdout(io.StringIO()):
             checks.lint(self.root, checks.SWIFTLINT, self.reports)
+
+    def check_format(self):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            checks.check_format(self.root, self.reports)
+
+    def test_format_gate_passes_without_rewriting_inputs(self):
+        before = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        self.check_format()
+        for name, content in before.items():
+            self.assertEqual((self.root / name).read_bytes(), content, str(name))
+
+    def test_unformatted_source_fails_without_being_fixed(self):
+        probe = self.root / "Sources/GateProbe.swift"
+        original = "func  formattingProbe(  ) {  print(  1) }\n"
+        probe.write_text(original)
+        with self.assertRaisesRegex(checks.CheckFailure, "format failed"):
+            self.check_format()
+        self.assertEqual(probe.read_text(), original)
+        self.assertIn("GateProbe.swift", (self.reports / "format.log").read_text())
+
+    def test_missing_formatter_configuration_fails(self):
+        (self.root / ".swift-format").unlink()
+        with self.assertRaisesRegex(checks.CheckFailure, "Missing required check input: .swift-format"):
+            self.check_format()
+
+    def test_invalid_formatter_configuration_fails(self):
+        (self.root / ".swift-format").write_text("{ invalid JSON }")
+        with self.assertRaisesRegex(checks.CheckFailure, "format failed"):
+            self.check_format()
 
     def test_baseline_is_portable_and_checks_do_not_rewrite_inputs(self):
         before = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
@@ -83,6 +112,18 @@ class GateTests(unittest.TestCase):
 
 
 class RunnerTests(unittest.TestCase):
+    def test_swift_compiler_warning_is_an_error(self):
+        with tempfile.TemporaryDirectory(dir=checks.ROOT / ".build") as temporary:
+            reports = Path(temporary)
+            probe = reports / "WarningProbe.swift"
+            probe.write_text('#warning("Compiler warning gate probe")\n')
+            command = ["xcrun", "swiftc", "-typecheck", checks.SWIFT_WARNINGS_AS_ERRORS,
+                       "-module-cache-path", str(reports / "module-cache"), str(probe)]
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(checks.CheckFailure):
+                    checks.run_step("warning-probe", command, reports)
+            self.assertIn("error: Compiler warning gate probe", (reports / "warning-probe.log").read_text())
+
     def test_wrong_tool_version_fails(self):
         with self.assertRaisesRegex(checks.CheckFailure, "expected 0.65.1, found 0.64.0"):
             checks.require_version("SwiftLint", "0.64.0", "0.65.1")

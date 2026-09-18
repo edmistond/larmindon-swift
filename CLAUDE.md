@@ -25,10 +25,13 @@ reach for it deliberately on grep/search/git/build output where filtering helps.
 
 Use `./scripts/check.sh` for the full local gate: pinned-tool preflight, lint,
 check-runner regression tests, Tuist generation, macOS and iOS unit tests, and
-unsigned app/widget builds. `lint`, `test`, and `build` select focused subsets.
+unsigned app/widget builds. `lint`, `format`, `test`, and `build` select focused subsets.
 See README for explicit setup and `scripts/checks-toolchain.json` for tool pins.
 Do not regenerate `.swiftlint-baseline.json` to hide new violations. Length
-metrics are advisory; formatting enforcement and CI are deferred.
+metrics are advisory; CI is deferred. `all`/`lint`/`format` check formatting using
+the pinned Xcode's `swift-format` and `.swift-format` without changing files.
+Keep broad formatting sweeps in separate checkpoints. Test/build commands treat
+Swift compiler warnings as errors while retaining Swift 6 language checking.
 
 Tuist-generated project (`Project.swift` → `Larmindon.xcworkspace`). Schemes/targets:
 
@@ -37,6 +40,8 @@ Tuist-generated project (`Project.swift` → `Larmindon.xcworkspace`). Schemes/t
 - `Larmindon` — iOS app (`Sources/App/**`). **This scheme has no macOS destination.**
 - `Larmindon-macOS` — macOS app (same `Sources/App/**`).
 - `CoreTests` — unit tests (`Tests/CoreTests/**`).
+- `LarmindonTestHost` — blank iOS app supplying a window scene for layout tests;
+  it has no capture/diagnostics startup and is not a shipped app dependency.
 
 Compile-check (iOS sim):
 ```

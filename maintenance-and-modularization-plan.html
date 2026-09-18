@@ -160,7 +160,7 @@
           <li><a href="#references">Evidence &amp; references</a></li>
         </ol>
       </nav>
-      <p class="rail-note">01A &amp; 01B implemented locally.<br>Remaining tasks are proposed.<br><br>Self-contained · works offline · print styles included</p>
+      <p class="rail-note">Phase 01 implemented locally.<br>Remaining phases are proposed.<br><br>Self-contained · works offline · print styles included</p>
     </aside>
 
     <main id="main">
@@ -170,7 +170,7 @@
         <p class="lede">A maintenance and modularization plan for Larmindon, preparing the audio pipeline and speech-provider boundaries for what comes next.</p>
         <div class="meta">
           <span><strong>Prepared</strong> <time datetime="2026-09-18">18 September 2026</time></span>
-          <span><strong>Status</strong> 01A &amp; 01B implemented</span>
+          <span><strong>Status</strong> 01A–01C implemented</span>
           <span><strong>Audited revision</strong> <code>fe9eeb1</code></span>
         </div>
       </header>
@@ -183,7 +183,7 @@
         <div class="callout">
           <p><strong>Recommended investment:</strong> establish deterministic checks, strengthen failure-path tests, finish the provider abstraction, and consolidate capture. Introduce build-enforced module boundaries after those responsibilities have settled.</p>
         </div>
-        <p>Tasks 01A and 01B now provide a local check workflow; CI and release automation are deferred. The remaining tasks are proposals. Task identifiers make individual changes easy to request, review, and roll back. Proposed type names describe responsibilities; they are not a requirement to introduce a framework or a particular dependency.</p>
+        <p>Tasks 01A–01C now provide a local check workflow, consistent formatting, and a Swift compiler warning gate; CI and release automation are deferred. The remaining phases are proposals. Task identifiers make individual changes easy to request, review, and roll back. Proposed type names describe responsibilities; they are not a requirement to introduce a framework or a particular dependency.</p>
         <p>Existing behavior is the baseline. Structural changes and intentional behavior fixes should be separate changes, with separate evidence. DSP algorithms, Azure integration, and speech-quality claims remain follow-on work.</p>
       </section>
 
@@ -249,12 +249,12 @@
         <article class="work" id="task-1a">
           <span class="work-id">01A · Reproducible checks · Implemented</span>
           <h3>One local command, with explicit setup.</h3>
-          <p><a href="scripts/check.sh"><code>./scripts/check.sh</code></a> is the full check entry point. <a href="scripts/checks-toolchain.json">One toolchain file</a> pins Xcode 27.0 (27A266a), Swift 6.4, Tuist 4.200.1, SwiftLint 0.65.1, and the iOS 26.5 simulator runtime. The bundled formatter is identified by the Xcode pin; formatting enforcement remains 01C.</p>
+          <p><a href="scripts/check.sh"><code>./scripts/check.sh</code></a> is the full check entry point. <a href="scripts/checks-toolchain.json">One toolchain file</a> pins Xcode 27.0 (27A266a), Swift 6.4, Tuist 4.200.1, SwiftLint 0.65.1, and the iOS 26.5 simulator runtime. The bundled formatter is identified by the Xcode pin; its configuration and enforcement were added in 01C.</p>
           <p>The command regenerates the Tuist workspace, runs package tests on macOS and the <code>CoreTests</code> scheme on iOS Simulator, and builds both apps and the widget without signing. <code>swift test</code> alone omits the app entry point and widget and does not exercise iOS-only tests. The runner also exercises its own failure-path regression tests.</p>
           <p>Start with the <a href="README.md#local-quality-checks">README setup instructions</a>. <code>./scripts/check.sh setup</code> explicitly installs a checksum-verified linter under ignored <code>.build/</code> storage. Routine checks fail for missing or mismatched tools, missing source groups, invalid lint configuration, or failed build/test commands. They never autofix, install tools, call paid providers, or request credentials. Git-visible inputs are checked for changes after the run.</p>
           <p>Use <code>./scripts/check.sh lint</code> for quick feedback; <code>test</code> and <code>build</code> select focused subsets. Per-run reports and logs live under <code>.build/checks/</code>. CI checkout jobs, signing, and distribution automation are deferred; the supported near-term workflow is cloning the repository and following these local instructions.</p>
           <p class="acceptance"><strong>Acceptance:</strong> the documented local command runs with pinned tools; app/widget build failures are visible; checks do not change source inputs. A simulator UDID can be selected explicitly, but the runtime cannot silently drift to “latest.”</p>
-          <p class="evidence"><strong>Validated 18 September 2026:</strong> 12 check-runner tests, 136 macOS tests, 146 iOS simulator tests, and both app/widget builds passed through the local entry point. The source-input integrity check passed. Existing compiler warnings remain visible; warnings-as-errors is deferred to 01C.</p>
+          <p class="evidence"><strong>Original 01A verification, 18 September 2026:</strong> 12 check-runner tests, 136 macOS tests, 146 iOS simulator tests, and both app/widget builds passed, including in a clean temporary worktree. The source-input integrity check passed. 01C extends this workflow with formatting and Swift warnings-as-errors.</p>
         </article>
         <article class="work" id="task-1b">
           <span class="work-id">01B · Lint and complexity policy · Implemented</span>
@@ -266,12 +266,15 @@
           <p class="acceptance"><strong>Acceptance:</strong> deliberately introduced correctness and complexity violations fail; the existing baseline passes; the four measured startup hotspots remain visible in the unfiltered report. Baseline regeneration is an explicit review operation documented in the README.</p>
         </article>
         <article class="work" id="task-1c">
-          <span class="work-id">01C · Formatting, warnings, and documentation</span>
+          <span class="work-id">01C · Formatting, warnings, and documentation · Implemented</span>
           <h3>Make mechanical maintenance inexpensive.</h3>
-          <p>Agree on one formatter configuration, then apply it in a standalone mechanical checkpoint. Add check-only formatting to the local command. Do not mix the initial formatting sweep with lifecycle changes or source movement.</p>
-          <p>Resolve the known deprecated <code>UIWindow(frame:)</code> fallback in the layout tests before enabling Swift compiler warnings-as-errors. Keep SDK/toolchain upgrades separate so newly introduced warnings are attributable. Existing Swift 6 language checking should remain enabled.</p>
-          <p>Update the README’s outdated descriptions of voice processing, themes, and the old debug panel. The local check command, validation limits, and current Git workflow are already documented as part of 01A.</p>
-          <p class="acceptance"><strong>Acceptance:</strong> a second formatter run produces no changes; checks reject unformatted input; Swift compilation passes with the chosen warnings policy; README instructions match the supported workflow.</p>
+          <p><a href=".swift-format">The formatter configuration</a> sets four-space indentation, a 120-column target, and no extra indentation within conditional-compilation blocks. String-literal reflow and broader style rewrites are disabled. The mechanical sweep is checkpoint <code>b923ad3</code>, separate from test-fixture and check-runner changes.</p>
+          <p><code>./scripts/check.sh format</code> performs a read-only formatting check. The same gate runs in <code>lint</code> and the full command, covering production, widget, test, test-host, and manifest sources. Deliberate formatting uses the pinned Xcode's <code>swift-format</code> with the checked-in configuration, as documented in the README.</p>
+          <p>Local SwiftPM tests now receive <code>-Xswiftc -warnings-as-errors</code>; Xcode tests and app builds receive <code>SWIFT_TREAT_WARNINGS_AS_ERRORS=YES</code>. Swift 6 language checking remains enabled. Other build-tool notices remain visible in the logs. Keep SDK/toolchain upgrades separate so newly introduced diagnostics are attributable.</p>
+          <p>The deprecated <code>UIWindow(frame:)</code> fallback is removed. The iOS unit-test suite uses a <a href="Tests/Host/LarmindonTestHost.swift">blank test host</a> to provide a real window scene; layout tests retain a fixed viewport and fail clearly if the scene is absent. This host is test infrastructure, with no capture or diagnostics startup.</p>
+          <p>The <a href="README.md">README</a> now describes the current transcription modes, theme pairing, implemented voice processing, capture buffer settings, microphone/diagnostics panel, and macOS input routing. Agent instructions use the same local check workflow.</p>
+          <p class="acceptance"><strong>Acceptance:</strong> the initial second formatter pass produced no changes; regression checks reject unformatted input without rewriting it and reject an actual Swift compiler warning. The full local command validates the chosen warning policy, existing tests, and app/widget builds.</p>
+          <p class="evidence"><strong>Validated 18 September 2026:</strong> the full local gate passed with 17 runner tests, 136 macOS SwiftPM tests, 146 iOS tests, and macOS/iOS app and widget builds. The 136 macOS tests also passed through Xcode, confirming that the iOS-only host does not break the macOS scheme. Both Xcode test runs reported zero skipped tests. The four complexity exceptions and their measured scores are unchanged.</p>
         </article>
         <div class="table-wrap">
           <table>
@@ -279,7 +282,8 @@
             <thead><tr><th scope="col">Check</th><th scope="col">Initial policy</th><th scope="col">Later extension</th></tr></thead>
             <tbody>
               <tr><td>Builds and existing tests</td><td>Required</td><td>Release builds and oldest-supported-runtime checks when those runners are available.</td></tr>
-              <tr><td>Formatting</td><td>Required after the isolated formatting checkpoint</td><td>Editor integration using the same configuration.</td></tr>
+              <tr><td>Formatting</td><td>Required; isolated sweep completed in 01C</td><td>Editor integration using the same configuration.</td></tr>
+              <tr><td>Swift compiler warnings</td><td>Errors in the local test/build commands</td><td>Review new diagnostics during explicit toolchain upgrades.</td></tr>
               <tr><td>Selected SwiftLint rules</td><td>No new unapproved findings</td><td>Shrink the baseline as affected code is improved.</td></tr>
               <tr><td>Complexity</td><td>Gate new violations; report existing hotspots</td><td>Tighten exceptions after extraction; do not reward meaningless function splitting.</td></tr>
               <tr><td>Coverage</td><td>Report by responsibility</td><td>Targeted requirements for new pure policies and injectable boundaries.</td></tr>
@@ -438,13 +442,13 @@
         <p class="eyebrow">Where to begin</p>
         <h2 id="starting-title">The first useful milestone.</h2>
         <div class="callout">
-          <p><strong>01A and 01B are implemented:</strong> pinned local checks plus a reviewed lint baseline. The recommended next behavioral change is 02A: a focused regression test and fix for partial-start cleanup. Request it separately; no DSP algorithm, provider change, or capture refactor is included in the tooling work.</p>
+          <p><strong>Phase 01 is implemented:</strong> pinned local checks, a reviewed lint baseline, consistent formatting, compiler warning enforcement, and current workflow documentation. The recommended next behavioral change is 02A: a focused regression test and fix for partial-start cleanup. Request it separately; no DSP algorithm, provider change, or capture refactor is included in the tooling work.</p>
         </div>
         <p>After that, choose the next boundary according to the upcoming feature:</p>
         <ul>
           <li><strong>Azure comes first:</strong> complete 03A–03C. The proving step is a second fake provider passing through the existing session, before any real service integration.</li>
           <li><strong>Audio processing comes first:</strong> complete the provider audio-input seam, then 04A–04C. The proving step is unchanged output through a single capture path and bypass worker.</li>
-          <li><strong>General maintenance continues:</strong> take 01C and selected 05A tasks as separate changes. Defer target splitting until dependency direction is clear.</li>
+          <li><strong>General maintenance continues:</strong> take selected 05A tasks as separate changes. Defer production target splitting until dependency direction is clear.</li>
         </ul>
         <p>No new runtime dependency is required merely to begin this plan. The initial maintenance work can use the existing Swift/Xcode toolchain and a pinned development-only linter. Algorithm, SDK, and more extensive tooling dependencies should be evaluated with the feature that needs them.</p>
       </section>

@@ -138,6 +138,22 @@ let project = Project(
             settings: .settings(base: certificateSigning)
         ),
         .target(
+            name: "LarmindonTestHost",
+            destinations: [.iPhone, .iPad],
+            product: .app,
+            bundleId: "com.davidedmiston.larmindon.testhost",
+            deploymentTargets: .iOS("26.0"),
+            infoPlist: .extendingDefault(with: [
+                "UILaunchScreen": .dictionary([:])
+            ]),
+            sources: ["Tests/Host/**"],
+            settings: .settings(base: [
+                "PRODUCT_NAME": "LarmindonTestHost",
+                "ASSETCATALOG_COMPILER_APPICON_NAME": "",
+                "SKIP_INSTALL": "YES",
+            ])
+        ),
+        .target(
             name: "CoreTests",
             destinations: [.iPhone, .iPad, .mac],
             product: .unitTests,
@@ -146,7 +162,15 @@ let project = Project(
             infoPlist: .default,
             sources: ["Tests/CoreTests/**/*.swift"],
             resources: ["Tests/CoreTests/Fixtures/**"],
-            dependencies: [.target(name: "LarmindonKit")]
+            dependencies: [
+                .target(name: "LarmindonKit"),
+                .target(name: "LarmindonTestHost", condition: .when([.ios])),
+            ],
+            settings: .settings(base: [
+                // Tuist infers a test host for the target; keep macOS tests unhosted.
+                "TEST_HOST[sdk=macosx*]": "",
+                "BUNDLE_LOADER[sdk=macosx*]": "",
+            ])
         ),
     ]
 )

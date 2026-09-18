@@ -1,8 +1,10 @@
 # Larmindon
 
-Larmindon is a first-pass SwiftUI prototype for readable, on-device live captions on Apple platforms.
+Larmindon is a SwiftUI app for readable live captions on iPhone, iPad, and Mac,
+using Apple's on-device speech recognition or Soniox server transcription.
 
-The app is intentionally plain: open it, start captions, keep the active audio input visible, and show stable finalized caption chunks plus one faded volatile tail.
+Open it, choose a transcription mode, and start captions. The active audio input
+stays visible while finalized text remains stable and in-progress captions update.
 
 ## Requirements
 
@@ -53,7 +55,8 @@ with the full checks rerun before acceptance.
 | Command | Checks |
 | --- | --- |
 | `./scripts/check.sh` | All checks below, plus regression tests for the check runner |
-| `./scripts/check.sh lint` | Fast SwiftLint gate plus unfiltered advisory metrics |
+| `./scripts/check.sh lint` | Check-only formatting, SwiftLint gate, and unfiltered advisory metrics |
+| `./scripts/check.sh format` | Check-only formatting; never rewrites files |
 | `./scripts/check.sh test` | Tuist generation, macOS SwiftPM tests, iOS `CoreTests` |
 | `./scripts/check.sh build` | Tuist generation, macOS app and iOS app/widget builds |
 
@@ -61,6 +64,10 @@ The full command regenerates the ignored Xcode workspace from `Project.swift`
 with Tuist's binary cache disabled. Builds use Debug configuration and
 `CODE_SIGNING_ALLOWED=NO`. The iOS build includes the embedded widget. SwiftPM
 tests alone do not cover the app entry point, widget, or iOS-only tests.
+
+The iOS `CoreTests` suite runs inside a blank `LarmindonTestHost` app so its layout
+tests have a real window scene. The host contains no capture or diagnostics
+startup. macOS SwiftPM tests remain independent of an app host.
 
 If multiple simulators share the expected name, choose one explicitly:
 
@@ -73,13 +80,42 @@ with `xcrun simctl list devices available`. The runner does not create or delete
 devices or change your global Xcode selection.
 
 Each run prints its report directory under `.build/checks/run-…/`. It contains
-JSON lint/metrics reports, a readable metrics summary, the tool pins, build/test
+JSON lint/metrics reports, a readable metrics summary, a format log, the tool pins, build/test
 logs, and (for iOS tests) an `.xcresult` bundle. Nonzero tool/build/test exits fail
 the command. Missing source groups, a missing baseline, and invalid SwiftLint
 rules also fail. Checks use no autofix or formatting writes; the runner hashes
 Git-visible inputs before and after and fails if they changed, without reverting
 anything. Avoid editing the checkout during a full run. Build caches and reports
 are ignored and can be removed when no check is running.
+
+### Formatting and Compiler Warnings
+
+The `swift-format` bundled with the pinned Xcode uses the repository's
+[`.swift-format`](.swift-format): four-space indentation, a 120-column target,
+and no extra indentation inside conditional-compilation blocks. Layout and
+trailing commas are standardized; broader style rewrites and string-literal
+reflow are disabled. The initial formatting sweep is a separate Git checkpoint.
+
+`all`, `lint`, and `format` run `swift-format lint --strict`. To apply formatting
+deliberately, use the same configuration and toolchain (replace the paths with
+individual files when making a small change):
+
+```bash
+TOOLCHAINS=com.apple.dt.toolchain.XcodeDefault xcrun swift-format format \
+  --configuration .swift-format --in-place --recursive \
+  Sources Tests Widgets Package.swift Project.swift
+```
+
+The local test/build commands treat **Swift compiler warnings as errors**:
+SwiftPM receives `-Xswiftc -warnings-as-errors`; Xcode receives
+`SWIFT_TREAT_WARNINGS_AS_ERRORS=YES`. Swift 6 language checking remains enabled.
+Other build-tool warnings, such as App Intents metadata extraction notices,
+remain visible in the logs. Keep toolchain upgrades separate from code changes
+so new compiler diagnostics can be reviewed deliberately.
+
+The runner's regression tests verify that formatting violations and malformed or
+missing formatter configuration fail, that check-only formatting leaves files
+unchanged, and that an actual Swift compiler warning is rejected.
 
 ### Lint Policy and Existing Debt
 
@@ -122,9 +158,8 @@ disposable copies to verify that new violations fail and the baseline remains
 portable across checkout paths.
 
 See the [maintenance plan](maintenance-and-modularization-plan.html#phase-1) for
-the remaining work. Formatting configuration/sweep and Swift warnings-as-errors
-are **01C**, not part of this gate yet. CI and release/distribution automation are
-deferred. Passing local tests/builds does not validate physical-device audio,
+the remaining work. **01A–01C** are implemented locally; CI and
+release/distribution automation are deferred. Passing local tests/builds does not validate physical-device audio,
 SpeechAnalyzer operation, live provider services, or speech quality in noise.
 
 ## Build the iOS Simulator Target
@@ -193,46 +228,98 @@ for more than tidiness: an ad-hoc signature's designated requirement is the buil
 code hash, so macOS treats every rebuild as a new app and asks for microphone access
 again. A certificate-backed signature keeps the grant across rebuilds.
 
-## Live Transcription Mode
+## Transcription Modes
 
-The default transcription source is `Live`. Press **Start Captions** in the app to capture microphone audio and feed it through Apple's on-device SpeechAnalyzer pipeline.
+The main screen offers **On-device** and **Soniox**. On-device is the initial
+default; the app remembers your selection. Press **Start Captions** to use the
+selected mode and saved capture settings.
 
-If the simulator or device does not have a compatible speech asset installed for the selected locale, the debug panel will show the Speech asset error. Real-device testing is still the most reliable path for the live source.
+On-device uses Apple's `SpeechAnalyzer`, `SpeechTranscriber`, and `SpeechDetector`.
+It requires compatible speech assets and a physical device for live validation;
+the iOS Simulator cannot establish that SpeechAnalyzer transcription works.
+Startup errors appear on the caption screen, with session details in **Microphone**.
+
+Soniox captures audio locally and streams it to Soniox. Save your own API key in
+**Settings → Server Transcription** before starting. The key is stored in Keychain;
+it is validated when the first connection is made. Soniox is currently the only
+implemented server provider.
 
 ## Fake Transcription Mode
 
-The `Fake` source streams scripted volatile and finalized caption events every 750 ms. This mode works in Simulator and does not require microphone hardware.
+Open **Microphone → Developer → Start fake transcription source** to exercise
+captions without a microphone or provider connection. It streams scripted
+in-progress and finalized events every 750 ms and works in Simulator.
+
+## Settings
 
 The settings surface includes:
 
-- Caption font size.
-- Light, dark, system, dark blue, or dark green appearance.
-- Fake or live source selection.
-- VAD sensitivity.
-- Voice processing preference placeholder.
-- Debug panel visibility.
+- Caption font size, from 20 to 72 points.
+- A fixed theme, or separately chosen light/dark themes that follow system
+  appearance. Options include Light, Dark, Dark Blue, Dark Green, Rosé Pine,
+  Rosé Pine Moon, Rosé Pine Dawn, Dracula Classic, and Alucard Classic.
+- On-device VAD sensitivity and profanity filtering.
+- Capture buffer size, from 160 to 2,048 frames (default 768).
+- Apple voice processing on iOS/iPadOS, enabled by default and applied when
+  capture next starts. Requested and active state are shown in **Microphone**.
+  Voice processing remains disabled on macOS because of audio-device constraints.
+- Server provider selection and Soniox credential storage/removal.
 
-## Live Speech Path
+Capture and recognition setting changes take effect when the relevant session
+next starts. Font size and theme choices update the presentation directly.
 
-`LiveSpeechAnalyzerTranscriptionSource` is the native on-device path. It uses the modern Speech framework types (`SpeechAnalyzer`, `SpeechTranscriber`, and `SpeechDetector`) directly. Larmindon requires iOS 26/macOS 26 because SpeechAnalyzer is the reason this prototype exists.
+## Microphone and Diagnostics
 
-The live source configures capture, runs an `AVAudioEngine` input tap with a 768-frame buffer, feeds `AnalyzerInput` into `SpeechAnalyzer`, uses `SpeechDetector` as the VAD module, and consumes `SpeechTranscriber` results with `.fastResults` and `.volatileResults` reporting.
+The **Microphone** toolbar button opens a sheet on iOS/iPadOS and a separate
+window on macOS. It replaces the old debug panel and shows input capabilities,
+session/provider status, levels, requested and active voice processing, route
+details, and the latest transcript state. Supported iOS inputs also expose
+microphone-position, pickup-pattern, and stereo-orientation controls; applying
+them during capture restarts captions.
+
+The panel can prepare and share/save a diagnostic bundle. Transcript text is
+excluded by default and can be included explicitly. Developer actions provide
+the fake source and a route-information dump.
+
+## Live Speech Paths
+
+`LiveSpeechAnalyzerTranscriptionSource` owns the current on-device path, converting
+captured buffers into `AnalyzerInput`, using `SpeechDetector` for VAD, and consuming
+fast/volatile `SpeechTranscriber` results. Capture uses the configured buffer
+request; the actual callback size is reported in **Microphone**.
+
+Server mode uses `AudioCaptureSession` to supply captured frames to
+`SonioxTranscriptionSource`. The [maintenance plan](maintenance-and-modularization-plan.html)
+describes future consolidation of the capture paths and completion of the
+provider boundary before adding Azure or custom audio processing.
 
 ## Audio Routing
 
-On iOS/iPadOS, the app configures `AVAudioSession` for voice capture, allows Bluetooth HFP, tracks actual route inputs/outputs, and provides both a system input picker host and a fallback menu for available inputs. The main UI always displays the actual current route input, while preferred input details are shown in the debug panel.
+On iOS/iPadOS, the app configures `AVAudioSession` for capture according to the
+selected input and voice-processing preference, supports Bluetooth HFP, tracks
+route inputs/outputs, and provides a system input picker with a fallback menu.
+The main screen shows the current input; **Microphone** shows preferred and
+active route details.
 
-On macOS, the input menu tracks devices by stable Core Audio UID and restarts live capture when the selection changes. Built-in and external hardware microphones use `AVAudioEngine`; virtual and aggregate devices use a direct Core Audio IOProc so Loopback-style and multi-stream devices are captured from the selected device instead of silently falling back through the engine input node.
+On macOS, the input menu tracks devices by stable Core Audio UID and restarts
+capture when the selection changes. The system-default input uses `AVAudioEngine`;
+every other selected input uses a direct Core Audio IOProc, including physical,
+virtual, and aggregate devices. Selecting an input in Larmindon does not change
+the system-default input.
 
-## Real-Device Testing Still Needed
+## Physical-Device Validation
+
+Local tests and unsigned builds cover policies, mocked providers, and simulator
+layout. Changes affecting live operation need checks on the relevant hardware:
 
 - Microphone permission flow.
-- Speech recognition permission flow.
+- SpeechAnalyzer asset availability and live recognition.
 - `AVInputPickerInteraction` behavior on iPhone and iPad.
 - Bluetooth HFP route switching.
 - Car audio route display.
 - Voice-processing input behavior.
 - Real-device validation of the `AVAudioEngine` to `SpeechAnalyzer` `AnalyzerInput` bridge.
+- Soniox connection, live results, and stop/restart behavior with a configured key.
 
 ## Source Control
 

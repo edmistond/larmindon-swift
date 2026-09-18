@@ -1,4 +1,4 @@
-# Required local gate. Formatting and length limits are deferred/advisory.
+# Required SwiftLint gate. Formatting has its own check; length limits are advisory.
 only_rules:
   - force_cast
   - force_try

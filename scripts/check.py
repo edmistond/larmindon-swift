@@ -19,6 +19,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 PINS = json.loads((ROOT / "scripts/checks-toolchain.json").read_text())
 SWIFTLINT = ROOT / ".build/check-tools" / PINS["swiftlint_version"] / "swiftlint"
+SWIFT_INPUTS = ("Sources", "Tests", "Widgets", "Package.swift", "Project.swift")
+SWIFT_WARNINGS_AS_ERRORS = "-warnings-as-errors"
 
 
 class CheckFailure(Exception):
@@ -45,7 +47,7 @@ def check_xcode():
     swift = capture(["xcrun", "swift", "--version"])
     match = re.search(r"Apple Swift version ([\d.]+)", swift)
     require_version("Swift", match.group(1) if match else swift, PINS["swift_version"])
-    # The formatter is pinned by Xcode; enforcing formatting is task 01C.
+    # The formatter version is pinned by the exact Xcode build above.
     capture(["xcrun", "--find", "swift-format"])
 
 
@@ -116,7 +118,7 @@ def validate_inputs(root):
     for folder in ("Sources", "Tests", "Widgets"):
         if not any(path.is_file() for path in (root / folder).rglob("*.swift")):
             raise CheckFailure(f"No intended Swift files found under {folder}.")
-    for name in ("Package.swift", "Project.swift", ".swiftlint.yml",
+    for name in ("Package.swift", "Project.swift", ".swift-format", ".swiftlint.yml",
                  ".swiftlint-metrics.yml", ".swiftlint-baseline.json"):
         if not (root / name).is_file():
             raise CheckFailure(f"Missing required check input: {name}")
@@ -177,15 +179,22 @@ def fingerprint_inputs():
             if (ROOT / name).is_file() else "missing" for name in names if name}
 
 
-def run_step(label, command, reports):
+def run_step(label, command, reports, cwd=ROOT):
     log = reports / f"{label}.log"
-    print(f"{label}… (log: {log.relative_to(ROOT)})", flush=True)
+    print(f"{label}… (log: {log.relative_to(cwd)})", flush=True)
     with log.open("w") as stream:
-        result = subprocess.run(command, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT, check=False)
+        result = subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, check=False)
     if result.returncode:
         print("\n".join(log.read_text(errors="replace").splitlines()[-45:]), file=sys.stderr)
         raise CheckFailure(f"{label} failed (exit {result.returncode}); see {log}")
     print(f"{label} passed.", flush=True)
+
+
+def check_format(root, reports):
+    validate_inputs(root)
+    reports.mkdir(parents=True, exist_ok=True)
+    run_step("format", ["xcrun", "swift-format", "lint", "--strict", "--configuration",
+                        ".swift-format", "--recursive", *SWIFT_INPUTS], reports, cwd=root)
 
 
 def run_checks(mode, requested_simulator):
@@ -204,6 +213,8 @@ def run_checks(mode, requested_simulator):
     (reports / "toolchain.json").write_text(json.dumps(PINS, indent=2) + "\n")
     before = fingerprint_inputs()
     try:
+        if mode in ("all", "lint", "format"):
+            check_format(ROOT, reports)
         if mode in ("all", "lint"):
             lint(ROOT, SWIFTLINT, reports)
         if mode == "all":
@@ -213,9 +224,11 @@ def run_checks(mode, requested_simulator):
             run_step("generate", [tuist, "generate", "--no-open", "--cache-profile", "none"], reports)
         if mode in ("all", "test"):
             run_step("macos-tests", ["xcrun", "swift", "test", "--scratch-path",
-                                     str(output_root / "swiftpm")], reports)
+                                     str(output_root / "swiftpm"), "-Xswiftc",
+                                     SWIFT_WARNINGS_AS_ERRORS], reports)
         common = ["xcodebuild", "-workspace", "Larmindon.xcworkspace", "-configuration", "Debug",
-                  "-derivedDataPath", str(output_root / "DerivedData"), "CODE_SIGNING_ALLOWED=NO"]
+                  "-derivedDataPath", str(output_root / "DerivedData"), "CODE_SIGNING_ALLOWED=NO",
+                  "SWIFT_TREAT_WARNINGS_AS_ERRORS=YES"]
         if simulator:
             run_step("ios-tests", common + ["-scheme", "CoreTests", "-destination",
                      f"platform=iOS Simulator,id={simulator}", "-parallel-testing-enabled", "NO",
@@ -235,8 +248,9 @@ def run_checks(mode, requested_simulator):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", nargs="?", choices=("all", "lint", "test", "build", "setup"), default="all",
-                        help="all (default), fast lint, both test suites, app builds, or explicit SwiftLint setup")
+    parser.add_argument("mode", nargs="?", choices=("all", "lint", "format", "test", "build", "setup"),
+                        default="all", help="all (default), format + lint, format only (read-only), "
+                        "both test suites, app builds, or explicit SwiftLint setup")
     parser.add_argument("--simulator", metavar="UDID", help="use a specific device on the pinned iOS runtime")
     args = parser.parse_args()
     if args.simulator and args.mode not in ("all", "test"):

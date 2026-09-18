@@ -47,7 +47,7 @@ final class CaptionDisplayLayoutTests: XCTestCase {
         let source = QuietSource()
         session.sourceFactory = { _, _ in source }
         session.store.appendFinalized("A short caption stays at the top.")
-        let window = hostContent(LarmindonRootView(session: session))
+        let window = try hostContent(LarmindonRootView(session: session))
         defer { window.isHidden = true }
         await settle()
         session.start()
@@ -85,7 +85,7 @@ final class CaptionDisplayLayoutTests: XCTestCase {
 
     func testStreamingShortTextAndFinalizationStayAtTop() async throws {
         let fixture = Fixture()
-        let window = host(fixture)
+        let window = try host(fixture)
         defer { window.isHidden = true }
         await settle()
         let scroll = try XCTUnwrap(findScrollView(in: window))
@@ -110,7 +110,7 @@ final class CaptionDisplayLayoutTests: XCTestCase {
 
     func testOverflowFollowsBottomThenShrinkAndClearReturnToTop() async throws {
         let fixture = Fixture()
-        let window = host(fixture)
+        let window = try host(fixture)
         defer { window.isHidden = true }
         await settle()
         let scroll = try XCTUnwrap(findScrollView(in: window))
@@ -152,7 +152,7 @@ final class CaptionDisplayLayoutTests: XCTestCase {
 
     func testViewportAndFontChangesReevaluateOverflow() async throws {
         let fixture = Fixture()
-        let window = host(fixture)
+        let window = try host(fixture)
         defer { window.isHidden = true }
         fixture.volatile = [VolatileCaption(text: String(repeating: "Another caption sentence. ", count: 4))]
         await settle()
@@ -178,17 +178,18 @@ final class CaptionDisplayLayoutTests: XCTestCase {
         assertAtTop(scroll)
     }
 
-    private func host(_ fixture: Fixture) -> UIWindow {
-        hostContent(FixtureView(fixture: fixture))
+    private func host(_ fixture: Fixture) throws -> UIWindow {
+        try hostContent(FixtureView(fixture: fixture))
     }
 
-    private func hostContent<Content: View>(_ content: Content) -> UIWindow {
-        let window: UIWindow
-        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-            window = UIWindow(windowScene: scene)
-        } else {
-            window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
-        }
+    private func hostContent<Content: View>(_ content: Content) throws -> UIWindow {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "Layout tests require a connected window scene from the app host."
+        )
+        let window = UIWindow(windowScene: scene)
+        // Keep text wrapping stable across simulator screen sizes.
+        window.frame = CGRect(x: 0, y: 0, width: 430, height: 932)
         window.rootViewController = UIHostingController(rootView: content)
         window.makeKeyAndVisible()
         return window
