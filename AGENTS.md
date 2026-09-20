@@ -16,3 +16,5 @@
   that turn and create a Git checkpoint with `git commit -m "<brief summary>"`
   before the final response so changes can be rolled back if needed. Never stage
   unrelated working-tree changes.
+- Use the Blinken skill to record materially consequential choices that the 
+  spec, tests, and code don’t settle.
