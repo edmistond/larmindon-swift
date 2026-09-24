@@ -6,9 +6,8 @@ on-device transcription. (Native rewrite of an earlier captioning app.)
 
 ## Source control: git
 
-This repo uses **plain git**. It was on jujutsu for a while; that was removed on
-2026-08-15 — the workflow had things to like but too much friction overall. There is no
-`.jj` directory, so `jj` commands will fail here.
+This repo uses **plain git**. There is no `.jj` directory, so `jj` commands will fail
+here.
 
 **Checkpoint every turn** — after making changes, `git add` the relevant paths and
 `git commit`. Don't wait to be asked. Prefer many small checkpoints over one large one:
@@ -50,9 +49,9 @@ xcodebuild -workspace Larmindon.xcworkspace -scheme Larmindon \
 ```
 For macOS use `-scheme Larmindon-macOS`. If `Project.swift` changes, regenerate with `tuist generate`.
 
-## Testing constraints — IMPORTANT
+## Testing constraints
 
-- **SpeechAnalyzer does NOT work in the iOS Simulator.** It must run on a physical device.
+- **SpeechAnalyzer does not work in the iOS Simulator.** It must run on a physical device.
   The iOS Simulator build only confirms the code *compiles*, not that transcription works.
 - The user runs **on-device builds from Xcode** for live functional testing. Don't attempt to
   verify transcription/audio behavior yourself — leave that to the user and just report what
