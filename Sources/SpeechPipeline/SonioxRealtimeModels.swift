@@ -95,10 +95,37 @@ public struct SonioxRealtimeConfiguration: Encodable, Equatable, Sendable,
         case clientReferenceID = "client_reference_id"
         case context
     }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(apiKey, forKey: .apiKey)
+        try container.encode(model, forKey: .model)
+        try container.encode(audioFormat, forKey: .audioFormat)
+        // Only raw formats need these; a container format describes itself.
+        if audioFormat.isRaw {
+            try container.encode(sampleRate, forKey: .sampleRate)
+            try container.encode(channelCount, forKey: .channelCount)
+        }
+        try container.encode(languageHints, forKey: .languageHints)
+        try container.encode(languageHintsStrict, forKey: .languageHintsStrict)
+        try container.encode(speakerDiarizationEnabled, forKey: .speakerDiarizationEnabled)
+        try container.encode(
+            languageIdentificationEnabled, forKey: .languageIdentificationEnabled)
+        try container.encode(endpointDetectionEnabled, forKey: .endpointDetectionEnabled)
+        try container.encodeIfPresent(clientReferenceID, forKey: .clientReferenceID)
+        try container.encodeIfPresent(context, forKey: .context)
+    }
 }
 
 public enum SonioxAudioFormat: String, Encodable, Equatable, Sendable {
     case pcmS16LittleEndian = "pcm_s16le"
+    /// Soniox detects the container from the stream itself (used for Ogg Opus). The stream
+    /// carries its own sample rate and channel count, so those fields are not sent.
+    case auto
+
+    var isRaw: Bool {
+        self != .auto
+    }
 }
 
 public struct SonioxContext: Codable, Equatable, Sendable {

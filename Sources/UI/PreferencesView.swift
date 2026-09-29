@@ -16,6 +16,8 @@ public struct PreferencesView: View {
     @AppStorage(VoiceProcessingPreference.storageKey)
     private var voiceProcessingEnabled = VoiceProcessingPreference.defaultValue
     @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
+    @AppStorage(SonioxAudioEncoding.storageKey)
+    private var sonioxAudioEncodingRaw = SonioxAudioEncoding.defaultValue.rawValue
     @AppStorage(TranscriptionPreference.activeServerProviderStorageKey)
     private var activeServerProviderRaw = ServerProviderID.soniox.rawValue
 
@@ -110,6 +112,17 @@ public struct PreferencesView: View {
                         Text(provider.title).tag(provider.rawValue)
                     }
                 }
+
+                Picker("Audio upload", selection: $sonioxAudioEncodingRaw) {
+                    ForEach(SonioxAudioEncoding.allCases) { encoding in
+                        Text(encoding.title).tag(encoding.rawValue)
+                    }
+                }
+                Text(
+                    "Opus sends roughly an eighth of the data, which matters on cellular. Takes effect the next time captioning starts."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
                 SecureField("Soniox API key", text: $sonioxAPIKey)
                     .textContentType(.password)

@@ -14,13 +14,15 @@ final class SonioxReconnectTests: XCTestCase {
     private func makeSource(
         transports: FakeWebSocketTransportSequence,
         path: FakeNetworkPath,
-        diagnostics: DiagnosticRecorder = DiagnosticRecorder(capacity: 200)
+        diagnostics: DiagnosticRecorder = DiagnosticRecorder(capacity: 200),
+        audioEncoding: SonioxAudioEncoding = .pcm
     ) -> SonioxTranscriptionSource {
         let source = SonioxTranscriptionSource(
             apiKey: "test-key",
             diagnostics: diagnostics,
             makeTransport: { transports.next() },
-            makePathObserver: { path }
+            makePathObserver: { path },
+            audioEncoding: audioEncoding
         )
         source.delay = delay.dependency
         return source
@@ -110,6 +112,51 @@ final class SonioxReconnectTests: XCTestCase {
         XCTAssertTrue(names.contains("soniox_connection_lost"))
         XCTAssertTrue(names.contains("soniox_reconnected"))
         XCTAssertFalse(names.contains("soniox_error"))
+    }
+
+    /// A container stream can't be joined midway: each Soniox connection needs its own Ogg
+    /// headers first, and its pages numbered from the start.
+    func testOpusReconnectStartsTheNewStreamWithFreshOggHeaders() async throws {
+        let transports = FakeWebSocketTransportSequence(count: 2)
+        let source = makeSource(transports: transports, path: FakeNetworkPath(), audioEncoding: .opus)
+        let (frames, frameContinuation) = AsyncStream<CapturedAudioFrame>.makeStream()
+        var results = source.results.makeAsyncIterator()
+        try await source.start(audioFrames: frames)
+        for _ in 0..<4 {
+            frameContinuation.yield(CapturedAudioFrame(buffer: try makeTenMillisecondBuffer()))
+        }
+        await transports[0].waitForBinaryMessageCount(2)
+
+        await transports[0].dropConnection()
+        let restored = await next(&results, where: Self.isRestoredOrFailed)
+        XCTAssertEqual(restored, .connectionRestored)
+
+        let replacementText = await transports[1].sentTextMessages
+        let configurationText = try XCTUnwrap(replacementText.first)
+        XCTAssertTrue(configurationText.contains(#""audio_format":"auto""#))
+        await transports[1].waitForBinaryMessageCount(1)
+        let replacementBinary = await transports[1].sentBinaryMessages
+        let header = try XCTUnwrap(replacementBinary.first)
+        XCTAssertEqual(header.prefix(4), Data("OggS".utf8))
+        XCTAssertNotNil(header.range(of: Data("OpusHead".utf8)))
+
+        // Two 10 ms buffers make one 20 ms Opus packet.
+        for _ in 0..<2 {
+            frameContinuation.yield(CapturedAudioFrame(buffer: try makeTenMillisecondBuffer()))
+        }
+        await transports[1].waitForBinaryMessageCount(2)
+        let firstAudioPage = await transports[1].sentBinaryMessages[1]
+        XCTAssertEqual(firstAudioPage.prefix(4), Data("OggS".utf8))
+        let pageSequence = firstAudioPage[18..<22].enumerated().reduce(UInt32(0)) {
+            $0 | UInt32($1.element) << (8 * UInt32($1.offset))
+        }
+        XCTAssertEqual(pageSequence, 2, "the new stream's audio follows its own two header pages")
+
+        frameContinuation.finish()
+        let stop = Task { await source.stop() }
+        await transports[1].waitForTextMessageCount(2)
+        await transports[1].enqueue(.text(#"{"tokens":[],"finished":true}"#))
+        await stop.value
     }
 
     func testReconnectWaitsForUsableNetworkPath() async throws {

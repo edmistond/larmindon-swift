@@ -52,7 +52,9 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     /// has already been replaced are ignored.
     private var connectionID = 0
     private var messagesOnConnection = 0
-    private let converter = SonioxPCMConverter()
+    /// Shared across connections, but restarted for each one: see `openStream(on:)`.
+    private let encoder: any SonioxWireEncoder
+    private let requestedEncoding: SonioxAudioEncoding
     private var audioTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
@@ -75,6 +77,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     private var stopStartedAt: ContinuousClock.Instant?
     var delay = AsyncDelay.continuous
     var reconnectPolicy = SonioxReconnectPolicy()
+    private static let audioSentReportInterval = 320_000
     private let gracefulShutdownTimeout: Duration
 
     /// Each connection gets a fresh transport from `makeTransport`. Reusing one across
@@ -84,12 +87,18 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         diagnostics: DiagnosticRecorder = .shared,
         makeTransport: @escaping @Sendable () -> any WebSocketTransport,
         makePathObserver: @escaping @MainActor () -> any NetworkPathObserving = { NetworkPathMonitor() },
-        gracefulShutdownTimeout: Duration = .seconds(5)
+        gracefulShutdownTimeout: Duration = .seconds(5),
+        audioEncoding: SonioxAudioEncoding = SonioxAudioEncoding.defaultValue
     ) {
         self.diagnostics = diagnostics
         self.gracefulShutdownTimeout = gracefulShutdownTimeout
+        self.requestedEncoding = audioEncoding
+        let encoder = SonioxWireEncoders.make(for: audioEncoding)
+        self.encoder = encoder
+        // Every replacement connection reuses this, so it carries the encoder's format.
         self.configuration = SonioxRealtimeConfiguration(
             apiKey: apiKey,
+            audioFormat: encoder.audioFormat,
             languageHints: ["en"],
             speakerDiarizationEnabled: true,
             endpointDetectionEnabled: false
@@ -107,7 +116,8 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         apiKey: String,
         diagnostics: DiagnosticRecorder = .shared,
         transport: (any WebSocketTransport)? = nil,
-        gracefulShutdownTimeout: Duration = .seconds(5)
+        gracefulShutdownTimeout: Duration = .seconds(5),
+        audioEncoding: SonioxAudioEncoding = SonioxAudioEncoding.defaultValue
     ) {
         let makeTransport: @Sendable () -> any WebSocketTransport
         if let transport {
@@ -121,7 +131,8 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             apiKey: apiKey,
             diagnostics: diagnostics,
             makeTransport: makeTransport,
-            gracefulShutdownTimeout: gracefulShutdownTimeout
+            gracefulShutdownTimeout: gracefulShutdownTimeout,
+            audioEncoding: audioEncoding
         )
     }
 
@@ -139,6 +150,12 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         let client = makeClient()
         self.client = client
         let events = try await client.start()
+        do {
+            try await openStream(on: client)
+        } catch {
+            await client.cancel()
+            throw error
+        }
         await recordConnected(reconnectAttempt: nil)
 
         try await requireActiveStartup()
@@ -150,15 +167,24 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         SonioxRealtimeClient(configuration: configuration, transport: makeTransport())
     }
 
+    /// Restarts the encoder and sends whatever must precede audio on a new connection —
+    /// Ogg headers for Opus, nothing for PCM. Runs before the connection accepts audio, so
+    /// no encoded packet lands on a stream ahead of its header.
+    private func openStream(on client: SonioxRealtimeClient) async throws {
+        let header = encoder.startStream()
+        guard !header.isEmpty else { return }
+        try await client.sendAudio(header)
+        bytesSent += header.count
+    }
+
     private func recordConnected(reconnectAttempt: Int?) async {
-        var fields = [
+        var fields = encoder.diagnosticFields.merging([
             "model": SonioxRealtimeConfiguration.defaultModel,
-            "audio_format": "pcm_s16le",
-            "sample_rate": "16000",
-            "channels": "1",
+            "encoding": encoder.encoding.rawValue,
+            "requested_encoding": requestedEncoding.rawValue,
             "speaker_diarization": "true",
             "endpoint_detection": "false",
-        ]
+        ]) { _, new in new }
         if let reconnectAttempt {
             fields["reconnect_attempt"] = String(reconnectAttempt)
         }
@@ -286,7 +312,13 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     private func sendAudio(_ audioFrames: AsyncStream<CapturedAudioFrame>) async {
         for await frame in audioFrames {
             guard !Task.isCancelled else { break }
-            guard let data = converter.convert(frame.buffer) else {
+            // Checked before encoding: an Opus packet encoded now would be dropped, leaving
+            // a gap in the page sequence of the stream `openStream(on:)` restarts next.
+            guard let client, reconnectTask == nil else {
+                audioDroppedWhileDisconnected += frame.duration
+                continue
+            }
+            guard let data = encoder.encode(frame.buffer) else {
                 await diagnostics.record(
                     category: "audio",
                     name: "soniox_conversion_failed",
@@ -299,14 +331,16 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 )
                 continue
             }
-            guard let client, reconnectTask == nil else {
-                audioDroppedWhileDisconnected += frame.duration
-                continue
-            }
+            // The encoder is holding a partial packet.
+            guard !data.isEmpty else { continue }
             do {
                 try await client.sendAudio(data)
+                let previous = bytesSent
                 bytesSent += data.count
-                if bytesSent.isMultiple(of: 320_000) {
+                // Crossing a boundary rather than landing on it: Opus pages vary in size.
+                if bytesSent / Self.audioSentReportInterval
+                    > previous / Self.audioSentReportInterval
+                {
                     await diagnostics.record(
                         category: "network",
                         name: "soniox_audio_sent",
@@ -552,6 +586,14 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             await client.cancel()
             if self.client === client { self.client = nil }
             throw CancellationError()
+        }
+
+        do {
+            try await openStream(on: client)
+        } catch {
+            await client.cancel()
+            if self.client === client { self.client = nil }
+            throw error
         }
 
         sentenceAccumulator = SonioxSentenceAccumulator()
@@ -919,6 +961,19 @@ final class SonioxPCMConverter: @unchecked Sendable {
     private var inputFormat: AVAudioFormat?
 
     func convert(_ buffer: AVAudioPCMBuffer) -> Data? {
+        guard let output = convertToBuffer(buffer),
+            let samples = output.int16ChannelData?[0]
+        else {
+            return nil
+        }
+        return Data(
+            bytes: samples,
+            count: Int(output.frameLength) * MemoryLayout<Int16>.size
+        )
+    }
+
+    /// Resamples to 16 kHz 16-bit mono without serializing, for encoders that consume PCM.
+    func convertToBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
         lock.lock()
         defer { lock.unlock() }
 
@@ -955,16 +1010,26 @@ final class SonioxPCMConverter: @unchecked Sendable {
         ) { _, inputStatus in
             inputProvider.nextBuffer(inputStatus: inputStatus)
         }
-        guard status != .error,
-            output.frameLength > 0,
-            let samples = output.int16ChannelData?[0]
-        else {
+        guard status != .error, output.frameLength > 0 else {
             return nil
         }
-        return Data(
-            bytes: samples,
-            count: Int(output.frameLength) * MemoryLayout<Int16>.size
-        )
+        return output
+    }
+}
+
+extension SonioxPCMConverter: SonioxWireEncoder {
+    var audioFormat: SonioxAudioFormat { .pcmS16LittleEndian }
+    var encoding: SonioxAudioEncoding { .pcm }
+    var diagnosticFields: [String: String] {
+        ["audio_format": audioFormat.rawValue, "sample_rate": "16000", "channels": "1"]
+    }
+
+    func startStream() -> Data {
+        Data()
+    }
+
+    func encode(_ buffer: AVAudioPCMBuffer) -> Data? {
+        convert(buffer)
     }
 }
 
