@@ -29,6 +29,10 @@ public final class CaptionSession {
     /// keeps claiming "Listening", and an empty caption view reads as a quiet room rather
     /// than a dead session. Always false on macOS.
     public private(set) var isInterrupted = false
+    /// True while a server provider has lost its connection and is reconnecting on its
+    /// own. Capture is still running — which is what keeps a backgrounded iOS app alive
+    /// long enough to reconnect — but no captions are arriving.
+    public private(set) var isReconnecting = false
 
     /// Optional factory for exercising lifecycle transitions without live microphone access.
     @ObservationIgnored
@@ -53,6 +57,7 @@ public final class CaptionSession {
     private(set) var silentCaptureTask: Task<Void, Never>?
     private var didReceiveAudioSinceStart = false
     private var silentCaptureWarning: String?
+    private var reconnectingWarning: String?
     /// When `audioLevels` was last written for a level-only change. See `publishAudioLevels`.
     private var lastLevelOnlyPublish: ContinuousClock.Instant?
     /// Minimum spacing between level-only writes. Capture delivers a snapshot per buffer
@@ -243,6 +248,8 @@ public final class CaptionSession {
             store.isRunning = true
             lastError = nil
             silentCaptureWarning = nil
+            reconnectingWarning = nil
+            isReconnecting = false
             speechAnalyzerState = "Starting \(source.name)"
             activeMode = nil
             activeServerProvider = nil
@@ -448,6 +455,8 @@ public final class CaptionSession {
         }
         audioLevels = AudioLevelSnapshot()
         lastLevelOnlyPublish = nil
+        isReconnecting = false
+        reconnectingWarning = nil
         activeMode = nil
         activeServerProvider = nil
         activeInputDeviceID = nil
@@ -689,9 +698,26 @@ public final class CaptionSession {
         case .finalizedSegments(let segments):
             store.appendFinalized(segments)
         case .failure(let message):
+            isReconnecting = false
+            reconnectingWarning = nil
             lastError = message
             speechAnalyzerState = "Error"
             scheduleFailureStop()
+            // When this happens with the app in the background, `lastError` goes unread
+            // and the session is gone. The notifier stays quiet in the foreground.
+            Task { @MainActor [failureNotifier] in
+                await failureNotifier.notifyCaptionsStopped(message: message)
+            }
+        case .connectionInterrupted(let message):
+            isReconnecting = true
+            reconnectingWarning = message
+            lastError = message
+            speechAnalyzerState = "Reconnecting"
+        case .connectionRestored:
+            isReconnecting = false
+            if let warning = reconnectingWarning, lastError == warning { lastError = nil }
+            reconnectingWarning = nil
+            if let activeSource { speechAnalyzerState = "Running \(activeSource.name)" }
         }
     }
 
@@ -922,7 +948,7 @@ public final class CaptionSession {
                 // this happens, so `lastError` alone would go unread. Only give-up posts —
                 // one banner per transient blip during a phone call would train them to be
                 // swiped away unread, which is worse than sending none.
-                await failureNotifier.notifyCaptionsStopped(reason: reason)
+                await failureNotifier.notifyCaptionsStopped(message: reason.message)
             }
         }
     }

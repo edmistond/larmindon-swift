@@ -20,16 +20,28 @@ actor FakeWebSocketTransport: WebSocketTransport {
     private var binaryGate: AsyncGate?
     private var receiveGate: AsyncGate?
     private var binaryFailure: WebSocketTransportError?
+    private var connectFailure: WebSocketTransportError?
 
     func pauseConnect(on gate: AsyncGate) { connectGate = gate }
     func pauseText(on gate: AsyncGate) { textGate = gate }
     func pauseBinary(on gate: AsyncGate) { binaryGate = gate }
     func pauseReceive(on gate: AsyncGate) { receiveGate = gate }
     func failBinary(with error: WebSocketTransportError) { binaryFailure = error }
+    func failConnect(with error: WebSocketTransportError) { connectFailure = error }
+
+    /// What the network dropping out looks like from above: the pending receive fails
+    /// with a transport error rather than a close the client asked for.
+    func dropConnection(with error: WebSocketTransportError = .connectionFailed("The network connection was lost.")) {
+        isConnected = false
+        let waiters = receiveWaiters
+        receiveWaiters.removeAll()
+        for waiter in waiters { waiter.resume(throwing: error) }
+    }
 
     func connect() async throws {
         connectCount += 1
         await connectGate?.suspend()
+        if let connectFailure { throw connectFailure }
         isConnected = true
     }
 
@@ -127,5 +139,109 @@ actor FakeWebSocketTransport: WebSocketTransport {
             }
         }
         return pending
+    }
+}
+
+/// Hands out a fresh transport per connection, the way production does, and records how
+/// many connections were attempted.
+final class FakeWebSocketTransportSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private let transports: [FakeWebSocketTransport]
+    private var handedOut = 0
+
+    init(count: Int) {
+        transports = (0..<count).map { _ in FakeWebSocketTransport() }
+    }
+
+    subscript(index: Int) -> FakeWebSocketTransport { transports[index] }
+
+    var connectionsRequested: Int { lock.withLock { handedOut } }
+
+    func next() -> any WebSocketTransport {
+        lock.withLock {
+            precondition(handedOut < transports.count, "More connections than the test expected")
+            defer { handedOut += 1 }
+            return transports[handedOut]
+        }
+    }
+}
+
+/// Network path the test controls. Starts satisfied unless told otherwise.
+final class FakeNetworkPath: NetworkPathObserving, @unchecked Sendable {
+    private enum WaitKind { case satisfied, change }
+
+    private let lock = NSLock()
+    private var isSatisfied: Bool
+    private var waiters: [UUID: (kind: WaitKind, continuation: CheckedContinuation<Void, any Error>)] = [:]
+    private var waitingObservers: [CheckedContinuation<Void, Never>] = []
+
+    init(isSatisfied: Bool = true) {
+        self.isSatisfied = isSatisfied
+    }
+
+    func waitForSatisfiedPath() async throws {
+        try await wait(.satisfied)
+    }
+
+    func waitForPathChange() async throws {
+        try await wait(.change)
+    }
+
+    func cancel() {
+        let pending = lock.withLock {
+            defer { waiters.removeAll() }
+            return waiters.values.map(\.continuation)
+        }
+        for waiter in pending { waiter.resume(throwing: CancellationError()) }
+    }
+
+    func setSatisfied(_ satisfied: Bool) {
+        let ready = lock.withLock {
+            isSatisfied = satisfied
+            let ready = waiters.filter { $0.value.kind == .change || satisfied }
+            for id in ready.keys { waiters.removeValue(forKey: id) }
+            return ready.values.map(\.continuation)
+        }
+        for waiter in ready { waiter.resume() }
+    }
+
+    /// Returns once something is blocked on this path.
+    func waitUntilSomeoneIsWaiting() async {
+        await withCheckedContinuation { continuation in
+            let already: Bool = lock.withLock {
+                if !waiters.isEmpty { return true }
+                waitingObservers.append(continuation)
+                return false
+            }
+            if already { continuation.resume() }
+        }
+    }
+
+    private func wait(_ kind: WaitKind) async throws {
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                enum Outcome { case wait, resume, cancel }
+                let outcome: Outcome = lock.withLock {
+                    if Task.isCancelled { return .cancel }
+                    if kind == .satisfied, isSatisfied { return .resume }
+                    waiters[id] = (kind, continuation)
+                    return .wait
+                }
+                switch outcome {
+                case .resume: continuation.resume()
+                case .cancel: continuation.resume(throwing: CancellationError())
+                case .wait:
+                    let observers = lock.withLock {
+                        defer { waitingObservers.removeAll() }
+                        return waitingObservers
+                    }
+                    for observer in observers { observer.resume() }
+                }
+            }
+        } onCancel: {
+            let waiter = lock.withLock { waiters.removeValue(forKey: id) }
+            waiter?.continuation.resume(throwing: CancellationError())
+        }
     }
 }

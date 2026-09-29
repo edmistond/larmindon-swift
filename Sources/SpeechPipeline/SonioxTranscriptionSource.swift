@@ -1,22 +1,69 @@
 import AVFAudio
 import Foundation
 
+/// How hard a live session tries to get back to Soniox after the connection drops.
+///
+/// Soniox streams can't be resumed, so recovery means a new stream. Capture keeps running
+/// throughout: on iOS a backgrounded app can't start recording again, and it is suspended
+/// as soon as it stops, so tearing capture down to "restart" would end captions for good
+/// the moment the phone left Wi-Fi in a pocket.
+struct SonioxReconnectPolicy: Sendable {
+    /// Continuous outage after which captions stop and the user is told. A drive through a
+    /// dead zone is usually shorter; beyond this the mic is burning battery for nothing.
+    var maxOutage: Duration = .seconds(600)
+    /// URLSession's default of 60 seconds is far too long for a connect that's hanging
+    /// on a network with bars but no data.
+    var connectTimeout: Duration = .seconds(10)
+    /// Soniox answers roughly once a second while it receives audio, speech or not. A
+    /// socket that has gone this long without a message is dead even if it hasn't said so,
+    /// which is what an interface change can leave behind.
+    var stallTimeout: Duration = .seconds(20)
+
+    /// The first attempt happens as soon as the path is usable. After that, exponential
+    /// backoff capped at 30 s — well under Soniox's 100-requests-per-minute limit.
+    func backoff(beforeAttempt attempt: Int) -> Duration {
+        guard attempt > 1 else { return .zero }
+        return .seconds(min(30, 1 << min(attempt - 2, 5)))
+    }
+}
+
 @MainActor
 public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSource {
     public let name = "Soniox"
     public let results: AsyncStream<CaptionResult>
     public let levelUpdates: AsyncStream<AudioLevelSnapshot>
 
+    static let connectionLostMessage =
+        "Lost the connection to Soniox. Reconnecting when the network is available…"
+    static let reconnectGaveUpMessage =
+        "Couldn’t reconnect to Soniox after 10 minutes. Captions stopped."
+
     private let delivery = BoundedCaptionResults()
     private var didEndDelivery = false
     private let diagnostics: DiagnosticRecorder
-    private let client: SonioxRealtimeClient
+    private let configuration: SonioxRealtimeConfiguration
+    private let makeTransport: @Sendable () -> any WebSocketTransport
+    private let makePathObserver: @MainActor () -> any NetworkPathObserving
+    /// The client for the current connection. Nil while reconnecting: audio arriving then
+    /// is dropped, since Soniox requires near-real-time cadence and a replayed backlog
+    /// would be a burst it may disconnect for.
+    private var client: SonioxRealtimeClient?
+    /// Identifies the current connection, so failures reported late by a connection that
+    /// has already been replaced are ignored.
+    private var connectionID = 0
+    private var messagesOnConnection = 0
+    /// Shared across connections, but restarted for each one: see `openStream(on:)`.
     private let encoder: any SonioxWireEncoder
     private let requestedEncoding: SonioxAudioEncoding
     private var audioTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
+    private var stallTask: Task<Void, Never>?
+    private var reconnectTask: Task<Void, Never>?
     private var bytesSent = 0
+    /// Measured from the captured frames rather than the bytes they encode to, so it stays
+    /// true for any wire encoding.
+    private var audioDroppedWhileDisconnected: Duration = .zero
     private var sentenceAccumulator = SonioxSentenceAccumulator()
     /// Set while tearing down, so the cancellation we asked for is not reported as a
     /// provider failure. A cancellation arriving outside a stop is a real fault.
@@ -29,13 +76,17 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     /// flush. That is the evidence for whether `gracefulShutdownTimeout` has headroom.
     private var stopStartedAt: ContinuousClock.Instant?
     var delay = AsyncDelay.continuous
+    var reconnectPolicy = SonioxReconnectPolicy()
     private static let audioSentReportInterval = 320_000
     private let gracefulShutdownTimeout: Duration
 
-    public init(
+    /// Each connection gets a fresh transport from `makeTransport`. Reusing one across
+    /// connections would let a retired client's late `close()` shut down its successor.
+    init(
         apiKey: String,
         diagnostics: DiagnosticRecorder = .shared,
-        transport: (any WebSocketTransport)? = nil,
+        makeTransport: @escaping @Sendable () -> any WebSocketTransport,
+        makePathObserver: @escaping @MainActor () -> any NetworkPathObserving = { NetworkPathMonitor() },
         gracefulShutdownTimeout: Duration = .seconds(5),
         audioEncoding: SonioxAudioEncoding = SonioxAudioEncoding.defaultValue
     ) {
@@ -44,23 +95,45 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         self.requestedEncoding = audioEncoding
         let encoder = SonioxWireEncoders.make(for: audioEncoding)
         self.encoder = encoder
-        let configuration = SonioxRealtimeConfiguration(
+        // Every replacement connection reuses this, so it carries the encoder's format.
+        self.configuration = SonioxRealtimeConfiguration(
             apiKey: apiKey,
             audioFormat: encoder.audioFormat,
             languageHints: ["en"],
             speakerDiarizationEnabled: true,
             endpointDetectionEnabled: false
         )
-        self.client = SonioxRealtimeClient(
-            configuration: configuration,
-            transport: transport
-                ?? URLSessionWebSocketTransport(
-                    endpoint: SonioxRealtimeClient.endpoint
-                )
-        )
+        self.makeTransport = makeTransport
+        self.makePathObserver = makePathObserver
 
         results = delivery.stream
         levelUpdates = AsyncStream { $0.finish() }
+    }
+
+    /// A single injected transport serves only the first connection; tests that exercise
+    /// reconnection use the transport-factory initializer.
+    public convenience init(
+        apiKey: String,
+        diagnostics: DiagnosticRecorder = .shared,
+        transport: (any WebSocketTransport)? = nil,
+        gracefulShutdownTimeout: Duration = .seconds(5),
+        audioEncoding: SonioxAudioEncoding = SonioxAudioEncoding.defaultValue
+    ) {
+        let makeTransport: @Sendable () -> any WebSocketTransport
+        if let transport {
+            makeTransport = { transport }
+        } else {
+            makeTransport = {
+                URLSessionWebSocketTransport(endpoint: SonioxRealtimeClient.endpoint)
+            }
+        }
+        self.init(
+            apiKey: apiKey,
+            diagnostics: diagnostics,
+            makeTransport: makeTransport,
+            gracefulShutdownTimeout: gracefulShutdownTimeout,
+            audioEncoding: audioEncoding
+        )
     }
 
     public func start() async throws {
@@ -74,28 +147,72 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     ) async throws {
         try await requireActiveStartup()
         sentenceAccumulator = SonioxSentenceAccumulator()
+        let client = makeClient()
+        self.client = client
         let events = try await client.start()
-        await diagnostics.record(
-            category: "provider",
-            name: "soniox_connected",
-            fields: encoder.diagnosticFields.merging([
-                "model": SonioxRealtimeConfiguration.defaultModel,
-                "encoding": encoder.encoding.rawValue,
-                "requested_encoding": requestedEncoding.rawValue,
-                "speaker_diarization": "true",
-                "endpoint_detection": "false",
-            ]) { _, new in new }
-        )
+        do {
+            try await openStream(on: client)
+        } catch {
+            await client.cancel()
+            throw error
+        }
+        await recordConnected(reconnectAttempt: nil)
 
         try await requireActiveStartup()
-        eventTask = Task { await consumeEvents(events) }
+        beginConnection(client: client, events: events)
         audioTask = Task { await sendAudio(audioFrames) }
-        pingTask = Task { await sendPings() }
     }
 
-    private func consumeEvents(_ events: AsyncThrowingStream<SonioxRealtimeEvent, any Error>) async {
+    private func makeClient() -> SonioxRealtimeClient {
+        SonioxRealtimeClient(configuration: configuration, transport: makeTransport())
+    }
+
+    /// Restarts the encoder and sends whatever must precede audio on a new connection —
+    /// Ogg headers for Opus, nothing for PCM. Runs before the connection accepts audio, so
+    /// no encoded packet lands on a stream ahead of its header.
+    private func openStream(on client: SonioxRealtimeClient) async throws {
+        let header = encoder.startStream()
+        guard !header.isEmpty else { return }
+        try await client.sendAudio(header)
+        bytesSent += header.count
+    }
+
+    private func recordConnected(reconnectAttempt: Int?) async {
+        var fields = encoder.diagnosticFields.merging([
+            "model": SonioxRealtimeConfiguration.defaultModel,
+            "encoding": encoder.encoding.rawValue,
+            "requested_encoding": requestedEncoding.rawValue,
+            "speaker_diarization": "true",
+            "endpoint_detection": "false",
+        ]) { _, new in new }
+        if let reconnectAttempt {
+            fields["reconnect_attempt"] = String(reconnectAttempt)
+        }
+        await diagnostics.record(category: "provider", name: "soniox_connected", fields: fields)
+    }
+
+    private func beginConnection(
+        client: SonioxRealtimeClient,
+        events: AsyncThrowingStream<SonioxRealtimeEvent, any Error>
+    ) {
+        connectionID += 1
+        let id = connectionID
+        messagesOnConnection = 0
+        eventTask = Task { await consumeEvents(events, connectionID: id) }
+        pingTask = Task { await sendPings(client: client) }
+        stallTask = Task { await watchForStall(connectionID: id) }
+    }
+
+    private func consumeEvents(
+        _ events: AsyncThrowingStream<SonioxRealtimeEvent, any Error>,
+        connectionID id: Int
+    ) async {
         do {
             for try await event in events {
+                // A retired connection can still deliver what it had buffered. Its
+                // preview was already flushed, and the new stream starts fresh.
+                guard id == connectionID else { continue }
+                messagesOnConnection += 1
                 switch event {
                 case .transcript(let update):
                     let finalizedSegments =
@@ -169,6 +286,13 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                     )
                 }
             }
+            // Outside a stop, a stream that ends at all is a connection that ended.
+            if !isStopping {
+                await connectionLost(
+                    SonioxRealtimeClientError.transport("The Soniox stream ended unexpectedly."),
+                    connectionID: id
+                )
+            }
         } catch {
             guard !isStopping else {
                 await diagnostics.record(
@@ -178,33 +302,22 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 )
                 return
             }
-            publish(.failure(error.localizedDescription))
-            await diagnostics.record(
-                category: "provider",
-                name: "soniox_error",
-                fields: [
-                    "type": String(describing: type(of: error)),
-                    "message": error.localizedDescription,
-                ]
-            )
+            await connectionLost(error, connectionID: id)
         }
     }
 
+    /// Runs for the life of the source, across reconnects. The client's event stream is
+    /// the authoritative failure channel — a failed send also fails that stream — so a
+    /// send error here only means the frame is dropped.
     private func sendAudio(_ audioFrames: AsyncStream<CapturedAudioFrame>) async {
-        let header = encoder.startStream()
-        if !header.isEmpty {
-            do {
-                try await client.sendAudio(header)
-                bytesSent += header.count
-            } catch {
-                guard !isStopping else { return }
-                publish(.failure(error.localizedDescription))
-                return
-            }
-        }
-
         for await frame in audioFrames {
             guard !Task.isCancelled else { break }
+            // Checked before encoding: an Opus packet encoded now would be dropped, leaving
+            // a gap in the page sequence of the stream `openStream(on:)` restarts next.
+            guard let client, reconnectTask == nil else {
+                audioDroppedWhileDisconnected += frame.duration
+                continue
+            }
             guard let data = encoder.encode(frame.buffer) else {
                 await diagnostics.record(
                     category: "audio",
@@ -236,15 +349,12 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 }
             } catch {
                 guard !isStopping else { return }
-                publish(
-                    .failure(error.localizedDescription)
-                )
-                return
+                audioDroppedWhileDisconnected += frame.duration
             }
         }
     }
 
-    private func sendPings() async {
+    private func sendPings(client: SonioxRealtimeClient) async {
         let clock = ContinuousClock()
         while !Task.isCancelled {
             do {
@@ -274,9 +384,35 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         }
     }
 
+    /// Catches the half-dead socket: after an interface change the old connection can go
+    /// silent without URLSession reporting anything, leaving captions frozen while the
+    /// session still claims to be listening.
+    private func watchForStall(connectionID id: Int) async {
+        var lastSeen = messagesOnConnection
+        while !Task.isCancelled {
+            do {
+                try await delay.sleep(reconnectPolicy.stallTimeout)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, !isStopping, id == connectionID else { return }
+            if messagesOnConnection == lastSeen {
+                let seconds = reconnectPolicy.stallTimeout.components.seconds
+                await connectionLost(
+                    SonioxRealtimeClientError.transport(
+                        "Soniox sent nothing for \(seconds) seconds."
+                    ),
+                    connectionID: id
+                )
+                return
+            }
+            lastSeen = messagesOnConnection
+        }
+    }
+
     private func requireActiveStartup() async throws {
         guard !Task.isCancelled, !isStopping else {
-            await client.cancel()
+            await client?.cancel()
             throw CancellationError()
         }
     }
@@ -290,10 +426,205 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             guard delivery.didFail else { return }
             audioTask?.cancel()
             pingTask?.cancel()
-            Task { await client.cancel() }
+            stallTask?.cancel()
+            reconnectTask?.cancel()
+            let client = client
+            Task { await client?.cancel() }
             return
         }
     }
+
+    private func reportFailure(_ error: any Error) async {
+        publish(.failure(error.localizedDescription))
+        await diagnostics.record(
+            category: "provider",
+            name: "soniox_error",
+            fields: [
+                "type": String(describing: type(of: error)),
+                "message": error.localizedDescription,
+            ]
+        )
+    }
+
+    /// Whether a new stream might succeed where this one failed. Network loss and the
+    /// provider's own "try again" errors (overload, the 300-minute stream cap) qualify;
+    /// a rejected key or configuration will fail identically on every attempt.
+    static func isRecoverable(_ error: any Error) -> Bool {
+        switch error as? SonioxRealtimeClientError {
+        case .transport:
+            return true
+        case .provider(let providerError):
+            return providerError.retryDisposition == .newRequestMaySucceed
+        default:
+            return false
+        }
+    }
+
+    // MARK: - Reconnection
+
+    private func connectionLost(_ error: any Error, connectionID id: Int) async {
+        // Checked and claimed before the first suspension: the event stream, the stall
+        // watchdog, and a stream that ends can all report the same loss.
+        guard !isStopping, !didEndDelivery, id == connectionID, reconnectTask == nil else {
+            return
+        }
+        guard Self.isRecoverable(error) else {
+            await reportFailure(error)
+            return
+        }
+
+        let lostClient = client
+        client = nil
+        // Retire the connection now, so anything it still reports — buffered events, a
+        // late error, its stall watchdog — is recognizably stale.
+        connectionID += 1
+        pingTask?.cancel()
+        pingTask = nil
+        stallTask?.cancel()
+        stallTask = nil
+        audioDroppedWhileDisconnected = .zero
+        reconnectTask = Task { await reconnect() }
+
+        // A new stream starts with no context, so words already final on this one would
+        // otherwise sit in the preview forever. What was still volatile is lost.
+        let flushed = sentenceAccumulator.finish()
+        if !flushed.isEmpty {
+            publish(.finalizedSegments(flushed))
+        }
+        publish(.volatileSegments([]))
+        publish(.connectionInterrupted(Self.connectionLostMessage))
+
+        await diagnostics.record(
+            category: "provider",
+            name: "soniox_connection_lost",
+            fields: [
+                "type": String(describing: type(of: error)),
+                "message": error.localizedDescription,
+                "bytes_sent": String(bytesSent),
+            ]
+        )
+        await lostClient?.cancel()
+    }
+
+    private func reconnect() async {
+        let path = makePathObserver()
+        defer { path.cancel() }
+        let deadline = Task { [weak self, delay, reconnectPolicy] in
+            try? await delay.sleep(reconnectPolicy.maxOutage)
+            guard !Task.isCancelled else { return }
+            await self?.giveUpReconnecting()
+        }
+        defer { deadline.cancel() }
+
+        var attempt = 0
+        while !Task.isCancelled, !isStopping {
+            do {
+                try await path.waitForSatisfiedPath()
+                attempt += 1
+                try await waitForBackoff(reconnectPolicy.backoff(beforeAttempt: attempt), path: path)
+                await diagnostics.record(
+                    category: "provider",
+                    name: "soniox_reconnect_attempt",
+                    fields: ["attempt": String(attempt)]
+                )
+                try await connectReplacement(attempt: attempt)
+                reconnectTask = nil
+                publish(.connectionRestored)
+                return
+            } catch {
+                guard !Task.isCancelled, !isStopping else { return }
+                guard Self.isRecoverable(error) else {
+                    await reportFailure(error)
+                    return
+                }
+                await diagnostics.record(
+                    category: "provider",
+                    name: "soniox_reconnect_failed",
+                    fields: [
+                        "attempt": String(attempt),
+                        "message": error.localizedDescription,
+                    ]
+                )
+            }
+        }
+    }
+
+    /// Backoff ends early when the network changes — joining Wi-Fi in the garage should
+    /// reconnect now, not after the rest of a 30-second wait.
+    private func waitForBackoff(_ duration: Duration, path: any NetworkPathObserving) async throws {
+        guard duration > .zero else { return }
+        try await withThrowingTaskGroup(of: Void.self) { [delay] group in
+            group.addTask { try await delay.sleep(duration) }
+            group.addTask { try await path.waitForPathChange() }
+            defer { group.cancelAll() }
+            _ = try await group.next()
+        }
+    }
+
+    private func connectReplacement(attempt: Int) async throws {
+        let client = makeClient()
+        self.client = client
+        let timeout = Task { [delay, reconnectPolicy] in
+            try? await delay.sleep(reconnectPolicy.connectTimeout)
+            guard !Task.isCancelled else { return false }
+            await client.cancel()
+            return true
+        }
+        let events: AsyncThrowingStream<SonioxRealtimeEvent, any Error>
+        do {
+            events = try await client.start()
+            timeout.cancel()
+        } catch {
+            timeout.cancel()
+            if self.client === client { self.client = nil }
+            if await timeout.value {
+                throw SonioxRealtimeClientError.transport("Timed out connecting to Soniox.")
+            }
+            throw error
+        }
+        guard !Task.isCancelled, !isStopping else {
+            await client.cancel()
+            if self.client === client { self.client = nil }
+            throw CancellationError()
+        }
+
+        do {
+            try await openStream(on: client)
+        } catch {
+            await client.cancel()
+            if self.client === client { self.client = nil }
+            throw error
+        }
+
+        sentenceAccumulator = SonioxSentenceAccumulator()
+        beginConnection(client: client, events: events)
+        await recordConnected(reconnectAttempt: attempt)
+        await diagnostics.record(
+            category: "provider",
+            name: "soniox_reconnected",
+            fields: [
+                "attempt": String(attempt),
+                "dropped_audio_ms": String(audioDroppedWhileDisconnected.milliseconds),
+            ]
+        )
+    }
+
+    private func giveUpReconnecting() async {
+        guard let reconnectTask, !isStopping else { return }
+        reconnectTask.cancel()
+        await client?.cancel()
+        client = nil
+        await diagnostics.record(
+            category: "provider",
+            name: "soniox_reconnect_gave_up",
+            fields: [
+                "max_outage_seconds": String(reconnectPolicy.maxOutage.components.seconds)
+            ]
+        )
+        publish(.failure(Self.reconnectGaveUpMessage))
+    }
+
+    // MARK: - Shutdown
 
     /// Shutting down cleanly means sending the empty text frame Soniox uses as end-of-stream
     /// and waiting for the server to flush its remaining tokens and close. That takes a
@@ -316,6 +647,10 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         stopStartedAt = .now
         pingTask?.cancel()
         pingTask = nil
+        stallTask?.cancel()
+        stallTask = nil
+        // Mid-reconnect there is no stream worth finishing; abandon the attempt.
+        reconnectTask?.cancel()
 
         let watchdog = startShutdownWatchdog()
         defer { watchdog.cancel() }
@@ -324,22 +659,28 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             await audioTask.value
         }
         audioTask = nil
+        if let reconnectTask {
+            await reconnectTask.value
+        }
+        reconnectTask = nil
 
-        let state = await client.state
-        if state == .streaming {
-            do {
-                try await client.finish()
-            } catch {
-                // A watchdog cancellation is our own doing, not a provider fault, and
-                // surfacing it would put an error caption on screen every time a stop
-                // timed out.
-                if !didForceShutdown {
-                    publish(.failure(error.localizedDescription))
+        if let client {
+            let state = await client.state
+            if state == .streaming {
+                do {
+                    try await client.finish()
+                } catch {
+                    // A watchdog cancellation is our own doing, not a provider fault, and
+                    // surfacing it would put an error caption on screen every time a stop
+                    // timed out.
+                    if !didForceShutdown {
+                        publish(.failure(error.localizedDescription))
+                    }
+                    await client.cancel()
                 }
+            } else if state != .finished {
                 await client.cancel()
             }
-        } else if state != .finished {
-            await client.cancel()
         }
 
         if let eventTask {
@@ -377,8 +718,16 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 ]
             )
             audioTask?.cancel()
-            await client.cancel()
+            await client?.cancel()
         }
+    }
+}
+
+extension CapturedAudioFrame {
+    fileprivate var duration: Duration {
+        let sampleRate = buffer.format.sampleRate
+        guard sampleRate > 0 else { return .zero }
+        return .seconds(Double(buffer.frameLength) / sampleRate)
     }
 }
 

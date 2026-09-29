@@ -32,7 +32,9 @@ final class BoundedCaptionResults {
             return true
         case .dropped(let dropped):
             switch dropped {
-            case .volatile, .volatileSegments:
+            // A newer connection status supersedes an older one, and bufferingNewest
+            // always keeps the newest.
+            case .volatile, .volatileSegments, .connectionInterrupted, .connectionRestored:
                 return true
             case .finalized, .finalizedSegments, .failure:
                 didFail = true
