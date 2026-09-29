@@ -401,6 +401,9 @@ public struct LarmindonRootView: View {
             if session.isInterrupted {
                 return "Interrupted · \(session.requestedMode.title)"
             }
+            if session.isReconnecting {
+                return "Reconnecting · \(session.requestedMode.title)"
+            }
             if let activeMode = session.activeMode {
                 return "Listening · \(activeMode.title)"
             }

@@ -14,12 +14,12 @@ final class CaptionSessionInterruptionTests: XCTestCase {
 
     private final class SpyNotifier: CaptionFailureNotifying {
         private(set) var prepareCount = 0
-        private(set) var notifiedReasons: [AudioInterruptionFailureReason] = []
+        private(set) var notifiedReasons: [String] = []
 
         func prepare() async { prepareCount += 1 }
 
-        func notifyCaptionsStopped(reason: AudioInterruptionFailureReason) async {
-            notifiedReasons.append(reason)
+        func notifyCaptionsStopped(message: String) async {
+            notifiedReasons.append(message)
         }
     }
 
@@ -58,7 +58,9 @@ final class CaptionSessionInterruptionTests: XCTestCase {
         session.routeManager.onAudioInterruption?(.ended(shouldResume: false))
         await waitUntil { !notifier.notifiedReasons.isEmpty }
 
-        XCTAssertEqual(notifier.notifiedReasons, [.interruptionEndedWithoutResume])
+        XCTAssertEqual(
+            notifier.notifiedReasons,
+            [AudioInterruptionFailureReason.interruptionEndedWithoutResume.message])
         XCTAssertEqual(
             session.lastError,
             AudioInterruptionFailureReason
@@ -184,7 +186,9 @@ final class CaptionSessionInterruptionTests: XCTestCase {
         }
         await waitUntil { !notifier.notifiedReasons.isEmpty }
         XCTAssertEqual(attempts, 4)
-        XCTAssertEqual(notifier.notifiedReasons, [.restartAttemptsExhausted])
+        XCTAssertEqual(
+            notifier.notifiedReasons,
+            [AudioInterruptionFailureReason.restartAttemptsExhausted.message])
         XCTAssertFalse(session.store.isRunning)
         await session.stop()
     }

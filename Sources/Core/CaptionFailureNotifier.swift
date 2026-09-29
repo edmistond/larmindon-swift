@@ -13,7 +13,7 @@ import UserNotifications
 public protocol CaptionFailureNotifying: AnyObject {
     /// Asks for notification authorization if it hasn't been asked for yet.
     func prepare() async
-    func notifyCaptionsStopped(reason: AudioInterruptionFailureReason) async
+    func notifyCaptionsStopped(message: String) async
 }
 
 @MainActor
@@ -44,13 +44,13 @@ public final class UserNotificationCaptionFailureNotifier: CaptionFailureNotifyi
         #endif
     }
 
-    public func notifyCaptionsStopped(reason: AudioInterruptionFailureReason) async {
+    public func notifyCaptionsStopped(message: String) async {
         #if os(iOS)
         guard isAuthorized else { return }
 
         let content = UNMutableNotificationContent()
         content.title = "Larmindon"
-        content.body = reason.message
+        content.body = message
         content.sound = .default
 
         // `trigger: nil` delivers immediately. In the foreground iOS suppresses the banner

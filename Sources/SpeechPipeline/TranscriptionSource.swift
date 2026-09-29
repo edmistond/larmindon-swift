@@ -8,6 +8,11 @@ public enum CaptionResult: Equatable, Sendable {
     /// Terminal provider or delivery failure. Display as an error and stop the session.
     /// Cancellation requested by stop() must not emit a failure.
     case failure(String)
+    /// The provider lost its connection and is reconnecting on its own. Capture keeps
+    /// running; the session stays up. Not terminal — `connectionRestored` or `failure`
+    /// follows.
+    case connectionInterrupted(String)
+    case connectionRestored
 
     /// Whether this result actually carries transcribed words.
     ///
@@ -24,7 +29,7 @@ public enum CaptionResult: Equatable, Sendable {
             return segments.contains {
                 !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
-        case .failure:
+        case .failure, .connectionInterrupted, .connectionRestored:
             return false
         }
     }
