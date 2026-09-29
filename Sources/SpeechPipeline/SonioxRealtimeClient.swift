@@ -128,7 +128,13 @@ public actor SonioxRealtimeClient {
         }
     }
 
-    /// Sends Soniox's empty-frame completion signal and waits for `finished`.
+    /// Sends Soniox's end-of-audio signal and waits for `finished`.
+    ///
+    /// The signal must be an empty *text* frame. Soniox's reference documents accept "binary
+    /// or text", but the server treats a zero-length binary frame as an empty audio chunk
+    /// and keeps waiting: bundle `larmindon-diagnostics-BBE900D2` shows 82 stops in a row
+    /// hearing nothing back until the shutdown watchdog cancelled them. Soniox's own web SDK
+    /// sends `""`.
     ///
     /// The event stream remains the only result channel, including any final tokens
     /// received while the server drains the remaining audio.
@@ -145,7 +151,7 @@ public actor SonioxRealtimeClient {
 
         state = .finishing
         do {
-            try await transport.sendBinary(Data())
+            try await transport.sendText("")
         } catch {
             let clientError = mapError(error)
             await fail(with: clientError)

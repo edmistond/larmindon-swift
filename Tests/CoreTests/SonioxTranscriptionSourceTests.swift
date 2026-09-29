@@ -62,7 +62,7 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         let stopTask = Task {
             await source.stop()
         }
-        await transport.waitForBinaryMessageCount(2)
+        await transport.waitForTextMessageCount(2)
         await transport.enqueue(
             .text(
                 """
@@ -72,8 +72,10 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         )
         await stopTask.value
 
-        let completionFrames = await transport.sentBinaryMessages
-        XCTAssertEqual(completionFrames.last, Data())
+        let completionMessages = await transport.sentTextMessages
+        XCTAssertEqual(completionMessages.last, "")
+        let audioFrames = await transport.sentBinaryMessages
+        XCTAssertFalse(audioFrames.contains(Data()), "a zero-length binary frame is not end-of-audio")
         let closeCodes = await transport.closeCodes
         XCTAssertEqual(closeCodes.last, .normalClosure)
     }
@@ -102,7 +104,7 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
 
         let stopTask = Task { await source.stop() }
 
-        await transport.waitForBinaryMessageCount(1)
+        await transport.waitForTextMessageCount(2)
         await delay.waitUntilScheduled(.seconds(5))
         let beforeDeadline = await transport.closeCodes
         XCTAssertTrue(beforeDeadline.isEmpty)
@@ -155,7 +157,7 @@ final class SonioxTranscriptionSourceTests: XCTestCase {
         await consumer.value
         frameContinuation.finish()
         let stop = Task { await source.stop() }
-        await transport.waitForBinaryMessageCount(1)
+        await transport.waitForTextMessageCount(2)
         await transport.enqueue(.text("{\"tokens\":[{\"text\":\"Late sentence.\",\"is_final\":true}]}"))
         let deadline = ContinuousClock.now + .seconds(1)
         while ContinuousClock.now < deadline {

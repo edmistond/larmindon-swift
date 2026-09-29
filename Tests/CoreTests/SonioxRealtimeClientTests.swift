@@ -79,7 +79,11 @@ final class SonioxRealtimeClientTests: XCTestCase {
         await client.cancel()
     }
 
-    func testFinishSendsEmptyBinaryFrameAndWaitsForFinishedResponse()
+    /// Regression: bundle `larmindon-diagnostics-BBE900D2` shows every Soniox stop (82 of
+    /// them) timing out with no server response at all after the end-of-audio signal. The
+    /// client sent an empty *binary* frame, which Soniox takes as a zero-length audio chunk.
+    /// The end-of-audio signal Soniox acts on is an empty *text* frame.
+    func testFinishSendsEmptyTextFrameAndWaitsForFinishedResponse()
         async throws
     {
         let transport = FakeWebSocketTransport()
@@ -90,10 +94,13 @@ final class SonioxRealtimeClientTests: XCTestCase {
         let finishTask = Task {
             try await client.finish()
         }
-        await transport.waitForBinaryMessageCount(1)
+        await transport.waitForTextMessageCount(2)
 
+        let sentText = await transport.sentTextMessages
+        XCTAssertEqual(sentText.count, 2)
+        XCTAssertEqual(sentText.last, "")
         let sentFrames = await transport.sentBinaryMessages
-        XCTAssertEqual(sentFrames, [Data()])
+        XCTAssertTrue(sentFrames.isEmpty, "the end-of-audio signal must not be a binary frame")
 
         let finished = try fixture(named: "soniox_finished")
         await transport.enqueue(.text(finished))
@@ -256,7 +263,7 @@ final class SonioxRealtimeClientTests: XCTestCase {
         let client = makeClient(transport: transport)
         let stream = try await client.start()
         let gate = AsyncGate()
-        await transport.pauseBinary(on: gate)
+        await transport.pauseText(on: gate)
         let finish = Task { try await client.finish() }
         await gate.waitUntilEntered()
         await transport.close(code: .goingAway)

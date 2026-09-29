@@ -24,6 +24,9 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     /// Set when the shutdown watchdog gave up on the graceful path, so the cancellation it
     /// causes is not reported to the user as a provider failure.
     private var didForceShutdown = false
+    /// When the stop began, so `soniox_finished` can report how long the server took to
+    /// flush. That is the evidence for whether `gracefulShutdownTimeout` has headroom.
+    private var stopStartedAt: ContinuousClock.Instant?
     var delay = AsyncDelay.continuous
     private let gracefulShutdownTimeout: Duration
 
@@ -152,6 +155,10 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                                         .finalizedAudioMilliseconds
                                 ),
                             "bytes_sent": String(bytesSent),
+                            "stop_to_finished_ms":
+                                stopStartedAt.map {
+                                    String($0.duration(to: .now).milliseconds)
+                                } ?? "",
                         ]
                     )
                 }
@@ -221,16 +228,11 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 guard !Task.isCancelled else { return }
                 let started = clock.now
                 try await client.sendPing()
-                let duration = started.duration(to: clock.now)
-                let components = duration.components
-                let milliseconds =
-                    components.seconds * 1_000
-                    + components.attoseconds / 1_000_000_000_000_000
                 await diagnostics.record(
                     category: "network",
                     name: "websocket_ping",
                     fields: [
-                        "latency_ms": String(milliseconds)
+                        "latency_ms": String(started.duration(to: clock.now).milliseconds)
                     ]
                 )
             } catch is CancellationError {
@@ -269,7 +271,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         }
     }
 
-    /// Shutting down cleanly means sending the empty frame Soniox uses as end-of-stream
+    /// Shutting down cleanly means sending the empty text frame Soniox uses as end-of-stream
     /// and waiting for the server to flush its remaining tokens and close. That takes a
     /// couple of seconds, and a second stop arriving during it would find the client
     /// mid-finish and cancel the socket instead, throwing away those final tokens. So
@@ -287,6 +289,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
 
     private func performStop() async {
         isStopping = true
+        stopStartedAt = .now
         pingTask?.cancel()
         pingTask = nil
 
@@ -352,6 +355,12 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             audioTask?.cancel()
             await client.cancel()
         }
+    }
+}
+
+extension Duration {
+    fileprivate var milliseconds: Int64 {
+        components.seconds * 1_000 + components.attoseconds / 1_000_000_000_000_000
     }
 }
 

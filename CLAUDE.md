@@ -99,9 +99,12 @@ diagnostic signature in `larmindon-diagnostics-*` bundles.
 
 ### Soniox shutdown
 
-Ending a session cleanly means sending an empty WebSocket frame (`client.finish()`), then
+Ending a session cleanly means sending an empty WebSocket **text** frame (`client.finish()`),
+then
 waiting for the server to flush remaining tokens, send `finished: true`, and close. That
-takes a couple of seconds. `SonioxTranscriptionSource.stop()` is re-entrancy-safe on
+takes a couple of seconds. Don't make it an empty *binary* frame: Soniox's docs say either
+works, but the server treats zero-length binary as an empty audio chunk, never sends
+`finished`, and every stop times out. `SonioxTranscriptionSource.stop()` is re-entrancy-safe on
 purpose: a second stop arriving mid-finish would fall through to `cancel()` and discard
 those final tokens. `CaptionSession.stopActive` also clears user-visible state *before*
 awaiting teardown, so Stop registers on the first press.
