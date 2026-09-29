@@ -59,7 +59,9 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     private var stallTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var bytesSent = 0
-    private var bytesDroppedWhileDisconnected = 0
+    /// Measured from the captured frames rather than the bytes they encode to, so it stays
+    /// true for any wire encoding.
+    private var audioDroppedWhileDisconnected: Duration = .zero
     private var sentenceAccumulator = SonioxSentenceAccumulator()
     /// Set while tearing down, so the cancellation we asked for is not reported as a
     /// provider failure. A cancellation arriving outside a stop is a real fault.
@@ -298,7 +300,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 continue
             }
             guard let client, reconnectTask == nil else {
-                bytesDroppedWhileDisconnected += data.count
+                audioDroppedWhileDisconnected += frame.duration
                 continue
             }
             do {
@@ -313,7 +315,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 }
             } catch {
                 guard !isStopping else { return }
-                bytesDroppedWhileDisconnected += data.count
+                audioDroppedWhileDisconnected += frame.duration
             }
         }
     }
@@ -446,7 +448,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         pingTask = nil
         stallTask?.cancel()
         stallTask = nil
-        bytesDroppedWhileDisconnected = 0
+        audioDroppedWhileDisconnected = .zero
         reconnectTask = Task { await reconnect() }
 
         // A new stream starts with no context, so words already final on this one would
@@ -560,7 +562,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             name: "soniox_reconnected",
             fields: [
                 "attempt": String(attempt),
-                "dropped_audio_ms": String(bytesDroppedWhileDisconnected / 32),
+                "dropped_audio_ms": String(audioDroppedWhileDisconnected.milliseconds),
             ]
         )
     }
@@ -676,6 +678,14 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             audioTask?.cancel()
             await client?.cancel()
         }
+    }
+}
+
+extension CapturedAudioFrame {
+    fileprivate var duration: Duration {
+        let sampleRate = buffer.format.sampleRate
+        guard sampleRate > 0 else { return .zero }
+        return .seconds(Double(buffer.frameLength) / sampleRate)
     }
 }
 
