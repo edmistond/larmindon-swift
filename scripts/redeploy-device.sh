@@ -6,15 +6,15 @@ readonly workspace="Larmindon.xcworkspace"
 readonly scheme="Larmindon"
 readonly bundle_id="com.davidedmiston.larmindon"
 readonly derived_data=".build/DeviceDerivedData"
-readonly app_path="${derived_data}/Build/Products/Debug-iphoneos/Larmindon.app"
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 usage() {
   cat <<EOF
-Usage: $0 [--refresh-profile] [device-name-or-UDID]
+Usage: $0 [--release] [--refresh-profile] [device-name-or-UDID]
 
 Options:
+  --release          Build the optimized Release configuration instead of Debug.
   --refresh-profile  Move cached Larmindon development profiles aside before
                      building so Xcode requests a newly issued profile.
   -h, --help         Show this help.
@@ -22,10 +22,14 @@ EOF
 }
 
 refresh_profile=false
+configuration="Debug"
 device_selector="${DEVICE:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --release)
+      configuration="Release"
+      ;;
     --refresh-profile)
       refresh_profile=true
       ;;
@@ -49,6 +53,8 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+readonly app_path="${derived_data}/Build/Products/${configuration}-iphoneos/Larmindon.app"
 
 development_team="${DEVELOPMENT_TEAM:-}"
 
@@ -203,11 +209,11 @@ if [[ "${refresh_profile}" == true ]]; then
   refresh_cached_profiles
 fi
 
-echo "Building ${scheme} for ${device_selector}..."
+echo "Building ${scheme} (${configuration}) for ${device_selector}..."
 if ! xcodebuild \
     -workspace "${workspace}" \
     -scheme "${scheme}" \
-    -configuration Debug \
+    -configuration "${configuration}" \
     -destination "${destination}" \
     -derivedDataPath "${derived_data}" \
     -allowProvisioningUpdates \

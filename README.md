@@ -204,6 +204,19 @@ If more than one physical iOS device is connected, pass its name or UDID:
 ./scripts/redeploy-device.sh "My iPad"
 ```
 
+The script builds Debug by default. For an optimized Release build, including
+when profiling CPU and power use with Instruments:
+
+```bash
+./scripts/redeploy-device.sh --release
+./scripts/redeploy-device.sh --release "My iPhone"
+```
+
+`--release` can be combined with `--refresh-profile`. Both configurations use
+development signing. Release products and their matching `.dSYM` files are in
+`.build/DeviceDerivedData/Build/Products/Release-iphoneos/`; retain those symbols
+for the build used in a recording so Instruments can resolve function names.
+
 To force Xcode to issue a new development provisioning profile before the
 redeploy, move the matching cached profile into a private local backup and
 build with automatic provisioning:
