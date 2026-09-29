@@ -9,3 +9,4 @@ xcuserdata/
 /larmindon_icon.png
 buildServer.json
 larmindon-diagnostics-*/
+*.trace
