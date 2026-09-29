@@ -226,6 +226,13 @@ def run_checks(mode, requested_simulator):
             run_step("macos-tests", ["xcrun", "swift", "test", "--scratch-path",
                                      str(output_root / "swiftpm"), "-Xswiftc",
                                      SWIFT_WARNINGS_AS_ERRORS], reports)
+            # Optimized code can break where Debug passes: a miscompiled inlined initializer
+            # crashed every Soniox start in Release (2026-09-29) while all Debug checks passed.
+            # -enable-testing keeps @testable imports working in the release build.
+            run_step("macos-release-tests", ["xcrun", "swift", "test", "-c", "release",
+                                             "--scratch-path", str(output_root / "swiftpm"),
+                                             "-Xswiftc", "-enable-testing", "-Xswiftc",
+                                             SWIFT_WARNINGS_AS_ERRORS], reports)
         common = ["xcodebuild", "-workspace", "Larmindon.xcworkspace", "-configuration", "Debug",
                   "-derivedDataPath", str(output_root / "DerivedData"), "CODE_SIGNING_ALLOWED=NO",
                   "SWIFT_TREAT_WARNINGS_AS_ERRORS=YES"]
@@ -250,7 +257,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", nargs="?", choices=("all", "lint", "format", "test", "build", "setup"),
                         default="all", help="all (default), format + lint, format only (read-only), "
-                        "both test suites, app builds, or explicit SwiftLint setup")
+                        "test suites (macOS Debug + Release, iOS), app builds, or explicit SwiftLint setup")
     parser.add_argument("--simulator", metavar="UDID", help="use a specific device on the pinned iOS runtime")
     args = parser.parse_args()
     if args.simulator and args.mode not in ("all", "test"):

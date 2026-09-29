@@ -57,12 +57,15 @@ with the full checks rerun before acceptance.
 | `./scripts/check.sh` | All checks below, plus regression tests for the check runner |
 | `./scripts/check.sh lint` | Check-only formatting, SwiftLint gate, and unfiltered advisory metrics |
 | `./scripts/check.sh format` | Check-only formatting; never rewrites files |
-| `./scripts/check.sh test` | Tuist generation, macOS SwiftPM tests, iOS `CoreTests` |
+| `./scripts/check.sh test` | Tuist generation, macOS SwiftPM tests (Debug and Release), iOS `CoreTests` |
 | `./scripts/check.sh build` | Tuist generation, macOS app and iOS app/widget builds |
 
 The full command regenerates the ignored Xcode workspace from `Project.swift`
 with Tuist's binary cache disabled. Builds use Debug configuration and
-`CODE_SIGNING_ALLOWED=NO`. The iOS build includes the embedded widget. SwiftPM
+`CODE_SIGNING_ALLOWED=NO`. The macOS SwiftPM tests also run a second time as an
+optimized release build (`-c release` with testability enabled), because optimized code
+can fail where Debug passes: a miscompiled inlined initializer once crashed every Soniox
+start in Release while all Debug checks were green. The iOS build includes the embedded widget. SwiftPM
 tests alone do not cover the app entry point, widget, or iOS-only tests.
 
 The iOS `CoreTests` suite runs inside a blank `LarmindonTestHost` app so its layout
