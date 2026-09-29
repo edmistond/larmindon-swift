@@ -42,6 +42,7 @@ public final class CaptionSession {
     private var vadSensitivity: VADSensitivity
     private var audioBufferFrameCount: Int
     private var profanityFilterEnabled: Bool
+    private var sonioxAudioEncoding: SonioxAudioEncoding
     private var audioRouteRecoveryTask: Task<Void, Never>?
     /// Device the running capture was started against, so device-list churn can be told
     /// apart from the selected input actually changing.
@@ -85,6 +86,7 @@ public final class CaptionSession {
         audioBufferFrameCount: Int = AudioCaptureBufferFrames.defaultValue,
         voiceProcessingEnabled: Bool = VoiceProcessingPreference.defaultValue,
         profanityFilterEnabled: Bool = false,
+        sonioxAudioEncoding: SonioxAudioEncoding = SonioxAudioEncoding.defaultValue,
         diagnostics: DiagnosticRecorder = .shared,
         credentialStore: any ProviderCredentialStore =
             KeychainProviderCredentialStore(),
@@ -109,6 +111,7 @@ public final class CaptionSession {
         self.audioBufferFrameCount = AudioCaptureBufferFrames.clamped(audioBufferFrameCount)
         self.requestedVoiceProcessingEnabled = voiceProcessingEnabled
         self.profanityFilterEnabled = profanityFilterEnabled
+        self.sonioxAudioEncoding = sonioxAudioEncoding
 
         routeManager.onRouteChange = { [weak self] in
             guard let self else { return }
@@ -143,14 +146,16 @@ public final class CaptionSession {
         vadSensitivity: VADSensitivity? = nil,
         audioBufferFrameCount: Int? = nil,
         voiceProcessingEnabled: Bool? = nil,
-        profanityFilterEnabled: Bool? = nil
+        profanityFilterEnabled: Bool? = nil,
+        sonioxAudioEncoding: SonioxAudioEncoding? = nil
     ) -> Bool {
         guard canStartIfIdle else { return false }
         start(
             kind: kind, mode: mode, vadSensitivity: vadSensitivity,
             audioBufferFrameCount: audioBufferFrameCount,
             voiceProcessingEnabled: voiceProcessingEnabled,
-            profanityFilterEnabled: profanityFilterEnabled)
+            profanityFilterEnabled: profanityFilterEnabled,
+            sonioxAudioEncoding: sonioxAudioEncoding)
         return true
     }
 
@@ -160,7 +165,8 @@ public final class CaptionSession {
         vadSensitivity: VADSensitivity? = nil,
         audioBufferFrameCount: Int? = nil,
         voiceProcessingEnabled: Bool? = nil,
-        profanityFilterEnabled: Bool? = nil
+        profanityFilterEnabled: Bool? = nil,
+        sonioxAudioEncoding: SonioxAudioEncoding? = nil
     ) {
         let sourceKind = kind ?? selectedSourceKind
         let requestedMode = mode ?? self.requestedMode
@@ -177,6 +183,9 @@ public final class CaptionSession {
         }
         if let profanityFilterEnabled {
             self.profanityFilterEnabled = profanityFilterEnabled
+        }
+        if let sonioxAudioEncoding {
+            self.sonioxAudioEncoding = sonioxAudioEncoding
         }
 
         #if os(iOS)
@@ -607,7 +616,8 @@ public final class CaptionSession {
                 }
                 return SonioxTranscriptionSource(
                     apiKey: key,
-                    diagnostics: diagnostics
+                    diagnostics: diagnostics,
+                    audioEncoding: sonioxAudioEncoding
                 )
             }
         }

@@ -377,3 +377,25 @@ public enum VoiceProcessingPreference {
     public static let storageKey = "voiceProcessingEnabled"
     public static let defaultValue = true
 }
+
+/// How audio is encoded on the wire to Soniox. Soniox bills by stream duration either way;
+/// the difference is upload volume, which matters on cellular where the stream runs for a
+/// whole drive. PCM stays the default until Opus has been compared for caption accuracy.
+public enum SonioxAudioEncoding: String, CaseIterable, Identifiable, Sendable {
+    /// Raw 16 kHz 16-bit mono, about 32 KB/s.
+    case pcm
+    /// Opus at 24 kbps in an Ogg stream, about 4 KB/s including page framing.
+    case opus
+
+    public static let storageKey = "sonioxAudioEncoding"
+    public static let defaultValue = SonioxAudioEncoding.pcm
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .pcm: return "Uncompressed (about 32 KB/s)"
+        case .opus: return "Opus (about 4 KB/s)"
+        }
+    }
+}
