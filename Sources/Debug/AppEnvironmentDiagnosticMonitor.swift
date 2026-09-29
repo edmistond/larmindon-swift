@@ -5,10 +5,53 @@ import OSLog
 import UIKit
 #elseif os(macOS)
 import AppKit
+import IOKit.ps
 #endif
 
+/// Battery charge and plug state, encoded as diagnostic fields.
+///
+/// Platform-neutral so the iOS and macOS readers share one encoding. The question it answers
+/// is "was the charger keeping up": a falling `battery_percent` next to
+/// `battery_state=charging` means the device was drawing more than it was being given, or
+/// that heat had throttled charging (compare `thermal_state`).
+struct BatteryReading: Equatable {
+    enum ChargeState: String {
+        case unplugged
+        case charging
+        case full
+        /// On external power but neither charging nor full. macOS reports this while it
+        /// holds the charge below 100% to protect the battery; iOS has no equivalent state.
+        case pluggedIn = "plugged_in"
+        case unknown
+    }
+
+    let percent: Int?
+    let state: ChargeState
+
+    init(percent: Int?, state: ChargeState) {
+        self.percent = percent
+        self.state = state
+    }
+
+    /// `UIDevice.batteryLevel` is 0...1, or -1 when monitoring is off or the level is unknown.
+    init(level: Float, state: ChargeState) {
+        self.init(
+            percent: level < 0 ? nil : Int((level * 100).rounded()),
+            state: state
+        )
+    }
+
+    var fields: [String: String] {
+        [
+            "battery_percent": percent.map(String.init) ?? "unknown",
+            "battery_state": state.rawValue,
+        ]
+    }
+}
+
 /// Records the context every other diagnostic event needs: whether the app was in the
-/// foreground, how close it was to its memory limit, and how hot the device was.
+/// foreground, how close it was to its memory limit, how hot the device was, and whether it
+/// was charging.
 ///
 /// Without the lifecycle half, a bundle can't distinguish "captions stopped while I was
 /// watching" from "captions stopped twenty minutes into being backgrounded", which is the
@@ -38,6 +81,11 @@ public final class AppEnvironmentDiagnosticMonitor {
 
     public init(recorder: DiagnosticRecorder = .shared) {
         self.recorder = recorder
+        #if os(iOS)
+        // Battery level and state read as unknown until monitoring is on. It stays on for the
+        // app's lifetime: the samples and lifecycle events all carry battery fields.
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
         observeLifecycle()
     }
 
@@ -65,6 +113,13 @@ public final class AppEnvironmentDiagnosticMonitor {
             await recorder.markCleanExit(reason: "will_terminate")
         }
         observe(UIApplication.didReceiveMemoryWarningNotification, as: "memory_warning")
+        // Plugging in, unplugging, and reaching full. Samples only run during a session and
+        // only every 30 seconds, so this pins down exactly when the phone went onto a charger.
+        observe(
+            UIDevice.batteryStateDidChangeNotification,
+            category: "resources",
+            as: "battery_state_changed"
+        )
         #elseif os(macOS)
         // macOS can't background-kill the app the way iOS can, but a clean-exit marker is
         // still what distinguishes a normal quit from a crash on the next launch.
@@ -79,6 +134,7 @@ public final class AppEnvironmentDiagnosticMonitor {
 
     private func observe(
         _ name: Notification.Name,
+        category: String = "lifecycle",
         as eventName: String,
         then followUp: (@Sendable () async -> Void)? = nil
     ) {
@@ -90,7 +146,7 @@ public final class AppEnvironmentDiagnosticMonitor {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 await recorder.record(
-                    category: "lifecycle",
+                    category: category,
                     name: eventName,
                     fields: Self.resourceFields()
                 )
@@ -139,8 +195,66 @@ public final class AppEnvironmentDiagnosticMonitor {
         fields["app_state"] = describe(UIApplication.shared.applicationState)
         #endif
 
+        if let battery = currentBattery() {
+            fields.merge(battery.fields) { _, new in new }
+        }
+
         return fields
     }
+
+    #if os(iOS)
+    /// iOS reports the level in 5% steps, which is still enough to see a charger losing
+    /// ground over a drive.
+    private static func currentBattery() -> BatteryReading? {
+        let device = UIDevice.current
+        let state: BatteryReading.ChargeState
+        switch device.batteryState {
+        case .unplugged: state = .unplugged
+        case .charging: state = .charging
+        case .full: state = .full
+        case .unknown: state = .unknown
+        @unknown default: state = .unknown
+        }
+        return BatteryReading(level: device.batteryLevel, state: state)
+    }
+    #elseif os(macOS)
+    /// Reads the internal battery through IOKit. Returns nil on a Mac without one, so a
+    /// desktop's events carry no battery fields rather than a misleading "unknown".
+    private static func currentBattery() -> BatteryReading? {
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+            let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef]
+        else { return nil }
+
+        for source in sources {
+            guard
+                let description = IOPSGetPowerSourceDescription(info, source)?
+                    .takeUnretainedValue() as? [String: Any],
+                description[kIOPSTypeKey] as? String == kIOPSInternalBatteryType
+            else { continue }
+
+            var percent: Int?
+            if let current = description[kIOPSCurrentCapacityKey] as? Int,
+                let maximum = description[kIOPSMaxCapacityKey] as? Int,
+                maximum > 0
+            {
+                percent = Int((Double(current) / Double(maximum) * 100).rounded())
+            }
+
+            let state: BatteryReading.ChargeState
+            if description[kIOPSPowerSourceStateKey] as? String != kIOPSACPowerValue {
+                state = .unplugged
+            } else if description[kIOPSIsChargingKey] as? Bool == true {
+                state = .charging
+            } else if description[kIOPSIsChargedKey] as? Bool == true {
+                state = .full
+            } else {
+                state = .pluggedIn
+            }
+            return BatteryReading(percent: percent, state: state)
+        }
+        return nil
+    }
+    #endif
 
     private static func describe(_ state: ProcessInfo.ThermalState) -> String {
         switch state {
