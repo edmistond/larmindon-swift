@@ -183,7 +183,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             for try await event in events {
                 // A retired connection can still deliver what it had buffered. Its
                 // preview was already flushed, and the new stream starts fresh.
-                guard id == connectionID, reconnectTask == nil else { continue }
+                guard id == connectionID else { continue }
                 messagesOnConnection += 1
                 switch event {
                 case .transcript(let update):
@@ -439,6 +439,9 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
 
         let lostClient = client
         client = nil
+        // Retire the connection now, so anything it still reports — buffered events, a
+        // late error, its stall watchdog — is recognizably stale.
+        connectionID += 1
         pingTask?.cancel()
         pingTask = nil
         stallTask?.cancel()

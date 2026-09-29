@@ -51,6 +51,11 @@ final class SonioxReconnectTests: XCTestCase {
         return false
     }
 
+    private static func isFailure(_ result: CaptionResult) -> Bool {
+        if case .failure = result { return true }
+        return false
+    }
+
     private static func isRestoredOrFailed(_ result: CaptionResult) -> Bool {
         switch result {
         case .connectionRestored, .failure: return true
@@ -279,7 +284,7 @@ final class SonioxReconnectTests: XCTestCase {
 
         var remaining: [CaptionResult] = []
         while let result = await results.next(isolation: #isolation) { remaining.append(result) }
-        XCTAssertFalse(remaining.contains { if case .failure = $0 { return true }; return false })
+        XCTAssertFalse(remaining.contains(where: Self.isFailure))
         XCTAssertEqual(transports.connectionsRequested, 1)
     }
 
