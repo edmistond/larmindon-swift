@@ -62,8 +62,13 @@ final class URLSessionWebSocketConnection: WebSocketConnection, @unchecked Senda
     }
 
     func sendPing() async throws {
+        let resumption = SingleResumption()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             task.sendPing { error in
+                // URLSession can call the pong handler twice when the connection fails: crash
+                // reports from 2026-09-28 show a second call resuming with an error after the
+                // first had already resumed, which traps. Only the first call counts.
+                guard resumption.claim() else { return }
                 if let error {
                     continuation.resume(throwing: WebSocketTransportError.operationFailed(error.localizedDescription))
                 } else {
@@ -102,5 +107,20 @@ final class WebSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
         let message = error?.localizedDescription
         Task { await onEvent(.completed(errorDescription: message)) }
+    }
+}
+
+/// Lets exactly one of several callbacks resume a continuation.
+final class SingleResumption: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    /// True for the first caller only.
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !claimed else { return false }
+        claimed = true
+        return true
     }
 }
