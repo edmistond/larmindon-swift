@@ -180,6 +180,22 @@ public actor DiagnosticRecorder {
                     ]
                 )
             }
+
+            // Report each session once. iOS rarely delivers `willTerminate`, so nearly every
+            // session ends without `markCleanExit`; left open, each launch re-reported the
+            // whole week's backlog (bundle BBE900D2: 849 reports for 35 sessions). The report
+            // is written first so a kill right here cannot close a session nobody heard about.
+            // Its last event is the best available end time.
+            if !unexpected.isEmpty {
+                await flush()
+                for session in unexpected {
+                    try await resolved.endSession(
+                        sessionID: session.sessionID,
+                        reason: DiagnosticStore.endedUnexpectedlyReason,
+                        at: session.lastEventAt ?? session.startedAt
+                    )
+                }
+            }
         } catch {
             logger.error(
                 "Diagnostics persistence unavailable: \(error.localizedDescription, privacy: .public)"

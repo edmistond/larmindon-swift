@@ -2,6 +2,8 @@ import Foundation
 @testable import LarmindonKit
 
 actor FakeWebSocketTransport: WebSocketTransport {
+    private typealias CountWaiter = (count: Int, continuation: CheckedContinuation<Void, Never>)
+
     private(set) var connectCount = 0
     private(set) var sentTextMessages: [String] = []
     private(set) var sentBinaryMessages: [Data] = []
@@ -10,7 +12,8 @@ actor FakeWebSocketTransport: WebSocketTransport {
 
     private var queuedMessages: [WebSocketMessage] = []
     private var receiveWaiters: [CheckedContinuation<WebSocketMessage, any Error>] = []
-    private var binaryCountWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+    private var binaryCountWaiters: [CountWaiter] = []
+    private var textCountWaiters: [CountWaiter] = []
     private var isConnected = false
     private var connectGate: AsyncGate?
     private var textGate: AsyncGate?
@@ -45,13 +48,14 @@ actor FakeWebSocketTransport: WebSocketTransport {
     func sendText(_ text: String) async throws {
         try requireConnection()
         sentTextMessages.append(text)
+        textCountWaiters = Self.resumeSatisfied(textCountWaiters, count: sentTextMessages.count)
         await textGate?.suspend()
     }
 
     func sendBinary(_ data: Data) async throws {
         try requireConnection()
         sentBinaryMessages.append(data)
-        resumeSatisfiedBinaryWaiters()
+        binaryCountWaiters = Self.resumeSatisfied(binaryCountWaiters, count: sentBinaryMessages.count)
         await binaryGate?.suspend()
         if let binaryFailure { throw binaryFailure }
     }
@@ -106,22 +110,35 @@ actor FakeWebSocketTransport: WebSocketTransport {
         }
     }
 
+    /// The configuration is text message 1, so Soniox's end-of-audio signal is message 2.
+    func waitForTextMessageCount(_ count: Int) async {
+        if sentTextMessages.count >= count {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            textCountWaiters.append((count, continuation))
+        }
+    }
+
     private func requireConnection() throws {
         guard isConnected else {
             throw WebSocketTransportError.notConnected
         }
     }
 
-    private func resumeSatisfiedBinaryWaiters() {
-        var pending: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
-        for waiter in binaryCountWaiters {
-            if sentBinaryMessages.count >= waiter.count {
+    private static func resumeSatisfied(
+        _ waiters: [CountWaiter],
+        count: Int
+    ) -> [CountWaiter] {
+        var pending: [CountWaiter] = []
+        for waiter in waiters {
+            if count >= waiter.count {
                 waiter.continuation.resume()
             } else {
                 pending.append(waiter)
             }
         }
-        binaryCountWaiters = pending
+        return pending
     }
 }
 

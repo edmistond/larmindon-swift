@@ -177,6 +177,10 @@ public actor DiagnosticStore {
         try step(statement)
     }
 
+    /// The `end_reason` for a session closed after being reported as unexpectedly ended.
+    /// Its `ended_at` is the last event it recorded, not an observed exit.
+    public static let endedUnexpectedlyReason = "ended_unexpectedly"
+
     public func endSession(sessionID: String, reason: String, at date: Date = Date()) throws {
         let statement = try prepare(
             "UPDATE sessions SET ended_at = ?, end_reason = ? WHERE session_id = ?;"

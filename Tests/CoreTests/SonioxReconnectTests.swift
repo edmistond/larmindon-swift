@@ -95,7 +95,7 @@ final class SonioxReconnectTests: XCTestCase {
         // Stop still finishes the (new) stream gracefully.
         frameContinuation.finish()
         let stop = Task { await source.stop() }
-        await transports[1].waitForBinaryMessageCount(2)
+        await transports[1].waitForTextMessageCount(2)
         await transports[1].enqueue(.text(#"{"tokens":[],"finished":true}"#))
         await stop.value
         let closeCodes = await transports[1].closeCodes
@@ -127,7 +127,7 @@ final class SonioxReconnectTests: XCTestCase {
 
         frameContinuation.finish()
         let stop = Task { await source.stop() }
-        await transports[1].waitForBinaryMessageCount(1)
+        await transports[1].waitForTextMessageCount(2)
         await transports[1].enqueue(.text(#"{"tokens":[],"finished":true}"#))
         await stop.value
     }
@@ -164,7 +164,7 @@ final class SonioxReconnectTests: XCTestCase {
 
         frameContinuation.finish()
         let stop = Task { await source.stop() }
-        await transports[3].waitForBinaryMessageCount(1)
+        await transports[3].waitForTextMessageCount(2)
         await transports[3].enqueue(.text(#"{"tokens":[],"finished":true}"#))
         await stop.value
     }
@@ -233,7 +233,7 @@ final class SonioxReconnectTests: XCTestCase {
 
         frameContinuation.finish()
         let stop = Task { await source.stop() }
-        await transports[1].waitForBinaryMessageCount(1)
+        await transports[1].waitForTextMessageCount(2)
         await transports[1].enqueue(.text(#"{"tokens":[],"finished":true}"#))
         await stop.value
     }

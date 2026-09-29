@@ -176,6 +176,61 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertGreaterThan(manifest.storedEventCount, manifest.eventCount)
     }
 
+    /// Regression: bundle `larmindon-diagnostics-BBE900D2` held 849
+    /// `previous_session_ended_unexpectedly` events for 35 sessions. iOS almost never
+    /// delivers `willTerminate`, so sessions stayed open and every launch re-reported all of
+    /// them. Each one should be reported exactly once.
+    func testUnexpectedlyEndedSessionIsReportedOnlyOnce() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("recorder-unexpected-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databaseURL = directory.appendingPathComponent("diagnostics.sqlite")
+
+        let killed = UUID()
+        let earlier = DiagnosticStore(url: databaseURL)
+        try await earlier.open()
+        try await earlier.startSession(
+            sessionID: killed.uuidString,
+            startedAt: Date(timeIntervalSince1970: 1_000),
+            appVersion: "1.0",
+            appBuild: "1",
+            osVersion: "26.0",
+            deviceClass: "iPhone17,1"
+        )
+        let lastEventAt = Date(timeIntervalSince1970: 1_060)
+        try await earlier.append([
+            DiagnosticEvent(timestamp: lastEventAt, sessionID: killed, category: "test", name: "last_seen")
+        ])
+        await earlier.close()
+
+        func reportedSessions(_ recorder: DiagnosticRecorder) async -> [String] {
+            await recorder.snapshot()
+                .filter { $0.name == "previous_session_ended_unexpectedly" }
+                .compactMap { $0.fields["session"] }
+        }
+
+        let secondLaunch = DiagnosticRecorder(capacity: 100)
+        await secondLaunch.activatePersistence(store: DiagnosticStore(url: databaseURL))
+        let secondReports = await reportedSessions(secondLaunch)
+        XCTAssertEqual(secondReports, [killed.uuidString])
+        await secondLaunch.flush()
+
+        // The second launch also never exits cleanly, so the third reports it, and only it.
+        let thirdLaunch = DiagnosticRecorder(capacity: 100)
+        await thirdLaunch.activatePersistence(store: DiagnosticStore(url: databaseURL))
+        let thirdReports = await reportedSessions(thirdLaunch)
+        let secondSessionID = await secondLaunch.sessionID.uuidString
+        XCTAssertEqual(thirdReports, [secondSessionID])
+
+        let check = DiagnosticStore(url: databaseURL)
+        try await check.open()
+        let stillOpen = try await check.sessionsEndedUnexpectedly(
+            excluding: await thirdLaunch.sessionID.uuidString
+        )
+        XCTAssertTrue(stillOpen.isEmpty)
+    }
+
     func testDeviceIdentifierRedactionIsStableAndDoesNotRevealInput() {
         let first = DiagnosticRedaction.identifier("personal-device-uid")
         let second = DiagnosticRedaction.identifier("personal-device-uid")
