@@ -82,6 +82,15 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
 
     /// Each connection gets a fresh transport from `makeTransport`. Reusing one across
     /// connections would let a retired client's late `close()` shut down its successor.
+    ///
+    /// `@inline(never)` works around an optimizer miscompile. Inlined into
+    /// `CaptionSession.makeSource` in Release builds, this initializer returned an object that
+    /// crashed on its first retain (`swift_unknownObjectRetain` → `objc_msgSend` on a null
+    /// class), so every Soniox start died instantly on device. Debug builds and Address
+    /// Sanitizer builds were unaffected, the code involved has no unsafe operations, and
+    /// passing the default closure explicitly didn't help; keeping the call out of line did.
+    /// `SonioxLaunchTests` reproduces it under `-configuration Release`.
+    @inline(never)
     init(
         apiKey: String,
         diagnostics: DiagnosticRecorder = .shared,
