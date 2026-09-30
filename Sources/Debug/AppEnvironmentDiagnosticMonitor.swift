@@ -180,7 +180,7 @@ public final class AppEnvironmentDiagnosticMonitor {
         samplingTask = nil
     }
 
-    /// The numbers that explain a disappearance after the fact.
+    /// The numbers that explain a disappearance, or a drained battery, after the fact.
     static func resourceFields() -> [String: String] {
         var fields: [String: String] = [
             "thermal_state": describe(ProcessInfo.processInfo.thermalState),
@@ -193,10 +193,22 @@ public final class AppEnvironmentDiagnosticMonitor {
         // idea what happened".
         fields["available_memory_mb"] = String(os_proc_available_memory() / (1024 * 1024))
         fields["app_state"] = describe(UIApplication.shared.applicationState)
+        // The screen is usually the largest draw during a foreground session, and its cost
+        // scales with brightness. Auto-brightness in a sunny car runs far above a meeting room.
+        if let screen = UIApplication.shared.connectedScenes
+            .compactMap({ ($0 as? UIWindowScene)?.screen })
+            .first
+        {
+            fields["screen_brightness"] = String(format: "%.2f", screen.brightness)
+        }
         #endif
 
         if let battery = currentBattery() {
             fields.merge(battery.fields) { _, new in new }
+        }
+
+        if let energy = ProcessEnergyReading.current() {
+            fields.merge(energy.fields) { _, new in new }
         }
 
         return fields
