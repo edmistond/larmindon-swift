@@ -1,7 +1,9 @@
 # Input picker puts the hearing aid into streaming mode
 
 **Status:** parked on 2026-09-29, until the Soniox finish, reconnect, Opus and crash fixes
-have had a few days of on-device testing. Nothing here is implemented.
+have had a few days of on-device testing. Nothing here is implemented. As of 2026-09-30 this
+is a battery problem as well as an annoyance (see "Battery cost"), and it should be fixed,
+not just worked around.
 
 ## Symptom
 
@@ -60,6 +62,35 @@ capture uses `Record` / `Measurement` with no Bluetooth options, so there's no H
    (`IOSAudioSessionCapturePolicy`,
    [AudioRouteManager.swift:368](Sources/AudioRouting/AudioRouteManager.swift:368)), so it
    has the same exposure.
+
+## Battery cost
+
+A call-style session costs more than the `Record` / `Measurement` session that capture
+needs, beyond the annoyance of the aid going into streaming mode:
+
+- **The phone's audio hardware runs both directions.** `PlayAndRecord` keeps an output path
+  running next to the input, and `VoiceChat` asks iOS for its voice-call processing. Capture
+  needs neither while the input isn't Bluetooth and voice processing is off.
+- **The Bluetooth link runs as a two-way call.** While the aid is on HFP, the phone keeps a
+  call-grade audio link to it. That costs phone battery, and the aid's own battery too.
+  Streaming mode is typically the hardest use for a hearing aid's battery.
+
+How long it lasts:
+
+- **Captions running:** from the first use of the picker until the next Start (Larmindon
+  addition 3 above). In a long meeting that can be hours.
+- **Captions stopped, Microphone panel open:** bundle `larmindon-diagnostics-74F83876…`,
+  2026-09-30 08:00:44 local, shows `PlayAndRecord` / `VoiceChat` with the iPhone mic as
+  input and nothing capturing. That comes from `prepareMicrophoneControls` calling
+  `configureForInputSelection`. `releaseMicrophoneControls` deactivates it when the panel
+  closes, so this case is limited to the time the panel is open. It still puts a connected
+  aid into streaming mode for that time.
+
+Candidate fixes 1 and 3 below are therefore battery fixes as well. To measure them, compare
+the `cpu_user_ms`, `cpu_system_ms`, `wakeups` and `task_energy` resource-sample fields
+(added in d5ccaef) across a running session before and after using the picker. Bluetooth
+radio energy probably isn't billed to the app's `task_energy`, so for the link to the aid,
+the aid's own battery drain is the better signal.
 
 ## Diagnostics first
 
