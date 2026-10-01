@@ -63,6 +63,15 @@ public final class CaptionSession {
     /// Minimum spacing between level-only writes. Capture delivers a snapshot per buffer
     /// (about 60/s at the default 768 frames); the meter reads fine at 20/s.
     private static let levelOnlyPublishInterval: Duration = .milliseconds(50)
+    /// How long a Clear can be undone.
+    public static let clearUndoWindow: Duration = .seconds(5)
+
+    /// True from a Clear that removed finalized text until it is undone, the window
+    /// expires, or another Clear replaces it.
+    public private(set) var canUndoClear = false
+    private var clearedChunks: [TranscriptChunk] = []
+    @ObservationIgnored
+    private(set) var clearUndoExpiryTask: Task<Void, Never>?
     private var transitionTask: Task<Void, Never>?
     private var transitionGeneration = 0
     private let credentialStore: any ProviderCredentialStore
@@ -520,9 +529,66 @@ public final class CaptionSession {
         requestedVoiceProcessingEnabled = enabled
     }
 
+    /// Clears immediately. Finalized chunks are held for `clearUndoWindow` so `undoClear()`
+    /// can bring them back. The volatile tail is not held: the provider keeps revising it
+    /// and will resend that text.
     public func clear() {
+        let cleared = store.finalizedChunks
         store.clear()
         lastVolatileResult = ""
+
+        guard !cleared.isEmpty else {
+            // Nothing to bring back, and a clear of an empty store must not leave an
+            // earlier stash offered as if it belonged to this one.
+            discardClearedChunks()
+            return
+        }
+
+        clearedChunks = cleared
+        setCanUndoClear(true)
+        let chunkCount = cleared.count
+        Task { @MainActor [weak self] in
+            await self?.diagnostics.record(
+                category: "state",
+                name: "captions_cleared",
+                fields: ["chunk_count": String(chunkCount)]
+            )
+        }
+
+        clearUndoExpiryTask?.cancel()
+        clearUndoExpiryTask = Task { @MainActor [weak self, delay] in
+            try? await delay.sleep(Self.clearUndoWindow)
+            guard let self, !Task.isCancelled else { return }
+            discardClearedChunks()
+        }
+    }
+
+    /// Restores what the last `clear()` removed, ahead of anything finalized since.
+    public func undoClear() {
+        guard canUndoClear else { return }
+        let restored = clearedChunks
+        discardClearedChunks()
+        store.restoreCleared(restored)
+
+        let chunkCount = restored.count
+        Task { @MainActor [weak self] in
+            await self?.diagnostics.record(
+                category: "state",
+                name: "captions_clear_undone",
+                fields: ["chunk_count": String(chunkCount)]
+            )
+        }
+    }
+
+    private func discardClearedChunks() {
+        clearUndoExpiryTask?.cancel()
+        clearUndoExpiryTask = nil
+        clearedChunks = []
+        setCanUndoClear(false)
+    }
+
+    private func setCanUndoClear(_ value: Bool) {
+        if canUndoClear != value { canUndoClear = value }
     }
 
     public func dumpRouteInfoToConsole() {

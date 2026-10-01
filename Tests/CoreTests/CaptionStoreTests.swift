@@ -34,6 +34,29 @@ final class CaptionStoreTests: XCTestCase {
         XCTAssertNil(store.volatileTail)
     }
 
+    func testRestoreClearedPrependsBeforeChunksFinalizedSinceTheClear() {
+        let store = CaptionStore()
+        store.appendFinalized("first")
+        store.appendFinalized("second")
+        let cleared = store.finalizedChunks
+        store.clear()
+        store.appendFinalized("after")
+
+        store.restoreCleared(cleared)
+
+        XCTAssertEqual(store.finalizedChunks.map(\.text), ["first", "second", "after"])
+        XCTAssertEqual(store.finalizedChunks.prefix(2).map(\.id), cleared.map(\.id))
+    }
+
+    func testRestoreClearedWithNoChunksChangesNothing() {
+        let store = CaptionStore()
+        store.appendFinalized("only")
+
+        store.restoreCleared([])
+
+        XCTAssertEqual(store.finalizedChunks.map(\.text), ["only"])
+    }
+
     func testFullFinalizedTranscriptGeneration() {
         let store = CaptionStore()
 

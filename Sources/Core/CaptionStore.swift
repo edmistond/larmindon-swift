@@ -27,6 +27,14 @@ public final class CaptionStore {
         volatileCaptions.removeAll()
     }
 
+    /// Puts chunks removed by `clear()` back at the start of the transcript, ahead of
+    /// anything finalized since. Chunks keep their ids, so a view diffing by id sees the
+    /// same rows return rather than new ones.
+    public func restoreCleared(_ chunks: [TranscriptChunk]) {
+        guard !chunks.isEmpty else { return }
+        finalizedChunks.insert(contentsOf: chunks, at: 0)
+    }
+
     public func replaceVolatile(_ text: String) {
         replaceVolatile([CaptionSegment(text: text)])
     }
