@@ -40,6 +40,8 @@ public struct LarmindonRootView: View {
     @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
     @AppStorage(SonioxAudioEncoding.storageKey)
     private var sonioxAudioEncodingRaw = SonioxAudioEncoding.defaultValue.rawValue
+    @AppStorage(SonioxOpusBitRate.storageKey)
+    private var sonioxOpusBitRateRaw = SonioxOpusBitRate.defaultValue.rawValue
 
     public init(session: CaptionSession) {
         ThemePreference.migrateLegacySettings()
@@ -314,7 +316,9 @@ public struct LarmindonRootView: View {
             voiceProcessingEnabled: voiceProcessingEnabled,
             profanityFilterEnabled: profanityFilterEnabled,
             sonioxAudioEncoding: SonioxAudioEncoding(rawValue: sonioxAudioEncodingRaw)
-                ?? SonioxAudioEncoding.defaultValue
+                ?? SonioxAudioEncoding.defaultValue,
+            sonioxOpusBitRate: SonioxOpusBitRate(rawValue: sonioxOpusBitRateRaw)
+                ?? SonioxOpusBitRate.defaultValue
         )
     }
 

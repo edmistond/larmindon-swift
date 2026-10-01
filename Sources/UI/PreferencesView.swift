@@ -18,6 +18,8 @@ public struct PreferencesView: View {
     @AppStorage("profanityFilterEnabled") private var profanityFilterEnabled = false
     @AppStorage(SonioxAudioEncoding.storageKey)
     private var sonioxAudioEncodingRaw = SonioxAudioEncoding.defaultValue.rawValue
+    @AppStorage(SonioxOpusBitRate.storageKey)
+    private var sonioxOpusBitRateRaw = SonioxOpusBitRate.defaultValue.rawValue
     @AppStorage(TranscriptionPreference.activeServerProviderStorageKey)
     private var activeServerProviderRaw = ServerProviderID.soniox.rawValue
 
@@ -118,8 +120,15 @@ public struct PreferencesView: View {
                         Text(encoding.title).tag(encoding.rawValue)
                     }
                 }
+                if sonioxAudioEncodingRaw == SonioxAudioEncoding.opus.rawValue {
+                    Picker("Opus quality", selection: $sonioxOpusBitRateRaw) {
+                        ForEach(SonioxOpusBitRate.allCases) { rate in
+                            Text(rate.title).tag(rate.rawValue)
+                        }
+                    }
+                }
                 Text(
-                    "Opus sends roughly an eighth of the data, which matters on cellular. Takes effect the next time captioning starts."
+                    "Opus sends a fraction of the data, which matters on cellular. Higher quality keeps more speech detail if captions are less accurate. Takes effect the next time captioning starts."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
