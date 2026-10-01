@@ -56,6 +56,14 @@
     .tag { display: inline-block; padding: .12rem .55rem; border-radius: 20px; font-size: .66rem; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; border: 1px solid var(--rule); color: var(--muted); vertical-align: .15em; }
     .tag.rec { background: var(--accent); color: #fff; border-color: var(--accent); }
     .small { font-size: .84rem; color: var(--muted); }
+    .figure-row.four { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+    .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: center; margin: 1.6rem 0; }
+    .split svg { display: block; width: 100%; height: auto; }
+    .split ol { margin: 0; }
+    @media (max-width: 720px) { .split { grid-template-columns: 1fr; } }
+    pre { font: .8rem/1.55 var(--mono); background: #edf0eb; padding: 1rem 1.1rem; border-radius: 6px; overflow-x: auto; margin: 1rem 0 1.4rem; }
+    pre code { background: none; padding: 0; font-size: inherit; }
+    #addendum { padding-top: 2.4rem; border-top: 1px solid var(--rule); }
   </style>
 </head>
 <body>
@@ -130,6 +138,40 @@
       <circle r="17" fill="#2b3a47"/>
       <path d="M-4 -7 L8 0 L-4 7 Z" fill="#f2f5f7"/>
     </g>
+    <!-- Addendum toolbar: icon-only mode switch (on-device / server), then AI, Settings, Microphone, Debug. -->
+    <g id="navBarIcons">
+      <rect x="13" y="46" width="234" height="38" fill="#0f1d2b"/>
+      <rect x="13" y="83.5" width="234" height="1" fill="#22303c"/>
+      <rect x="22" y="53" width="64" height="24" rx="7" fill="#22303c"/>
+      <rect x="54" y="55" width="30" height="20" rx="6" fill="#3a4a58"/>
+      <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="34" y="58" width="8" height="14" rx="2" stroke="#9fb0bd" stroke-width="1.4"/>
+        <path d="M36.5 69.5 H39.5" stroke="#9fb0bd" stroke-width="1.2"/>
+        <path d="M62 72 H76 A4 4 0 0 0 76 64 A6 6 0 0 0 65 62.5 A4.5 4.5 0 0 0 62 72 Z" stroke="#f2f5f7" stroke-width="1.5"/>
+      </g>
+      <path d="M158 57 Q159 64 166 65 Q159 66 158 73 Q157 66 150 65 Q157 64 158 57 Z M166 54 Q166.4 57.6 169.5 58 Q166.4 58.4 166 62 Q165.6 58.4 162.5 58 Q165.6 57.6 166 54 Z" fill="#dfe7ec"/>
+      <g stroke="#dfe7ec" stroke-width="1.5" stroke-linecap="round" fill="none">
+        <path d="M177 59 H193 M177 65 H193 M177 71 H193"/>
+        <circle cx="182" cy="59" r="2" fill="#0f1d2b"/><circle cx="189" cy="65" r="2" fill="#0f1d2b"/><circle cx="180" cy="71" r="2" fill="#0f1d2b"/>
+        <rect x="203.5" y="56" width="7" height="11" rx="3.5"/>
+        <path d="M200.5 64 a6.5 6.5 0 0 0 13 0 M207 70.5 V74"/>
+        <rect x="223" y="61" width="13" height="13" rx="2"/>
+        <path d="M229.5 66 V54 M226 57.5 L229.5 54 L233 57.5"/>
+      </g>
+    </g>
+    <!-- Addendum bottom band: corner Start/Stop disc, input chip, corner Clear. State ring and glyph drawn per mockup. -->
+    <g id="cornerBand" font-family="-apple-system, sans-serif">
+      <rect x="13" y="434" width="234" height="73" fill="#18232e"/>
+      <rect x="13" y="434" width="234" height="1" fill="#22303c"/>
+      <path d="M13 507 V445 A62 62 0 0 1 75 507 Z" fill="#2b3a47"/>
+      <path d="M247 507 V445 A62 62 0 0 0 185 507 Z" fill="#30262b"/>
+      <path d="M247 445 A62 62 0 0 0 185 507" fill="none" stroke="#c9574b" stroke-width="2.5"/>
+      <path d="M214 474 L226 486 M226 474 L214 486" stroke="#f3c2bb" stroke-width="2.4" stroke-linecap="round"/>
+      <rect x="87" y="462" width="86" height="26" rx="13" fill="#2b3a47"/>
+      <text x="123" y="479.5" text-anchor="middle" font-size="11.5" fill="#dfe7ec">CarPlay</text>
+      <path d="M153 473 L157 477 L161 473" fill="none" stroke="#dfe7ec" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="95" y="498" width="70" height="4" rx="2" fill="#dfe7ec" opacity=".5"/>
+    </g>
     <g id="moreButton">
       <circle r="14" fill="#2b3a47"/>
       <circle cx="-5.5" r="1.8" fill="#dfe7ec"/><circle r="1.8" fill="#dfe7ec"/><circle cx="5.5" r="1.8" fill="#dfe7ec"/>
@@ -146,6 +188,7 @@
       <span><strong>Status</strong> Proposal, not started</span>
       <span><strong>Scope</strong> iPhone, iPad, macOS main screen</span>
       <span><strong>Written</strong> 2026-09-29</span>
+      <span><strong>Addendum</strong> <a href="#addendum">Corner controls, 2026-10-01</a></span>
     </div>
   </header>
 
@@ -468,13 +511,254 @@
   <section>
     <h2>Open questions for the notebook</h2>
     <ul>
-      <li>Is a text label always shown, or only in Stalled and No audio? Legibility argues for always.</li>
+      <li>Is a text label always shown, or only in Stalled and No audio? Legibility argues for always. <strong>Answered in the addendum:</strong> always.</li>
       <li>Simplifying the mode switch: the status label already names the provider ("Soniox"). Could that sub-label become the switch, as a tappable "Soniox ▾" chip, and free the toolbar's center? Or does mode belong in the toolbar where it can't be mistaken for status?</li>
       <li>On-device stall detection: SpeechAnalyzer only reports when there's speech. Is "signal above speech level for N s with no results" good enough, or should on-device skip Stalled?</li>
       <li>Should Stalled also trigger a haptic, or the existing failure notification when the app is backgrounded?</li>
-      <li>Clear in the ⋯ menu: it's rarely used and fairly destructive, so moving it is probably good. Confirm.</li>
+      <li><s>Clear in the ⋯ menu: it's rarely used and fairly destructive, so moving it is probably good. Confirm.</s> <strong>Answered:</strong> no. Clear stays on screen at all times; see the <a href="#addendum">addendum</a>.</li>
       <li>iPhone input selection: a chip that opens the existing picker, or a sheet with routes and the meter together?</li>
       <li>Stalled thresholds per provider. In last week's bundle Soniox's processing lag had a median of 65 ms and a 95th percentile of about 200 ms, but peaked at 8.6 s. A 10 s threshold clears the worst observed spike; anything much shorter would have raised false alarms.</li>
+    </ul>
+  </section>
+
+  <section id="addendum">
+    <div class="eyebrow">Addendum · 2026-10-01</div>
+    <h2>Corner controls, from the wireframe</h2>
+    <p>The wireframe keeps B's status ring and the text label, and changes two things the brief didn't consider. Start/Stop and Clear become quarter discs in the two bottom corners, with the input chip between them. Clear stays on screen at all times.</p>
+    <div class="callout">
+      <p><strong>This supersedes parts of the recommendation above.</strong></p>
+      <ul>
+        <li><strong>Clear is never hidden.</strong> It doesn't go into a ⋯ menu (B) or the macOS menu bar (F). An always-visible Clear is one of the reasons this app exists.</li>
+        <li><strong>The mode switch goes icon-only</strong>: a phone for on-device, a cloud for server. The provider's name moves into the status label ("Captioning · Soniox"), which answers the open question about simplifying the switch.</li>
+        <li><strong>The status label is always shown</strong>, centered above the input chip.</li>
+        <li><strong>The toolbar gains an AI control</strong> (✦), alongside Settings, Microphone and Debug. This brief doesn't define what it opens.</li>
+      </ul>
+    </div>
+
+    <h3>What it looks like</h3>
+    <div class="figure-row four">
+      <figure>
+        <svg viewBox="0 0 260 520" role="img" aria-labelledby="gTitle">
+          <title id="gTitle">Corner layout while captioning: teal ring on the corner Stop control, label, CarPlay chip, corner Clear</title>
+          <use href="#phoneFrame" width="260" height="520"/>
+          <g clip-path="url(#screen)">
+            <use href="#captions" y="420"/>
+            <use href="#statusBar"/>
+            <use href="#navBarIcons"/>
+            <use href="#cornerBand"/>
+            <path d="M13 440 A67 67 0 0 1 80 507" fill="none" stroke="#3fb6a8" stroke-width="4"/>
+            <rect x="33.5" y="473.5" width="13" height="13" rx="2.5" fill="#f2f5f7"/>
+            <text x="130" y="451" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="12" font-weight="700" fill="#3fb6a8">Captioning · Soniox</text>
+          </g>
+        </svg>
+        <figcaption><strong>G · Captioning.</strong> The ring wraps the corner Start/Stop. The label names the state and the provider. The input stays visible by name, and Clear is always one tap away.</figcaption>
+      </figure>
+
+      <figure>
+        <svg viewBox="0 0 260 520" role="img" aria-labelledby="hTitle">
+          <title id="hTitle">Corner layout when stalled: amber ring and badge, label reading No captions</title>
+          <use href="#phoneFrame" width="260" height="520"/>
+          <g clip-path="url(#screen)">
+            <use href="#captions" y="420"/>
+            <use href="#statusBar"/>
+            <use href="#navBarIcons"/>
+            <use href="#cornerBand"/>
+            <path d="M13 440 A67 67 0 0 1 80 507" fill="none" stroke="#e0a030" stroke-width="4"/>
+            <rect x="33.5" y="473.5" width="13" height="13" rx="2.5" fill="#f2f5f7"/>
+            <g font-family="-apple-system, sans-serif" text-anchor="middle">
+              <circle cx="60.5" cy="459.5" r="7.5" fill="#e0a030" stroke="#18232e" stroke-width="2"/>
+              <text x="60.5" y="463.5" font-size="11" font-weight="800" fill="#0f1d2b">!</text>
+              <text x="130" y="451" font-size="12" font-weight="700" fill="#e0a030">No captions · Soniox</text>
+            </g>
+          </g>
+        </svg>
+        <figcaption><strong>H · Stalled.</strong> Amber ring plus badge, and the label says it in words. Captions are bottom-anchored, so the label already sits right under the newest line. That's what the in-stream notice (D) was for, so moving the label up buys little.</figcaption>
+      </figure>
+
+      <figure>
+        <svg viewBox="0 0 260 520" role="img" aria-labelledby="iTitle">
+          <title id="iTitle">Corner layout when stopped: play glyph, no ring, captions still visible</title>
+          <use href="#phoneFrame" width="260" height="520"/>
+          <g clip-path="url(#screen)">
+            <use href="#captions" y="420"/>
+            <use href="#statusBar"/>
+            <use href="#navBarIcons"/>
+            <use href="#cornerBand"/>
+            <path d="M35 471 L49 480 L35 489 Z" fill="#f2f5f7" stroke="#f2f5f7" stroke-width="1.5" stroke-linejoin="round"/>
+            <text x="130" y="451" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="12" font-weight="700" fill="#8b9aa6">Stopped · Soniox</text>
+          </g>
+        </svg>
+        <figcaption><strong>I · Stopped.</strong> No ring, play glyph. Scrollback stays after Stop, and Clear is still there for when you're done with it.</figcaption>
+      </figure>
+
+      <figure>
+        <svg viewBox="0 0 260 520" role="img" aria-labelledby="jTitle">
+          <title id="jTitle">Just after Clear: an undo toast above the bottom controls</title>
+          <use href="#phoneFrame" width="260" height="520"/>
+          <g clip-path="url(#screen)">
+            <use href="#statusBar"/>
+            <use href="#navBarIcons"/>
+            <use href="#cornerBand"/>
+            <path d="M13 440 A67 67 0 0 1 80 507" fill="none" stroke="#3fb6a8" stroke-width="4"/>
+            <rect x="33.5" y="473.5" width="13" height="13" rx="2.5" fill="#f2f5f7"/>
+            <g font-family="-apple-system, sans-serif">
+              <text x="130" y="451" text-anchor="middle" font-size="12" font-weight="700" fill="#3fb6a8">Captioning · Soniox</text>
+              <rect x="28" y="388" width="204" height="32" rx="16" fill="#2b3a47"/>
+              <text x="44" y="408" font-size="12" fill="#dfe7ec">Captions cleared</text>
+              <text x="216" y="408" text-anchor="end" font-size="12.5" font-weight="700" fill="#3fb6a8">Undo</text>
+            </g>
+          </g>
+        </svg>
+        <figcaption><strong>J · Just cleared</strong> <span class="tag">Proposal</span><br>A big corner target is easy to brush. Rather than a confirmation dialog, which slows the common case, Clear acts at once and offers Undo for about five seconds.</figcaption>
+      </figure>
+    </div>
+    <p class="small">Caption space: the bottom band takes about 15% of the screen height in this mock, against 12% for B and 27% for today's layout. That's roughly one line fewer than B and about three more than today.</p>
+
+    <h3>The five states, in a corner</h3>
+    <figure class="wide">
+      <svg viewBox="0 0 820 170" role="img" aria-labelledby="kTitle">
+        <title id="kTitle">The five indicator states drawn as rings around the corner Start/Stop control</title>
+        <defs><clipPath id="cornerCell"><rect width="140" height="100" rx="16"/></clipPath></defs>
+        <rect width="820" height="170" rx="14" fill="#0f1d2b"/>
+        <g font-family="-apple-system, sans-serif" text-anchor="middle">
+          <g transform="translate(14 16)">
+            <g clip-path="url(#cornerCell)">
+              <rect width="140" height="100" fill="#18232e"/>
+              <path d="M0 100 V38 A62 62 0 0 1 62 100 Z" fill="#2b3a47"/>
+              <path d="M21 66 L34 74 L21 82 Z" fill="#f2f5f7" stroke="#f2f5f7" stroke-width="1.5" stroke-linejoin="round"/>
+            </g>
+            <text x="70" y="128" font-size="13" font-weight="700" fill="#dfe7ec">Stopped</text>
+            <text x="70" y="146" font-size="11" fill="#8b9aa6">no ring</text>
+          </g>
+          <g transform="translate(178 16)">
+            <g clip-path="url(#cornerCell)">
+              <rect width="140" height="100" fill="#18232e"/>
+              <path d="M0 100 V38 A62 62 0 0 1 62 100 Z" fill="#2b3a47"/>
+              <path d="M0 33.5 A66.5 66.5 0 0 1 66.5 100" fill="none" stroke="#8b9aa6" stroke-width="2.5" stroke-dasharray="5 5"/>
+              <rect x="20" y="68" width="12" height="12" rx="2.5" fill="#f2f5f7"/>
+            </g>
+            <text x="70" y="128" font-size="13" font-weight="700" fill="#dfe7ec">No audio</text>
+            <text x="70" y="146" font-size="11" fill="#8b9aa6">dashed grey arc</text>
+          </g>
+          <g transform="translate(342 16)">
+            <g clip-path="url(#cornerCell)">
+              <rect width="140" height="100" fill="#18232e"/>
+              <path d="M0 100 V38 A62 62 0 0 1 62 100 Z" fill="#2b3a47"/>
+              <path d="M0 33.5 A66.5 66.5 0 0 1 66.5 100" fill="none" stroke="#b8c4cc" stroke-width="2.5"/>
+              <rect x="20" y="68" width="12" height="12" rx="2.5" fill="#f2f5f7"/>
+            </g>
+            <text x="70" y="128" font-size="13" font-weight="700" fill="#dfe7ec">Listening</text>
+            <text x="70" y="146" font-size="11" fill="#8b9aa6">thin solid arc</text>
+          </g>
+          <g transform="translate(506 16)">
+            <g clip-path="url(#cornerCell)">
+              <rect width="140" height="100" fill="#18232e"/>
+              <path d="M0 100 V38 A62 62 0 0 1 62 100 Z" fill="#2b3a47"/>
+              <path d="M0 33 A67 67 0 0 1 67 100" fill="none" stroke="#3fb6a8" stroke-width="4"/>
+              <rect x="20" y="68" width="12" height="12" rx="2.5" fill="#f2f5f7"/>
+            </g>
+            <text x="70" y="128" font-size="13" font-weight="700" fill="#3fb6a8">Captioning</text>
+            <text x="70" y="146" font-size="11" fill="#8b9aa6">thick accent arc</text>
+          </g>
+          <g transform="translate(670 16)">
+            <g clip-path="url(#cornerCell)">
+              <rect width="140" height="100" fill="#18232e"/>
+              <path d="M0 100 V38 A62 62 0 0 1 62 100 Z" fill="#2b3a47"/>
+              <path d="M0 33 A67 67 0 0 1 67 100" fill="none" stroke="#e0a030" stroke-width="4"/>
+              <rect x="20" y="68" width="12" height="12" rx="2.5" fill="#f2f5f7"/>
+              <circle cx="47.5" cy="52.5" r="8" fill="#e0a030" stroke="#18232e" stroke-width="2"/>
+              <text x="47.5" y="56.5" font-size="11.5" font-weight="800" fill="#0f1d2b">!</text>
+            </g>
+            <text x="70" y="128" font-size="13" font-weight="700" fill="#e0a030">No captions</text>
+            <text x="70" y="146" font-size="11" fill="#8b9aa6">amber arc + badge</text>
+          </g>
+        </g>
+      </svg>
+      <figcaption><strong>K · The signal model carries over unchanged.</strong> Each state still differs in shape as well as color, and the label beside it says it in words.</figcaption>
+    </figure>
+
+    <h3>Is it practical in SwiftUI?</h3>
+    <p>Yes. Nothing here needs UIKit or private API. A corner button is an ordinary <code>Button</code> whose shape is a custom <code>Shape</code>; the ring is the same arc, stroked.</p>
+    <div class="split">
+      <svg viewBox="0 0 440 300" role="img" aria-labelledby="lTitle">
+        <title id="lTitle">Enlarged bottom-left corner: the quarter disc, its status ring, the display's rounded corner and the bottom safe area</title>
+        <defs><clipPath id="diagScreen"><path d="M40 0 H440 V280 H128 A88 88 0 0 1 40 192 Z"/></clipPath></defs>
+        <rect width="440" height="300" rx="14" fill="#0b0f13"/>
+        <path d="M40 192 V280 H128 A88 88 0 0 1 40 192 Z" fill="#2b3a47" opacity=".3"/>
+        <path d="M40 192 V280 H128" fill="none" stroke="#58656b" stroke-width="1.5" stroke-dasharray="4 4"/>
+        <g clip-path="url(#diagScreen)">
+          <rect x="40" y="0" width="400" height="78" fill="#0f1d2b"/>
+          <rect x="48" y="26" width="5" height="34" rx="2.5" fill="#f0a868"/>
+          <text x="66" y="52" font-family="-apple-system, sans-serif" font-size="24" fill="#e6edf2" opacity=".6">ready by</text>
+          <rect x="40" y="78" width="400" height="202" fill="#18232e"/>
+          <rect x="40" y="78" width="400" height="1.5" fill="#22303c"/>
+          <path d="M40 280 V98 A182 182 0 0 1 222 280 Z" fill="#2b3a47"/>
+          <path d="M40 90 A190 190 0 0 1 230 280" fill="none" stroke="#3fb6a8" stroke-width="6"/>
+          <rect x="100" y="184" width="36" height="36" rx="6" fill="#f2f5f7"/>
+        </g>
+        <path d="M40 226 H440" stroke="#8b9aa6" stroke-width="1" stroke-dasharray="3 5"/>
+        <g font-family="-apple-system, sans-serif">
+          <text x="430" y="218" text-anchor="end" font-size="12" fill="#8b9aa6">bottom safe area</text>
+          <g text-anchor="middle" font-size="13" font-weight="800" fill="#0f1d2b">
+            <circle cx="170" cy="168" r="11" fill="#f7f5f0"/><text x="170" y="172.5">1</text>
+            <circle cx="148" cy="96" r="11" fill="#f7f5f0"/><text x="148" y="100.5">2</text>
+            <circle cx="60" cy="260" r="11" fill="#f7f5f0"/><text x="60" y="264.5">3</text>
+            <circle cx="118" cy="248" r="11" fill="#f7f5f0"/><text x="118" y="252.5">4</text>
+          </g>
+        </g>
+      </svg>
+      <ol>
+        <li><strong>Quarter disc.</strong> A custom <code>Shape</code> centered on the screen corner, about 110 pt in radius. <code>.contentShape</code> limits taps to inside the curve, so the input chip next to it stays tappable.</li>
+        <li><strong>Status ring.</strong> The same arc stroked about 5 pt outside the disc, dashed for No audio via <code>StrokeStyle(dash:)</code>. It redraws only when the state changes.</li>
+        <li><strong>Display corner.</strong> The screen's rounded corner clips the tip of the disc. The disc is roughly twice any iPhone's corner radius, so nothing that matters is lost, and the view never needs the device's corner radius, which isn't public API.</li>
+        <li><strong>Glyph.</strong> Sits above the bottom safe-area inset, clear of the corner curve. The disc itself extends below the inset with <code>.ignoresSafeArea</code>, so the whole corner is a target.</li>
+      </ol>
+    </div>
+    <p class="small">A sketch of the shape, not compiled:</p>
+<pre><code>/// A quarter disc centered on the bottom corner of its frame.
+struct CornerDisc: Shape {
+    var edge: HorizontalEdge   // .leading for Start/Stop, .trailing for Clear
+
+    func path(in rect: CGRect) -&gt; Path {
+        let leading = edge == .leading
+        let corner = CGPoint(x: leading ? rect.minX : rect.maxX, y: rect.maxY)
+        var path = Path()
+        path.move(to: corner)
+        path.addArc(center: corner, radius: min(rect.width, rect.height),
+                    startAngle: .degrees(leading ? 270 : 180),
+                    endAngle: .degrees(leading ? 360 : 270), clockwise: false)
+        path.closeSubpath()
+        return path
+    }
+}
+
+// Pinned to the screen corner, outside the bottom safe area.
+StartStopCornerButton(status: session.captureStatus)
+    .frame(width: 110, height: 110)
+    .contentShape(CornerDisc(edge: .leading))
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+    .ignoresSafeArea(edges: .bottom)</code></pre>
+    <ul>
+      <li><strong>Home indicator.</strong> A tap near the bottom edge still reaches the button; only an upward swipe from the edge goes to the system. The chip sits above the indicator, as in the mocks.</li>
+      <li><strong>Accessibility.</strong> The shape is visual only. Each button gets an <code>accessibilityLabel</code> ("Stop captioning", "Clear captions"), and Start/Stop carries the state as its <code>accessibilityValue</code>. The label and chip should scale with Dynamic Type; the discs can stay fixed.</li>
+      <li><strong>iPad and landscape.</strong> The discs are a fixed size in points, so on wider screens they stay in the corners and the extra width goes to captions and the label.</li>
+      <li><strong>Liquid Glass, optionally.</strong> <code>glassEffect(_:in:)</code> takes a custom shape, so the discs could match other iOS 26 controls. Check it on hardware against the battery work. Glass over a static band should be cheap, but that hasn't been measured.</li>
+      <li><strong>macOS.</strong> macOS 26 windows also have rounded bottom corners, so the same view would work in a window. The toolbar layout (F) is still the more Mac-like option, with Clear as a toolbar button rather than a menu item.</li>
+    </ul>
+
+    <h3>Suggestions on the wireframe</h3>
+    <ul>
+      <li><strong>Undo instead of confirm</strong> (mock J). The corners are where thumbs rest when holding a phone, and Clear is the corner a right-handed thumb reaches most easily. Keeping the cleared lines for a few seconds in <code>CaptionStore</code> makes a mis-tap harmless without slowing a deliberate Clear.</li>
+      <li><strong>Consider a different Clear glyph.</strong> An X in a corner reads as "close" or "dismiss" on iOS. SF Symbols' <code>eraser</code> says "wipe the text" more directly.</li>
+      <li><strong>Keep Clear's red to an edge, not a fill.</strong> Red on iOS also means "recording". As an outline, Clear reads as destructive without competing with the amber Stalled ring across the screen. That's how the mocks draw it.</li>
+      <li><strong>Keep the status label in the band</strong> rather than moving it up. See mock H: with bottom-anchored captions it's already next to the newest line.</li>
+    </ul>
+
+    <h3>Open from the wireframe</h3>
+    <ul>
+      <li>What the AI control (✦) opens, and whether it belongs in the toolbar or behind Debug until it exists.</li>
+      <li>Whether a left-handed option to swap the corners is worth a setting.</li>
+      <li>Does an icon-only mode switch stay unambiguous on macOS, where the status label is in the toolbar rather than right under the switch?</li>
     </ul>
   </section>
 </main>
