@@ -40,6 +40,28 @@ final class SonioxOpusEncoderTests: XCTestCase {
         XCTAssertLessThan(emptyCalls, 20)
     }
 
+    /// Each rate is accepted by the platform encoder and actually changes the upload volume,
+    /// rather than being silently clamped to one rate.
+    func testEachBitRateCreatesAnEncoderAndScalesOutput() throws {
+        var bytesPerSecond: [SonioxOpusBitRate: Int] = [:]
+        for rate in SonioxOpusBitRate.allCases {
+            let encoder = try XCTUnwrap(SonioxOpusEncoder(bitRate: rate), "\(rate) unavailable")
+            XCTAssertEqual(encoder.diagnosticFields["bit_rate_requested"], String(rate.rawValue))
+            XCTAssertNotNil(encoder.diagnosticFields["bit_rate_strategy"])
+            _ = encoder.startStream()
+            var sent = 0
+            for index in 0..<63 {
+                sent += try XCTUnwrap(encoder.encode(try makeCaptureBuffer(offset: index * 768))).count
+            }
+            bytesPerSecond[rate] = sent
+        }
+
+        let lowest = try XCTUnwrap(bytesPerSecond[.kbps24])
+        let highest = try XCTUnwrap(bytesPerSecond[.kbps80])
+        XCTAssertGreaterThan(highest, lowest, "rates: \(bytesPerSecond)")
+        XCTAssertLessThan(highest, 16_000, "still far below PCM's 32,000 bytes per second")
+    }
+
     /// A reconnect is a new stream to Soniox, so page numbering must restart after the two
     /// header pages rather than continue from the previous connection.
     func testStartStreamRestartsPageSequence() throws {

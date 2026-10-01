@@ -26,25 +26,31 @@ protocol SonioxWireEncoder: AnyObject, Sendable {
 enum SonioxWireEncoders {
     /// Falls back to PCM if the platform's Opus encoder can't be created, so a missing codec
     /// costs bandwidth rather than captions.
-    static func make(for encoding: SonioxAudioEncoding) -> any SonioxWireEncoder {
+    static func make(
+        for encoding: SonioxAudioEncoding,
+        opusBitRate: SonioxOpusBitRate = SonioxOpusBitRate.defaultValue
+    ) -> any SonioxWireEncoder {
         switch encoding {
         case .pcm:
             return SonioxPCMConverter()
         case .opus:
-            return SonioxOpusEncoder() ?? SonioxPCMConverter()
+            return SonioxOpusEncoder(bitRate: opusBitRate) ?? SonioxPCMConverter()
         }
     }
 }
 
-/// Opus at 24 kbps, wrapped in Ogg pages that are sent as soon as each packet exists.
+/// Opus at a chosen bitrate, wrapped in Ogg pages that are sent as soon as each packet exists.
 ///
 /// Apple's encoder takes 20 ms (320-frame) packets at 16 kHz and holds any remainder until the
 /// next buffer, so at most one capture buffer of audio waits in the encoder. Measured on
 /// synthesized speech at 24 kbps: about 2.9 KB/s of Opus plus a 28-byte Ogg page header per
 /// 20 ms packet, so about 4.3 KB/s on the wire versus 32 KB/s for PCM. One packet per page
 /// keeps latency at a single packet; batching would save header bytes at the cost of delay.
+///
+/// 24 kbps hurt accuracy on deaf-accented speech in hardware testing, hence the setting.
+/// Variable bitrate is requested so consonant onsets can borrow bits from steady vowels and
+/// silence; whether Apple's encoder honors it is reported in `diagnosticFields`.
 final class SonioxOpusEncoder: SonioxWireEncoder, @unchecked Sendable {
-    static let bitRate = 24_000
     private static let sampleRate = 16_000.0
     private static let framesPerPacket: UInt32 = 320
     /// Ogg Opus measures time in 48 kHz samples whatever the coded rate.
@@ -59,8 +65,10 @@ final class SonioxOpusEncoder: SonioxWireEncoder, @unchecked Sendable {
     private let lock = NSLock()
     private var converter: AVAudioConverter
     private var muxer: OggOpusMuxer
+    let bitRate: SonioxOpusBitRate
 
-    init?() {
+    init?(bitRate: SonioxOpusBitRate = SonioxOpusBitRate.defaultValue) {
+        self.bitRate = bitRate
         var description = AudioStreamBasicDescription(
             mSampleRate: Self.sampleRate,
             mFormatID: kAudioFormatOpus,
@@ -80,7 +88,7 @@ final class SonioxOpusEncoder: SonioxWireEncoder, @unchecked Sendable {
                 interleaved: false
             ),
             let opusFormat = AVAudioFormat(streamDescription: &description),
-            let converter = Self.makeConverter(from: pcmFormat, to: opusFormat)
+            let converter = Self.makeConverter(from: pcmFormat, to: opusFormat, bitRate: bitRate)
         else {
             return nil
         }
@@ -91,11 +99,17 @@ final class SonioxOpusEncoder: SonioxWireEncoder, @unchecked Sendable {
     }
 
     var diagnosticFields: [String: String] {
-        [
+        lock.lock()
+        defer { lock.unlock() }
+        // What the converter reports back, not what was asked for, so a bundle shows
+        // whether the encoder accepted the rate and strategy.
+        return [
             "audio_format": audioFormat.rawValue,
             "codec": "opus",
             "container": "ogg",
-            "bit_rate": String(Self.bitRate),
+            "bit_rate_requested": String(bitRate.rawValue),
+            "bit_rate": String(converter.bitRate),
+            "bit_rate_strategy": converter.bitRateStrategy ?? "unset",
             "sample_rate": String(Int(Self.sampleRate)),
             "channels": "1",
         ]
@@ -106,7 +120,7 @@ final class SonioxOpusEncoder: SonioxWireEncoder, @unchecked Sendable {
         defer { lock.unlock() }
         // A fresh converter drops any partial packet from the previous connection, and a
         // fresh muxer restarts page numbering and granule positions under a new serial.
-        if let fresh = Self.makeConverter(from: pcmFormat, to: opusFormat) {
+        if let fresh = Self.makeConverter(from: pcmFormat, to: opusFormat, bitRate: bitRate) {
             converter = fresh
         } else {
             converter.reset()
@@ -158,12 +172,14 @@ final class SonioxOpusEncoder: SonioxWireEncoder, @unchecked Sendable {
 
     private static func makeConverter(
         from pcmFormat: AVAudioFormat,
-        to opusFormat: AVAudioFormat
+        to opusFormat: AVAudioFormat,
+        bitRate: SonioxOpusBitRate
     ) -> AVAudioConverter? {
         guard let converter = AVAudioConverter(from: pcmFormat, to: opusFormat) else {
             return nil
         }
-        converter.bitRate = bitRate
+        converter.bitRate = bitRate.rawValue
+        converter.bitRateStrategy = AVAudioBitRateStrategy_Variable
         return converter
     }
 

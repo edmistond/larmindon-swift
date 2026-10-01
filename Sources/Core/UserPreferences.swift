@@ -380,11 +380,13 @@ public enum VoiceProcessingPreference {
 
 /// How audio is encoded on the wire to Soniox. Soniox bills by stream duration either way;
 /// the difference is upload volume, which matters on cellular where the stream runs for a
-/// whole drive. PCM stays the default until Opus has been compared for caption accuracy.
+/// whole drive. PCM stays the default: at 24 kbps Opus measurably hurt accuracy on atypical
+/// (deaf-accented) speech in hardware testing, so `SonioxOpusBitRate` exists to find a rate
+/// that doesn't.
 public enum SonioxAudioEncoding: String, CaseIterable, Identifiable, Sendable {
     /// Raw 16 kHz 16-bit mono, about 32 KB/s.
     case pcm
-    /// Opus at 24 kbps in an Ogg stream, about 4 KB/s including page framing.
+    /// Opus in an Ogg stream at `SonioxOpusBitRate`, about 4–11 KB/s including page framing.
     case opus
 
     public static let storageKey = "sonioxAudioEncoding"
@@ -395,7 +397,33 @@ public enum SonioxAudioEncoding: String, CaseIterable, Identifiable, Sendable {
     public var title: String {
         switch self {
         case .pcm: return "Uncompressed (about 32 KB/s)"
-        case .opus: return "Opus (about 4 KB/s)"
+        case .opus: return "Opus (compressed)"
+        }
+    }
+}
+
+/// Target bitrate for Opus upload. Low rates lean on Opus's speech model, which smooths
+/// over the consonant and voicing detail that distinguishes atypical speech; higher rates
+/// keep more of it. Still a fraction of PCM's 256 kbps at every setting. Steps are taken
+/// from the Apple encoder's `applicableEncodeBitRates`, which skips 48 and 64 kbps.
+public enum SonioxOpusBitRate: Int, CaseIterable, Identifiable, Sendable {
+    case kbps24 = 24_000
+    case kbps32 = 32_000
+    case kbps50 = 50_000
+    case kbps80 = 80_000
+
+    public static let storageKey = "sonioxOpusBitRate"
+    public static let defaultValue = SonioxOpusBitRate.kbps32
+
+    public var id: Int { rawValue }
+
+    /// Approximate upload volume including the 28-byte Ogg page header per 20 ms packet.
+    public var title: String {
+        switch self {
+        case .kbps24: return "24 kbps (about 4 KB/s)"
+        case .kbps32: return "32 kbps (about 5 KB/s)"
+        case .kbps50: return "50 kbps (about 8 KB/s)"
+        case .kbps80: return "80 kbps (about 11 KB/s)"
         }
     }
 }

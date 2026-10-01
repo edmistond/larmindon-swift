@@ -97,12 +97,13 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         makeTransport: @escaping @Sendable () -> any WebSocketTransport,
         makePathObserver: @escaping @MainActor () -> any NetworkPathObserving = { NetworkPathMonitor() },
         gracefulShutdownTimeout: Duration = .seconds(5),
-        audioEncoding: SonioxAudioEncoding = SonioxAudioEncoding.defaultValue
+        audioEncoding: SonioxAudioEncoding = SonioxAudioEncoding.defaultValue,
+        opusBitRate: SonioxOpusBitRate = SonioxOpusBitRate.defaultValue
     ) {
         self.diagnostics = diagnostics
         self.gracefulShutdownTimeout = gracefulShutdownTimeout
         self.requestedEncoding = audioEncoding
-        let encoder = SonioxWireEncoders.make(for: audioEncoding)
+        let encoder = SonioxWireEncoders.make(for: audioEncoding, opusBitRate: opusBitRate)
         self.encoder = encoder
         // Every replacement connection reuses this, so it carries the encoder's format.
         self.configuration = SonioxRealtimeConfiguration(
@@ -126,7 +127,8 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         diagnostics: DiagnosticRecorder = .shared,
         transport: (any WebSocketTransport)? = nil,
         gracefulShutdownTimeout: Duration = .seconds(5),
-        audioEncoding: SonioxAudioEncoding = SonioxAudioEncoding.defaultValue
+        audioEncoding: SonioxAudioEncoding = SonioxAudioEncoding.defaultValue,
+        opusBitRate: SonioxOpusBitRate = SonioxOpusBitRate.defaultValue
     ) {
         let makeTransport: @Sendable () -> any WebSocketTransport
         if let transport {
@@ -141,7 +143,8 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             diagnostics: diagnostics,
             makeTransport: makeTransport,
             gracefulShutdownTimeout: gracefulShutdownTimeout,
-            audioEncoding: audioEncoding
+            audioEncoding: audioEncoding,
+            opusBitRate: opusBitRate
         )
     }
 
