@@ -49,9 +49,7 @@ public struct LarmindonRootView: View {
     public var body: some View {
         NavigationStack {
             GeometryReader { geometry in
-                let layout = CaptionRootLayout.resolved(for: geometry.size)
-
-                rootContent(layout: layout, containerSize: geometry.size)
+                rootContent(geometry: geometry)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(rootBackground)
             }
@@ -59,34 +57,7 @@ public struct LarmindonRootView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Picker("Transcription mode", selection: $transcriptionModeRaw) {
-                        ForEach(TranscriptionMode.allCases) { mode in
-                            Text(mode.title).tag(mode.rawValue)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 260)
-                    .accessibilityLabel("Transcription mode")
-                }
-
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Button {
-                        presentSettings()
-                    } label: {
-                        Label("Settings", systemImage: "slider.horizontal.3")
-                    }
-
-                    Button {
-                        presentMicrophonePanel()
-                    } label: {
-                        Label("Microphone", systemImage: "microphone.and.signal.meter")
-                    }
-
-                    TranscriptShareLink(session: session)
-                }
-            }
+            .toolbar { toolbarContent }
             #if os(iOS)
             .sheet(isPresented: $showSettings) {
                 settingsSheet
@@ -96,7 +67,7 @@ public struct LarmindonRootView: View {
             }
             #endif
             .preferredColorScheme(preferredColorScheme)
-            .tint(activeTheme.palette.tint ?? .accentColor)
+            .tint(accent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
@@ -127,6 +98,80 @@ public struct LarmindonRootView: View {
         }
     }
 
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        #if os(iOS)
+        ToolbarItem(placement: .topBarLeading) {
+            modePicker
+        }
+        #else
+        ToolbarItem(placement: .navigation) {
+            modePicker
+        }
+
+        ToolbarItem(placement: .principal) {
+            HStack(spacing: 14) {
+                inputPicker
+
+                CaptureStatusLabel(
+                    session: session,
+                    isSelectedModeConfigured: isSelectedModeConfigured,
+                    accent: accent
+                )
+                .fixedSize()
+            }
+        }
+
+        // Session controls: Clear always sits next to Start/Stop, never in a menu.
+        ToolbarItemGroup(placement: .primaryAction) {
+            ToolbarStartStopButton(
+                session: session,
+                accent: accent,
+                isEnabled: canToggleCaptions,
+                action: toggleCaptions
+            )
+
+            ToolbarClearButton(session: session)
+        }
+
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        #endif
+
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button {
+                presentSettings()
+            } label: {
+                Label("Settings", systemImage: "slider.horizontal.3")
+            }
+
+            Button {
+                presentMicrophonePanel()
+            } label: {
+                Label("Microphone", systemImage: "microphone.and.signal.meter")
+            }
+
+            TranscriptShareLink(session: session)
+        }
+    }
+
+    /// On-device or server, as icons: the status label names the provider in words, and
+    /// the space saved in the toolbar is held for a future AI control.
+    private var modePicker: some View {
+        Picker("Transcription mode", selection: $transcriptionModeRaw) {
+            ForEach(TranscriptionMode.allCases) { mode in
+                Image(systemName: mode.symbolName)
+                    .accessibilityLabel(mode.title)
+                    .tag(mode.rawValue)
+            }
+        }
+        .pickerStyle(.segmented)
+        .fixedSize()
+        .accessibilityLabel("Transcription mode")
+        #if os(macOS)
+        .help("Transcribe on this Mac or with Soniox")
+        #endif
+    }
+
     private func presentSettings() {
         #if os(iOS)
         showSettings = true
@@ -144,25 +189,21 @@ public struct LarmindonRootView: View {
     }
 
     @ViewBuilder
-    private func rootContent(layout: CaptionRootLayout, containerSize: CGSize) -> some View {
-        switch layout {
-        case .standard:
-            VStack(spacing: 0) {
-                captions
+    private func rootContent(geometry: GeometryProxy) -> some View {
+        #if os(iOS)
+        let layout = CaptureBandLayout.resolved(
+            for: geometry.size,
+            bottomSafeAreaInset: geometry.safeAreaInsets.bottom
+        )
+        VStack(spacing: 0) {
+            captions
 
-                captureControls(placement: .bottom)
-            }
-        case .compactLandscape:
-            HStack(spacing: 0) {
-                captions
-
-                Divider()
-
-                captureControls(placement: .trailing)
-                    .frame(width: CaptionRootLayout.trailingControlsWidth(for: containerSize))
-                    .frame(maxHeight: .infinity, alignment: .top)
-            }
+            captureBand(layout: layout)
         }
+        #else
+        // macOS keeps every control in the window toolbar; captions get the whole window.
+        captions
+        #endif
     }
 
     private var captions: some View {
@@ -188,91 +229,81 @@ public struct LarmindonRootView: View {
                 textColor: activeTheme.palette.text,
                 speakerColors: activeTheme.palette.speakerAccents
             )
+            .overlay(alignment: .bottom) {
+                ClearUndoToast(session: session, accent: accent)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func captureControls(placement: CaptionControlsPlacement) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            levelAndStatus
-
-            routeControls(placement: placement)
-
-            actionControls(placement: placement)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(
-            maxWidth: .infinity,
-            maxHeight: placement == .trailing ? .infinity : nil,
-            alignment: .topLeading
+    #if os(iOS)
+    /// Start/Stop and Clear in the bottom corners, with the status label and the named
+    /// input between them.
+    private func captureBand(layout: CaptureBandLayout) -> some View {
+        let metrics = CornerControlMetrics(radius: layout.discRadius)
+        let statusLabel = CaptureStatusLabel(
+            session: session,
+            isSelectedModeConfigured: isSelectedModeConfigured,
+            accent: accent
         )
-        .background(captureControlsBackground)
-    }
 
-    private var levelAndStatus: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(session.store.isRunning ? Color.green : Color.secondary.opacity(0.45))
-                    .frame(width: 8, height: 8)
+        return Group {
+            switch layout.arrangement {
+            case .stacked:
+                VStack(spacing: 8) {
+                    statusLabel
+                        .padding(.horizontal, layout.labelInset)
 
-                Text(modeStatusText)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(modeStatusText)
+                    inputPicker
+                        .padding(.horizontal, layout.chipInset)
+                }
+                .padding(.top, 12)
+                .padding(.bottom, 10)
+            case .row:
+                HStack(spacing: 18) {
+                    statusLabel
 
-            SessionAudioLevelBar(session: session)
-        }
-        .animation(.easeInOut(duration: 0.2), value: session.store.isRunning)
-    }
-
-    @ViewBuilder
-    private func routeControls(placement: CaptionControlsPlacement) -> some View {
-        switch placement {
-        case .bottom:
-            HStack(spacing: 12) {
-                inputNameLabel(lineLimit: 1)
-
-                Spacer(minLength: 12)
-
-                inputPicker
-            }
-        case .trailing:
-            VStack(alignment: .leading, spacing: 10) {
-                inputNameLabel(lineLimit: 2)
-
-                inputPicker
+                    inputPicker
+                }
+                .padding(.horizontal, metrics.frameSide)
+                .padding(.vertical, 10)
             }
         }
-    }
+        .frame(maxWidth: .infinity, minHeight: layout.minimumBandHeight)
+        .background {
+            captureControlsBackground
+                .ignoresSafeArea(edges: .bottom)
+        }
+        .overlay {
+            ZStack {
+                CornerStartStopButton(
+                    session: session,
+                    metrics: metrics,
+                    accent: accent,
+                    isEnabled: canToggleCaptions,
+                    action: toggleCaptions
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
 
-    @ViewBuilder
-    private func actionControls(placement: CaptionControlsPlacement) -> some View {
-        switch placement {
-        case .bottom:
-            HStack(spacing: 12) {
-                startStopButton
-
-                clearButton
+                CornerClearButton(session: session, metrics: metrics)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             }
-        case .trailing:
-            VStack(spacing: 10) {
-                startStopButton
-
-                clearButton
-                    .frame(maxWidth: .infinity)
-            }
+            // Out to the physical screen corners; the display's rounded corner clips the tip.
+            .ignoresSafeArea(edges: [.bottom, .horizontal])
         }
     }
+    #endif
 
-    private func inputNameLabel(lineLimit: Int) -> some View {
-        Label("Input: \(session.routeManager.currentInputName)", systemImage: "mic")
-            .font(.subheadline)
-            .lineLimit(lineLimit)
-            .minimumScaleFactor(0.75)
+    private var canToggleCaptions: Bool {
+        session.store.isRunning || isSelectedModeConfigured
+    }
+
+    private func toggleCaptions() {
+        if session.store.isRunning {
+            Task { await session.stop() }
+        } else {
+            startCaptionsIfIdle()
+        }
     }
 
     private func startCaptionsIfIdle() {
@@ -299,59 +330,28 @@ public struct LarmindonRootView: View {
     }
     #endif
 
-    private var startStopButton: some View {
-        Button {
-            if session.store.isRunning {
-                Task { await session.stop() }
-            } else {
-                startCaptionsIfIdle()
-            }
-        } label: {
-            Label(
-                session.store.isRunning ? "Stop Captions" : "Start Captions",
-                systemImage: session.store.isRunning ? "stop.fill" : "play.fill"
-            )
-            .fontWeight(.semibold)
-            .frame(maxWidth: .infinity, minHeight: comfortableControlHeight)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(session.store.isRunning ? .red : (activeTheme.palette.tint ?? .accentColor))
-        .disabled(
-            !session.store.isRunning && !isSelectedModeConfigured
-        )
-    }
-
-    private var clearButton: some View {
-        Button {
-            session.clear()
-        } label: {
-            Label("Clear", systemImage: "trash")
-                .frame(minHeight: comfortableControlHeight)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.bordered)
-        .disabled(session.store.finalizedChunks.isEmpty && session.store.volatileCaptions.isEmpty)
-    }
-
     @ViewBuilder
     private var inputPicker: some View {
         #if os(iOS)
         SystemInputPickerButton(
             routeManager: session.routeManager,
             releaseAudioSessionWhenDismissed: !session.store.isRunning,
+            showsCurrentInputName: true,
+            onInputSelectionChanged: {
+                session.inputSelectionDidChange()
+            }
+        )
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityLabel("Input: \(session.routeManager.currentInputName)")
+        #else
+        InputSelectionMenu(
+            routeManager: session.routeManager,
+            showsCurrentInputName: true,
             onInputSelectionChanged: {
                 session.inputSelectionDidChange()
             }
         )
         .fixedSize()
-        #else
-        InputSelectionMenu(
-            routeManager: session.routeManager,
-            onInputSelectionChanged: {
-                session.inputSelectionDidChange()
-            }
-        )
         #endif
     }
 
@@ -397,29 +397,8 @@ public struct LarmindonRootView: View {
         TranscriptionMode(rawValue: transcriptionModeRaw) ?? .onDevice
     }
 
-    private var modeStatusText: String {
-        if session.store.isRunning {
-            // Say so rather than claiming "Listening" through an interruption. No audio is
-            // arriving, so a caption view that stops growing would otherwise read as a
-            // quiet room rather than a session that needs attention.
-            if session.isInterrupted {
-                return "Interrupted · \(session.requestedMode.title)"
-            }
-            if session.isReconnecting {
-                return "Reconnecting · \(session.requestedMode.title)"
-            }
-            if let activeMode = session.activeMode {
-                return "Listening · \(activeMode.title)"
-            }
-            return "Switching to \(session.requestedMode.title)…"
-        }
-        if session.speechAnalyzerState == "Error" {
-            return "Stopped · \(session.requestedMode.title)"
-        }
-        if !isSelectedModeConfigured {
-            return "Soniox key required"
-        }
-        return "Ready · \(session.requestedMode.title)"
+    private var accent: Color {
+        activeTheme.palette.tint ?? .accentColor
     }
 
     private var isSelectedModeConfigured: Bool {
@@ -453,14 +432,6 @@ public enum LarmindonWindowID {
     public static let microphone = "microphone"
 }
 
-private let comfortableControlHeight: CGFloat = {
-    #if os(iOS)
-    return 46
-    #else
-    return 32
-    #endif
-}()
-
 #if os(macOS)
 private typealias PlatformColor = NSColor
 #else
@@ -475,37 +446,52 @@ private var platformBackgroundColor: PlatformColor {
     #endif
 }
 
-enum CaptionRootLayout: Equatable {
-    case standard
-    case compactLandscape
-
-    static func resolved(
-        for size: CGSize,
-        supportsCompactLandscape: Bool = platformSupportsCompactLandscape
-    ) -> Self {
-        if supportsCompactLandscape, size.width > size.height, size.height < 500 {
-            return .compactLandscape
+extension TranscriptionMode {
+    /// SF Symbol for the mode switch: this device for on-device, a cloud for server.
+    var symbolName: String {
+        switch self {
+        case .onDevice:
+            #if os(macOS)
+            return "macbook.gen2"
+            #else
+            return "iphone.gen3"
+            #endif
+        case .server:
+            return "cloud"
         }
-
-        return .standard
-    }
-
-    static func trailingControlsWidth(for size: CGSize) -> CGFloat {
-        min(300, max(240, size.width * 0.34))
-    }
-
-    private static var platformSupportsCompactLandscape: Bool {
-        #if os(iOS)
-        return true
-        #else
-        return false
-        #endif
     }
 }
 
-private enum CaptionControlsPlacement {
-    case bottom
-    case trailing
+/// Where the iOS capture band puts things, from the space available.
+struct CaptureBandLayout: Equatable {
+    enum Arrangement: Equatable {
+        /// Status label above the input chip, for portrait phones.
+        case stacked
+        /// Label and chip side by side, for landscape and wide screens.
+        case row
+    }
+
+    let arrangement: Arrangement
+    let discRadius: CGFloat
+    /// Keeps the band at least as tall as the corner controls, so they never reach up
+    /// over the newest caption.
+    let minimumBandHeight: CGFloat
+
+    /// Horizontal room left for the status label beside the corner rings, stacked layout.
+    var labelInset: CGFloat { (discRadius * 0.62).rounded() }
+    /// The chip sits lower, where the rings reach further in.
+    var chipInset: CGFloat { (discRadius * 0.82).rounded() }
+
+    static func resolved(for size: CGSize, bottomSafeAreaInset: CGFloat) -> Self {
+        let isCompactHeight = size.height < 500 && size.width > size.height
+        let discRadius: CGFloat = isCompactHeight ? 84 : 108
+        let side = CornerControlMetrics.side(forRadius: discRadius)
+        return CaptureBandLayout(
+            arrangement: size.width >= 600 ? .row : .stacked,
+            discRadius: discRadius,
+            minimumBandHeight: max(0, side - bottomSafeAreaInset)
+        )
+    }
 }
 
 #Preview {
@@ -532,21 +518,5 @@ private struct TranscriptShareLink: View {
             Label("Share Transcript", systemImage: "square.and.arrow.up")
         }
         .disabled(export.isEmpty)
-    }
-}
-
-/// The meter in its own view so level updates invalidate only this leaf.
-///
-/// Reading `session.audioLevels` directly in `LarmindonRootView` made the whole root body
-/// — captions included — re-evaluate on every level write, which showed up as sustained
-/// SwiftUI layout CPU while capturing.
-private struct SessionAudioLevelBar: View {
-    let session: CaptionSession
-
-    var body: some View {
-        AudioLevelBar(
-            level: session.audioLevels.rawInputLevel,
-            isActive: session.audioLevels.speechDetected
-        )
     }
 }

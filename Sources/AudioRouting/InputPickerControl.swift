@@ -8,15 +8,20 @@ import UIKit
 public struct SystemInputPickerButton: UIViewRepresentable {
     @Bindable private var routeManager: AudioRouteManager
     private let releaseAudioSessionWhenDismissed: Bool
+    private let showsCurrentInputName: Bool
     private let onInputSelectionChanged: @MainActor @Sendable () -> Void
 
+    /// - Parameter showsCurrentInputName: Title the button with the current input's name
+    ///   as a capsule chip, so the input stays visible by name, rather than "Input".
     public init(
         routeManager: AudioRouteManager,
         releaseAudioSessionWhenDismissed: Bool = false,
+        showsCurrentInputName: Bool = false,
         onInputSelectionChanged: @escaping @MainActor @Sendable () -> Void = {}
     ) {
         self.routeManager = routeManager
         self.releaseAudioSessionWhenDismissed = releaseAudioSessionWhenDismissed
+        self.showsCurrentInputName = showsCurrentInputName
         self.onInputSelectionChanged = onInputSelectionChanged
     }
 
@@ -63,10 +68,39 @@ public struct SystemInputPickerButton: UIViewRepresentable {
         uiView: UIButton,
         context: Context
     ) -> CGSize? {
-        uiView.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        let natural = uiView.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        // A long input name truncates instead of pushing the chip past its slot.
+        guard let width = proposal.width, width.isFinite, width < natural.width else { return natural }
+        return CGSize(width: width, height: natural.height)
     }
 
     private func buttonConfiguration() -> UIButton.Configuration {
+        if showsCurrentInputName {
+            var configuration = UIButton.Configuration.gray()
+            configuration.title = routeManager.currentInputName
+            configuration.titleLineBreakMode = .byTruncatingTail
+            configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+                var attributes = attributes
+                attributes.font = UIFont.preferredFont(forTextStyle: .subheadline)
+                return attributes
+            }
+            configuration.image = UIImage(
+                systemName: "chevron.down",
+                withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption1, scale: .small)
+            )
+            configuration.imagePlacement = .trailing
+            configuration.imagePadding = 6
+            configuration.cornerStyle = .capsule
+            configuration.baseForegroundColor = .label
+            configuration.contentInsets = NSDirectionalEdgeInsets(
+                top: 8,
+                leading: 14,
+                bottom: 8,
+                trailing: 12
+            )
+            return configuration
+        }
+
         var configuration = UIButton.Configuration.bordered()
         configuration.title = "Input"
         configuration.image = UIImage(systemName: "mic.badge.plus")
@@ -139,17 +173,22 @@ public struct InputSelectionMenu: View {
     @Bindable private var routeManager: AudioRouteManager
     private let labelTitle: String
     private let systemImage: String
+    private let showsCurrentInputName: Bool
     private let onInputSelectionChanged: @MainActor @Sendable () -> Void
 
+    /// - Parameter showsCurrentInputName: Title the menu with the current input's name, so
+    ///   the input stays visible by name, instead of `labelTitle`.
     public init(
         routeManager: AudioRouteManager,
         labelTitle: String = "Input",
         systemImage: String = "mic.badge.plus",
+        showsCurrentInputName: Bool = false,
         onInputSelectionChanged: @escaping @MainActor @Sendable () -> Void = {}
     ) {
         self.routeManager = routeManager
         self.labelTitle = labelTitle
         self.systemImage = systemImage
+        self.showsCurrentInputName = showsCurrentInputName
         self.onInputSelectionChanged = onInputSelectionChanged
     }
 
@@ -183,8 +222,14 @@ public struct InputSelectionMenu: View {
                 }
             }
         } label: {
-            Label(labelTitle, systemImage: systemImage)
+            if showsCurrentInputName {
+                Label(routeManager.currentInputName, systemImage: "mic")
+                    .labelStyle(.titleAndIcon)
+            } else {
+                Label(labelTitle, systemImage: systemImage)
+            }
         }
+        .accessibilityLabel(showsCurrentInputName ? "Input: \(routeManager.currentInputName)" : labelTitle)
     }
 }
 
