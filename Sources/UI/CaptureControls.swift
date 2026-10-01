@@ -176,6 +176,15 @@ struct CornerButtonStyle: ButtonStyle {
 struct CornerControlMetrics: Equatable {
     /// Radius of the tappable disc.
     let radius: CGFloat
+    /// Height of the glyph's center above the screen's bottom edge. The band lines this up
+    /// with the input chip's center so the glyphs and chip read as one row; a quarter disc
+    /// has no center of its own for the eye to find.
+    let glyphHeight: CGFloat
+
+    init(radius: CGFloat, glyphHeight: CGFloat? = nil) {
+        self.radius = radius
+        self.glyphHeight = min(glyphHeight ?? (radius * 0.44).rounded(), radius * 0.8)
+    }
     /// Gap between the disc and the status ring.
     static let ringGap: CGFloat = 5
     /// Room for the ring's stroke outside the disc.
@@ -185,9 +194,11 @@ struct CornerControlMetrics: Equatable {
 
     var frameSide: CGFloat { Self.side(forRadius: radius) }
     var ringRadius: CGFloat { radius + Self.ringGap }
-    /// The glyph sits on the diagonal, clear of the display's rounded corner and above the
-    /// bottom safe-area inset.
-    var glyphInset: CGFloat { (radius * 0.44).rounded() }
+    /// Horizontal inset of the glyph's center: halfway between the screen edge and the
+    /// disc's curve at the glyph's height, so it sits centered across the disc there.
+    var glyphInset: CGFloat {
+        ((radius * radius - glyphHeight * glyphHeight).squareRoot() / 2).rounded()
+    }
 }
 
 #if os(iOS)
@@ -219,7 +230,9 @@ struct CornerStartStopButton: View {
                 Image(systemName: isRunning ? "stop.fill" : "play.fill")
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(.white)
-                    .position(x: metrics.glyphInset, y: side - metrics.glyphInset)
+                    // A play triangle's visual weight sits left of its box; nudge it right.
+                    .offset(x: isRunning ? 0 : 2)
+                    .position(x: metrics.glyphInset, y: side - metrics.glyphHeight)
 
                 if appearance.showsBadge {
                     // On the ring at 45°, where it can't collide with the glyph.
@@ -263,7 +276,7 @@ struct CornerClearButton: View {
                 Image(systemName: "trash")
                     .font(.system(size: 22, weight: .medium))
                     .foregroundStyle(.primary)
-                    .position(x: side - metrics.glyphInset, y: side - metrics.glyphInset)
+                    .position(x: side - metrics.glyphInset, y: side - metrics.glyphHeight)
             }
             .frame(width: side, height: side)
             .contentShape(CornerDisc(edge: .trailing, radius: metrics.radius))

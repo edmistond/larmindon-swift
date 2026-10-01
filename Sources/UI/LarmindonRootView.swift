@@ -242,7 +242,12 @@ public struct LarmindonRootView: View {
     /// Start/Stop and Clear in the bottom corners, with the status label and the named
     /// input between them.
     private func captureBand(layout: CaptureBandLayout, bottomInset: CGFloat) -> some View {
-        let metrics = CornerControlMetrics(radius: layout.discRadius)
+        // Both arrangements end with the chip 10 pt above the inset; line the glyphs up
+        // with its center.
+        let metrics = CornerControlMetrics(
+            radius: layout.discRadius,
+            glyphHeight: bottomInset + 10 + Self.inputChipHeight / 2
+        )
         let statusLabel = CaptureStatusLabel(
             session: session,
             isSelectedModeConfigured: isSelectedModeConfigured,
@@ -395,6 +400,9 @@ public struct LarmindonRootView: View {
     private var transcriptionMode: TranscriptionMode {
         TranscriptionMode(rawValue: transcriptionModeRaw) ?? .onDevice
     }
+
+    /// Approximate height of the input chip, for lining the corner glyphs up with it.
+    private static let inputChipHeight: CGFloat = 36
 
     private var accent: Color {
         activeTheme.palette.tint ?? .accentColor
