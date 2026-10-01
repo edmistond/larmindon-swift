@@ -138,7 +138,7 @@
       <circle r="17" fill="#2b3a47"/>
       <path d="M-4 -7 L8 0 L-4 7 Z" fill="#f2f5f7"/>
     </g>
-    <!-- Addendum toolbar: capsule mode switch with iphone.gen3 / cloud glyphs, then AI, Settings, Microphone, Debug. -->
+    <!-- Addendum toolbar: capsule mode switch with iphone.gen3 / cloud glyphs, then Settings, Microphone, Debug. The space freed on the left is held for a future AI control. -->
     <g id="navBarIcons">
       <rect x="13" y="46" width="234" height="38" fill="#0f1d2b"/>
       <rect x="13" y="83.5" width="234" height="1" fill="#22303c"/>
@@ -149,7 +149,6 @@
         <path d="M36.8 60.6 H39.2" stroke="#9fb0bd" stroke-width="1.2"/>
         <path d="M62 72 H76 A4 4 0 0 0 76 64 A6 6 0 0 0 65 62.5 A4.5 4.5 0 0 0 62 72 Z" stroke="#f2f5f7" stroke-width="1.5"/>
       </g>
-      <path d="M158 57 Q159 64 166 65 Q159 66 158 73 Q157 66 150 65 Q157 64 158 57 Z M166 54 Q166.4 57.6 169.5 58 Q166.4 58.4 166 62 Q165.6 58.4 162.5 58 Q165.6 57.6 166 54 Z" fill="#dfe7ec"/>
       <g stroke="#dfe7ec" stroke-width="1.5" stroke-linecap="round" fill="none">
         <path d="M177 59 H193 M177 65 H193 M177 71 H193"/>
         <circle cx="182" cy="59" r="2" fill="#0f1d2b"/><circle cx="189" cy="65" r="2" fill="#0f1d2b"/><circle cx="180" cy="71" r="2" fill="#0f1d2b"/>
@@ -532,7 +531,7 @@
         <li><strong>Clear is never hidden, and it's one tap.</strong> It doesn't go into a ⋯ menu (B) or the macOS menu bar (F). Clear is how a badly misheard phrase or a stray swear comes off the screen before the people around you read it, so it has to be instant. An always-visible Clear is one of the reasons this app exists.</li>
         <li><strong>The mode switch goes icon-only</strong>, keeping today's rounded capsule style. On-device is SF Symbols <code>iphone.gen3</code> on iOS and <code>macbook.gen2</code> on macOS; server is <code>cloud</code> on both. The provider's name moves into the status label ("Captioning · Soniox"), which answers the open question about simplifying the switch.</li>
         <li><strong>The status label is always shown</strong>, centered above the input chip.</li>
-        <li><strong>The toolbar gains an AI control</strong> (✦), alongside Settings, Microphone and Debug. This brief doesn't define what it opens.</li>
+        <li><strong>Toolbar space is held for a future AI control</strong> (<code>sparkles.2</code>), which the icon-only switch frees up. It isn't built yet and is left out of the mocks. It's planned to cover speaker identification using Apple's on-device models, plus a way to pick a speaker by hand and name them.</li>
       </ul>
     </div>
 
@@ -768,7 +767,7 @@ StartStopCornerButton(status: session.captureStatus)
 
     <h3>Open from the wireframe</h3>
     <ul>
-      <li>What the AI control (✦) opens, and whether it belongs in the toolbar or behind Debug until it exists.</li>
+      <li><s>What the AI control opens.</s> <strong>Answered:</strong> speaker identification features, later. Its toolbar slot stays empty for now.</li>
       <li>A finer-grained Clear: removing just the most recent caption block would take out a misheard phrase without losing the rest of the conversation. A possible second gesture on the same control, such as a long-press; full Clear stays one tap.</li>
       <li>Whether a left-handed option to swap the corners is worth a setting.</li>
       <li><s>Does an icon-only mode switch stay unambiguous on macOS?</s> <strong>Answered:</strong> yes, with the provider named in the toolbar's status label.</li>
