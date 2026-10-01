@@ -191,15 +191,17 @@ public struct LarmindonRootView: View {
     @ViewBuilder
     private func rootContent(geometry: GeometryProxy) -> some View {
         #if os(iOS)
-        let layout = CaptureBandLayout.resolved(
-            for: geometry.size,
-            bottomSafeAreaInset: geometry.safeAreaInsets.bottom
-        )
+        let bottomInset = geometry.safeAreaInsets.bottom
+        let layout = CaptureBandLayout.resolved(for: geometry.size, bottomSafeAreaInset: bottomInset)
+        // The band runs to the physical screen edge so the corner controls sit in the real
+        // corners; it pads its own content back above the home indicator.
         VStack(spacing: 0) {
             captions
 
-            captureBand(layout: layout)
+            captureBand(layout: layout, bottomInset: bottomInset)
+                .ignoresSafeArea(edges: .horizontal)
         }
+        .ignoresSafeArea(edges: .bottom)
         #else
         // macOS keeps every control in the window toolbar; captions get the whole window.
         captions
@@ -239,7 +241,7 @@ public struct LarmindonRootView: View {
     #if os(iOS)
     /// Start/Stop and Clear in the bottom corners, with the status label and the named
     /// input between them.
-    private func captureBand(layout: CaptureBandLayout) -> some View {
+    private func captureBand(layout: CaptureBandLayout, bottomInset: CGFloat) -> some View {
         let metrics = CornerControlMetrics(radius: layout.discRadius)
         let statusLabel = CaptureStatusLabel(
             session: session,
@@ -270,10 +272,8 @@ public struct LarmindonRootView: View {
             }
         }
         .frame(maxWidth: .infinity, minHeight: layout.minimumBandHeight)
-        .background {
-            captureControlsBackground
-                .ignoresSafeArea(edges: .bottom)
-        }
+        .padding(.bottom, bottomInset)
+        .background { captureControlsBackground }
         .overlay {
             ZStack {
                 CornerStartStopButton(
@@ -288,8 +288,7 @@ public struct LarmindonRootView: View {
                 CornerClearButton(session: session, metrics: metrics)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             }
-            // Out to the physical screen corners; the display's rounded corner clips the tip.
-            .ignoresSafeArea(edges: [.bottom, .horizontal])
+            // The display's rounded corner clips the tip of each disc.
         }
     }
     #endif
