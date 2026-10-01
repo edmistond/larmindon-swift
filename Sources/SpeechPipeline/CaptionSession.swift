@@ -28,11 +28,23 @@ public final class CaptionSession {
     /// is still nominally running, but no audio is arriving — without this the status line
     /// keeps claiming "Listening", and an empty caption view reads as a quiet room rather
     /// than a dead session. Always false on macOS.
-    public private(set) var isInterrupted = false
+    public private(set) var isInterrupted = false {
+        didSet {
+            if isInterrupted != oldValue { syncCaptureConnectionState() }
+        }
+    }
     /// True while a server provider has lost its connection and is reconnecting on its
     /// own. Capture is still running — which is what keeps a backgrounded iOS app alive
     /// long enough to reconnect — but no captions are arriving.
-    public private(set) var isReconnecting = false
+    public private(set) var isReconnecting = false {
+        didSet {
+            if isReconnecting != oldValue { syncCaptureConnectionState() }
+        }
+    }
+    /// A low-update summary of capture health for the Start/Stop control. Written only when
+    /// the state actually changes — a few times a minute at most — so, unlike `audioLevels`,
+    /// it is cheap to observe from the main screen. See `CaptureStatusTracker`.
+    public private(set) var captureStatus: CaptureStatus = .stopped
 
     /// Optional factory for exercising lifecycle transitions without live microphone access.
     @ObservationIgnored
@@ -56,6 +68,15 @@ public final class CaptionSession {
     @ObservationIgnored
     private(set) var silentCaptureTask: Task<Void, Never>?
     private var didReceiveAudioSinceStart = false
+    @ObservationIgnored
+    private var captureStatusTracker = CaptureStatusTracker()
+    /// Re-evaluates `captureStatus` while running, since several transitions are a
+    /// threshold passing with no input event to trigger them.
+    @ObservationIgnored
+    private(set) var captureStatusTask: Task<Void, Never>?
+    /// Time source for capture status thresholds; tests substitute a manual clock.
+    @ObservationIgnored
+    var captureStatusClock: @MainActor () -> ContinuousClock.Instant = { ContinuousClock.now }
     private var silentCaptureWarning: String?
     private var reconnectingWarning: String?
     /// When `audioLevels` was last written for a level-only change. See `publishAudioLevels`.
@@ -253,6 +274,9 @@ public final class CaptionSession {
             speechAnalyzerState = "Starting \(source.name)"
             activeMode = nil
             activeServerProvider = nil
+            captureStatusTracker.start(mode: mode, at: captureStatusClock())
+            publishCaptureStatus()
+            startCaptureStatusTicker(generation: generation)
 
             await diagnostics.record(
                 category: "state",
@@ -343,6 +367,8 @@ public final class CaptionSession {
             activeMode = mode
             speechAnalyzerState = "Running \(source.name)"
             startSilentCaptureWatchdog(generation: generation)
+            captureStatusTracker.captureDidStart(at: captureStatusClock())
+            refreshCaptureStatus()
             // Memory and thermal sampling runs only while captioning — that's the window
             // where a background kill would actually cost something.
             environmentMonitor.startSampling()
@@ -426,6 +452,7 @@ public final class CaptionSession {
         }
         if !preserveRunningState {
             store.isRunning = false
+            markCaptureStopped()
         }
         // Join only microphone/local teardown. This task owns all session-state writes,
         // so an older Stop cannot release the audio session belonging to a new Start.
@@ -453,6 +480,13 @@ public final class CaptionSession {
         if !preserveRunningState {
             store.isRunning = false
         }
+        // Same exception for the status: mid-recovery it reads Stalled (from
+        // `isInterrupted`), never a Stopped the user didn't ask for.
+        if !preserveRunningState || !store.isRunning {
+            markCaptureStopped()
+        }
+        captureStatusTask?.cancel()
+        captureStatusTask = nil
         audioLevels = AudioLevelSnapshot()
         lastLevelOnlyPublish = nil
         isReconnecting = false
@@ -685,6 +719,8 @@ public final class CaptionSession {
         if result.carriesTranscription {
             activeCapture?.noteProviderActivity()
         }
+        captureStatusTracker.received(result, at: captureStatusClock())
+        refreshCaptureStatus()
 
         switch result {
         case .volatile(let text):
@@ -730,7 +766,71 @@ public final class CaptionSession {
             if lastError == warning { lastError = nil }
             silentCaptureWarning = nil
         }
+        captureStatusTracker.audioArrived(
+            silent: CaptureStatusTracker.isEffectivelySilent(snapshot),
+            at: captureStatusClock()
+        )
+        refreshCaptureStatus()
         publishAudioLevels(snapshot)
+    }
+
+    private func refreshCaptureStatus() {
+        _ = captureStatusTracker.evaluate(at: captureStatusClock())
+        publishCaptureStatus()
+    }
+
+    private func markCaptureStopped() {
+        captureStatusTracker.stop(at: captureStatusClock())
+        publishCaptureStatus()
+    }
+
+    private func syncCaptureConnectionState() {
+        captureStatusTracker.setConnectionState(
+            reconnecting: isReconnecting,
+            interrupted: isInterrupted,
+            at: captureStatusClock()
+        )
+        publishCaptureStatus()
+    }
+
+    /// Copies the tracker's status out, writing only on a change: every write to an
+    /// `@Observable` property invalidates its readers, and this one is on the main screen.
+    private func publishCaptureStatus() {
+        let next = captureStatusTracker.status
+        guard next != captureStatus else { return }
+        let previous = captureStatus
+        captureStatus = next
+        let requestedMode = requestedMode.rawValue
+        Task { @MainActor [diagnostics] in
+            await diagnostics.record(
+                category: "state",
+                name: "capture_status_changed",
+                fields: [
+                    "from": previous.rawValue,
+                    "to": next.rawValue,
+                    "requested_mode": requestedMode,
+                ]
+            )
+        }
+    }
+
+    /// Thresholds pass without an input event — no audio at all is exactly that case — so
+    /// the status is re-evaluated about once a second while a session runs.
+    private func startCaptureStatusTicker(generation: Int) {
+        captureStatusTask?.cancel()
+        captureStatusTask = Task { @MainActor [weak self, delay] in
+            while !Task.isCancelled {
+                do {
+                    try await delay.sleep(.seconds(1))
+                } catch {
+                    return
+                }
+                guard let self, !Task.isCancelled, generation == transitionGeneration else {
+                    return
+                }
+                refreshCaptureStatus()
+            }
+        }
     }
 
     /// Writes a level snapshot to `audioLevels`, thinning out pure level changes.
@@ -932,6 +1032,9 @@ public final class CaptionSession {
             interruptionRecoveryTask = nil
             wasRunningBeforeInterruption = false
             interruptionAttempt = 0
+            // Stop the status first, so clearing the interruption lands on Stopped rather
+            // than briefly on whatever the dead capture last implied.
+            markCaptureStopped()
             isInterrupted = false
             lastError = reason.message
             speechAnalyzerState = "Error"

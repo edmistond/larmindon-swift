@@ -116,6 +116,9 @@ final class CaptionSessionInterruptionTests: XCTestCase {
 
         session.routeManager.onAudioInterruption?(.ended(shouldResume: true))
         await waitUntil { session.activeMode != nil }
+        // `activeMode` is set partway through the restart, and the restart still awaits
+        // diagnostics after it; `isInterrupted` clears only once the restart returns.
+        await session.interruptionRecoveryTask?.value
 
         XCTAssertTrue(session.store.isRunning)
         XCTAssertNotNil(session.activeMode)
@@ -191,6 +194,29 @@ final class CaptionSessionInterruptionTests: XCTestCase {
             [AudioInterruptionFailureReason.restartAttemptsExhausted.message])
         XCTAssertFalse(session.store.isRunning)
         await session.stop()
+    }
+
+    /// Recovery stops and starts the session as one motion. The status ring must read
+    /// Stalled throughout, never flash Stopped, and land on Stopped only on give-up.
+    func testCaptureStatusStaysStalledThroughFailedRecoveryThenStops() async {
+        let notifier = SpyNotifier()
+        let session = makeRecoverableSession(notifier: notifier)
+        let delay = ManualDelay()
+        session.delay = delay.dependency
+        session.sourceFactory = { _, _ in
+            throw TranscriptionSourceError.unavailable("Simulated restart failure")
+        }
+        session.store.isRunning = true
+        session.routeManager.onAudioInterruption?(.mediaServicesReset)
+        XCTAssertEqual(session.captureStatus, .stalled)
+        for interval in [Duration.milliseconds(500), .seconds(1), .seconds(2)] {
+            await delay.waitUntilScheduled(interval)
+            XCTAssertEqual(session.captureStatus, .stalled)
+            await delay.advance(by: interval)
+        }
+        await waitUntil { !notifier.notifiedReasons.isEmpty }
+        await waitUntil { session.captureStatus == .stopped }
+        XCTAssertEqual(session.captureStatus, .stopped)
     }
 
     func testStopCancelsRecoveryBackoffWithoutStartingAgain() async {
