@@ -166,7 +166,8 @@
       <path d="M13 507 V445 A62 62 0 0 1 75 507 Z" fill="#2b3a47"/>
       <path d="M247 507 V445 A62 62 0 0 0 185 507 Z" fill="#30262b"/>
       <path d="M247 445 A62 62 0 0 0 185 507" fill="none" stroke="#c9574b" stroke-width="2.5"/>
-      <path d="M214 474 L226 486 M226 474 L214 486" stroke="#f3c2bb" stroke-width="2.4" stroke-linecap="round"/>
+      <rect x="212" y="472" width="16" height="16" rx="3.5" fill="none" stroke="#f3c2bb" stroke-width="1.8"/>
+      <path d="M216.5 476.5 L223.5 483.5 M223.5 476.5 L216.5 483.5" stroke="#f3c2bb" stroke-width="1.8" stroke-linecap="round"/>
       <rect x="87" y="462" width="86" height="26" rx="13" fill="#2b3a47"/>
       <text x="123" y="479.5" text-anchor="middle" font-size="11.5" fill="#dfe7ec">CarPlay</text>
       <path d="M153 473 L157 477 L161 473" fill="none" stroke="#dfe7ec" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -528,7 +529,7 @@
     <div class="callout">
       <p><strong>This supersedes parts of the recommendation above.</strong></p>
       <ul>
-        <li><strong>Clear is never hidden.</strong> It doesn't go into a ⋯ menu (B) or the macOS menu bar (F). An always-visible Clear is one of the reasons this app exists.</li>
+        <li><strong>Clear is never hidden, and it's one tap.</strong> It doesn't go into a ⋯ menu (B) or the macOS menu bar (F). Clear is how a badly misheard phrase or a stray swear comes off the screen before the people around you read it, so it has to be instant. An always-visible Clear is one of the reasons this app exists.</li>
         <li><strong>The mode switch goes icon-only</strong>: a phone for on-device, a cloud for server. The provider's name moves into the status label ("Captioning · Soniox"), which answers the open question about simplifying the switch.</li>
         <li><strong>The status label is always shown</strong>, centered above the input chip.</li>
         <li><strong>The toolbar gains an AI control</strong> (✦), alongside Settings, Microphone and Debug. This brief doesn't define what it opens.</li>
@@ -609,7 +610,7 @@
             </g>
           </g>
         </svg>
-        <figcaption><strong>J · Just cleared</strong> <span class="tag">Proposal</span><br>A big corner target is easy to brush. Rather than a confirmation dialog, which slows the common case, Clear acts at once and offers Undo for about five seconds.</figcaption>
+        <figcaption><strong>J · Just cleared</strong> <span class="tag rec">Agreed</span><br>Clear acts at once and offers Undo for about five seconds. No confirmation dialog: that slows the moment Clear exists for, and a confirm prompt in the previous captioning app turned out to be a constant annoyance.</figcaption>
       </figure>
     </div>
     <p class="small">Caption space: the bottom band takes about 15% of the screen height in this mock, against 12% for B and 27% for today's layout. That's roughly one line fewer than B and about three more than today.</p>
@@ -748,15 +749,27 @@ StartStopCornerButton(status: session.captureStatus)
 
     <h3>Suggestions on the wireframe</h3>
     <ul>
-      <li><strong>Undo instead of confirm</strong> (mock J). The corners are where thumbs rest when holding a phone, and Clear is the corner a right-handed thumb reaches most easily. Keeping the cleared lines for a few seconds in <code>CaptionStore</code> makes a mis-tap harmless without slowing a deliberate Clear.</li>
-      <li><strong>Consider a different Clear glyph.</strong> An X in a corner reads as "close" or "dismiss" on iOS. SF Symbols' <code>eraser</code> says "wipe the text" more directly.</li>
+      <li><strong>Undo instead of confirm</strong> (mock J, agreed 2026-10-01). Clear is used mid-conversation to get a wrong or embarrassing phrase off the screen, so it stays one tap. The corners are also where thumbs rest, and the bottom-right is the one a right thumb reaches most easily, so mis-taps will happen. <code>CaptionStore</code> keeps the cleared lines for a few seconds so Undo can restore them. The toast says only "Captions cleared"; it never shows the removed text again.</li>
+      <li><strong>Clear glyph: SF Symbols <code>clear</code></strong> (or <code>clear.fill</code>), a boxed X. The box separates it from a bare X, which reads as "close" or "dismiss" on iOS. The mocks use the outline version.</li>
       <li><strong>Keep Clear's red to an edge, not a fill.</strong> Red on iOS also means "recording". As an outline, Clear reads as destructive without competing with the amber Stalled ring across the screen. That's how the mocks draw it.</li>
       <li><strong>Keep the status label in the band</strong> rather than moving it up. See mock H: with bottom-anchored captions it's already next to the newest line.</li>
     </ul>
 
+    <h3>Battery: what this layout does and doesn't change</h3>
+    <p>The battery case for the redesign rests on one thing: removing the continuously moving level meter from the main screen. The corner layout keeps that, and adds nothing that moves continuously.</p>
+    <ul>
+      <li><strong>Ring and label</strong> redraw only on a state transition, a few times a minute at most, with the same hysteresis as B.</li>
+      <li><strong>Caption text</strong> still updates about once a second. That's the product and isn't changed by any layout.</li>
+      <li><strong>The Undo toast</strong> appears once and disappears once. Don't give it a countdown bar or a shrinking ring: those animate every frame for five seconds.</li>
+      <li><strong>Button press feedback</strong> is a one-shot highlight, like any button.</li>
+      <li><strong>Liquid Glass</strong> on the discs is the one unknown; see above.</li>
+    </ul>
+    <p>None of this proves the payoff. It still depends on the meter A/B in <a href="#validate">Validate first</a>; this layout only makes sure it doesn't give the savings back.</p>
+
     <h3>Open from the wireframe</h3>
     <ul>
       <li>What the AI control (✦) opens, and whether it belongs in the toolbar or behind Debug until it exists.</li>
+      <li>A finer-grained Clear: removing just the most recent caption block would take out a misheard phrase without losing the rest of the conversation. A possible second gesture on the same control, such as a long-press; full Clear stays one tap.</li>
       <li>Whether a left-handed option to swap the corners is worth a setting.</li>
       <li>Does an icon-only mode switch stay unambiguous on macOS, where the status label is in the toolbar rather than right under the switch?</li>
     </ul>
