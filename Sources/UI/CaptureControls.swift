@@ -206,8 +206,10 @@ struct CornerStartStopButton: View {
 
         Button(action: action) {
             ZStack {
+                // Same colors as the Start/Stop button had before the redesign, in every
+                // theme: the theme's accent to start, red to stop.
                 CornerDisc(edge: .leading, radius: metrics.radius)
-                    .fill(Color.primary.opacity(0.12))
+                    .fill(isRunning ? Color.red : accent)
 
                 if appearance.ring != .none {
                     CornerArc(edge: .leading, radius: metrics.ringRadius)
@@ -216,7 +218,7 @@ struct CornerStartStopButton: View {
 
                 Image(systemName: isRunning ? "stop.fill" : "play.fill")
                     .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.white)
                     .position(x: metrics.glyphInset, y: side - metrics.glyphInset)
 
                 if appearance.showsBadge {
@@ -254,16 +256,13 @@ struct CornerClearButton: View {
             session.clear()
         } label: {
             ZStack {
-                // Red as an edge, not a fill: red also means "recording", and an outline
-                // keeps it from competing with the amber stalled ring across the screen.
+                // Neutral, so it doesn't compete with Start/Stop or the status ring.
                 CornerDisc(edge: .trailing, radius: metrics.radius)
-                    .fill(Color.red.opacity(0.10))
-                CornerArc(edge: .trailing, radius: metrics.radius)
-                    .stroke(Color.red.opacity(0.75), lineWidth: 2.5)
+                    .fill(Color.primary.opacity(0.12))
 
-                Image(systemName: "clear")
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(.red)
+                Image(systemName: "trash")
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(.primary)
                     .position(x: side - metrics.glyphInset, y: side - metrics.glyphInset)
             }
             .frame(width: side, height: side)
@@ -299,6 +298,7 @@ struct ToolbarStartStopButton: View {
                 }
                 Image(systemName: isRunning ? "stop.fill" : "play.fill")
                     .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isRunning ? Color.red : accent)
                 if appearance.showsBadge {
                     Image(systemName: "exclamationmark.circle.fill")
                         .font(.system(size: 10, weight: .bold))
@@ -325,7 +325,7 @@ struct ToolbarClearButton: View {
         Button {
             session.clear()
         } label: {
-            Label("Clear Captions", systemImage: "clear")
+            Label("Clear Captions", systemImage: "trash")
         }
         .disabled(session.store.finalizedChunks.isEmpty && session.store.volatileCaptions.isEmpty)
         .help("Clear captions")
