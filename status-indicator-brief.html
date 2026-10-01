@@ -138,15 +138,15 @@
       <circle r="17" fill="#2b3a47"/>
       <path d="M-4 -7 L8 0 L-4 7 Z" fill="#f2f5f7"/>
     </g>
-    <!-- Addendum toolbar: icon-only mode switch (on-device / server), then AI, Settings, Microphone, Debug. -->
+    <!-- Addendum toolbar: capsule mode switch with iphone.gen3 / cloud glyphs, then AI, Settings, Microphone, Debug. -->
     <g id="navBarIcons">
       <rect x="13" y="46" width="234" height="38" fill="#0f1d2b"/>
       <rect x="13" y="83.5" width="234" height="1" fill="#22303c"/>
-      <rect x="22" y="53" width="64" height="24" rx="7" fill="#22303c"/>
-      <rect x="54" y="55" width="30" height="20" rx="6" fill="#3a4a58"/>
+      <rect x="22" y="53" width="64" height="24" rx="12" fill="#22303c"/>
+      <rect x="54" y="55" width="30" height="20" rx="10" fill="#3a4a58"/>
       <g fill="none" stroke-linecap="round" stroke-linejoin="round">
         <rect x="34" y="58" width="8" height="14" rx="2" stroke="#9fb0bd" stroke-width="1.4"/>
-        <path d="M36.5 69.5 H39.5" stroke="#9fb0bd" stroke-width="1.2"/>
+        <path d="M36.8 60.6 H39.2" stroke="#9fb0bd" stroke-width="1.2"/>
         <path d="M62 72 H76 A4 4 0 0 0 76 64 A6 6 0 0 0 65 62.5 A4.5 4.5 0 0 0 62 72 Z" stroke="#f2f5f7" stroke-width="1.5"/>
       </g>
       <path d="M158 57 Q159 64 166 65 Q159 66 158 73 Q157 66 150 65 Q157 64 158 57 Z M166 54 Q166.4 57.6 169.5 58 Q166.4 58.4 166 62 Q165.6 58.4 162.5 58 Q165.6 57.6 166 54 Z" fill="#dfe7ec"/>
@@ -477,7 +477,7 @@
           </g>
         </g>
       </svg>
-      <figcaption><strong>F · macOS window.</strong> Everything that's on the main screen today stays one click away in the window toolbar, where Mac apps normally put session controls: the on-device/Soniox switch, the named input, status, Start/Stop, Settings, the Microphone panel and Share. The trailing control panel disappears and captions use the full window width. Clear moves to the menu bar.</figcaption>
+      <figcaption><strong>F · macOS window.</strong> Everything that's on the main screen today stays one click away in the window toolbar, where Mac apps normally put session controls: the on-device/Soniox switch, the named input, status, Start/Stop, Settings, the Microphone panel and Share. The trailing control panel disappears and captions use the full window width. <s>Clear moves to the menu bar.</s> <strong>Updated in the addendum:</strong> Clear is a toolbar button, and the mode switch uses icons.</figcaption>
     </figure>
   </section>
 
@@ -530,7 +530,7 @@
       <p><strong>This supersedes parts of the recommendation above.</strong></p>
       <ul>
         <li><strong>Clear is never hidden, and it's one tap.</strong> It doesn't go into a ⋯ menu (B) or the macOS menu bar (F). Clear is how a badly misheard phrase or a stray swear comes off the screen before the people around you read it, so it has to be instant. An always-visible Clear is one of the reasons this app exists.</li>
-        <li><strong>The mode switch goes icon-only</strong>: a phone for on-device, a cloud for server. The provider's name moves into the status label ("Captioning · Soniox"), which answers the open question about simplifying the switch.</li>
+        <li><strong>The mode switch goes icon-only</strong>, keeping today's rounded capsule style. On-device is SF Symbols <code>iphone.gen3</code> on iOS and <code>macbook.gen2</code> on macOS; server is <code>cloud</code> on both. The provider's name moves into the status label ("Captioning · Soniox"), which answers the open question about simplifying the switch.</li>
         <li><strong>The status label is always shown</strong>, centered above the input chip.</li>
         <li><strong>The toolbar gains an AI control</strong> (✦), alongside Settings, Microphone and Debug. This brief doesn't define what it opens.</li>
       </ul>
@@ -744,7 +744,7 @@ StartStopCornerButton(status: session.captureStatus)
       <li><strong>Accessibility.</strong> The shape is visual only. Each button gets an <code>accessibilityLabel</code> ("Stop captioning", "Clear captions"), and Start/Stop carries the state as its <code>accessibilityValue</code>. The label and chip should scale with Dynamic Type; the discs can stay fixed.</li>
       <li><strong>iPad and landscape.</strong> The discs are a fixed size in points, so on wider screens they stay in the corners and the extra width goes to captions and the label.</li>
       <li><strong>Liquid Glass, optionally.</strong> <code>glassEffect(_:in:)</code> takes a custom shape, so the discs could match other iOS 26 controls. Check it on hardware against the battery work. Glass over a static band should be cheap, but that hasn't been measured.</li>
-      <li><strong>macOS.</strong> macOS 26 windows also have rounded bottom corners, so the same view would work in a window. The toolbar layout (F) is still the more Mac-like option, with Clear as a toolbar button rather than a menu item.</li>
+      <li><strong>macOS uses the toolbar layout (F)</strong>, agreed 2026-10-01, with two changes: Clear is a toolbar button, always visible, and the mode switch uses <code>macbook.gen2</code> / <code>cloud</code>. As on iOS, the status label names the provider ("Captioning · Soniox"), since the switch no longer spells it out.</li>
     </ul>
 
     <h3>Suggestions on the wireframe</h3>
@@ -771,7 +771,7 @@ StartStopCornerButton(status: session.captureStatus)
       <li>What the AI control (✦) opens, and whether it belongs in the toolbar or behind Debug until it exists.</li>
       <li>A finer-grained Clear: removing just the most recent caption block would take out a misheard phrase without losing the rest of the conversation. A possible second gesture on the same control, such as a long-press; full Clear stays one tap.</li>
       <li>Whether a left-handed option to swap the corners is worth a setting.</li>
-      <li>Does an icon-only mode switch stay unambiguous on macOS, where the status label is in the toolbar rather than right under the switch?</li>
+      <li><s>Does an icon-only mode switch stay unambiguous on macOS?</s> <strong>Answered:</strong> yes, with the provider named in the toolbar's status label.</li>
     </ul>
   </section>
 </main>
