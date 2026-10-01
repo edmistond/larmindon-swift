@@ -242,12 +242,7 @@ public struct LarmindonRootView: View {
     /// Start/Stop and Clear in the bottom corners, with the status label and the named
     /// input between them.
     private func captureBand(layout: CaptureBandLayout, bottomInset: CGFloat) -> some View {
-        // Both arrangements end with the chip 10 pt above the inset; line the glyphs up
-        // with its center.
-        let metrics = CornerControlMetrics(
-            radius: layout.discRadius,
-            glyphHeight: bottomInset + 10 + Self.inputChipHeight / 2
-        )
+        let metrics = layout.corner
         let statusLabel = CaptureStatusLabel(
             session: session,
             isSelectedModeConfigured: isSelectedModeConfigured,
@@ -265,15 +260,15 @@ public struct LarmindonRootView: View {
                         .padding(.horizontal, layout.chipInset)
                 }
                 .padding(.top, 12)
-                .padding(.bottom, 10)
+                .padding(.bottom, CaptureBandLayout.chipBottomPadding)
             case .row:
                 HStack(spacing: 18) {
                     statusLabel
 
                     inputPicker
                 }
-                .padding(.horizontal, metrics.frameSide)
-                .padding(.vertical, 10)
+                .padding(.horizontal, layout.rowInset)
+                .padding(.vertical, CaptureBandLayout.chipBottomPadding)
             }
         }
         .frame(maxWidth: .infinity, minHeight: layout.minimumBandHeight)
@@ -401,9 +396,6 @@ public struct LarmindonRootView: View {
         TranscriptionMode(rawValue: transcriptionModeRaw) ?? .onDevice
     }
 
-    /// Approximate height of the input chip, for lining the corner glyphs up with it.
-    private static let inputChipHeight: CGFloat = 36
-
     private var accent: Color {
         activeTheme.palette.tint ?? .accentColor
     }
@@ -478,25 +470,49 @@ struct CaptureBandLayout: Equatable {
         case row
     }
 
+    /// Space below the chip, above the bottom safe-area inset.
+    static let chipBottomPadding: CGFloat = 10
+    /// Approximate input chip height, for keeping it clear of the corner controls.
+    static let chipHeight: CGFloat = 36
+    /// Approximate status label height plus the gap above the chip.
+    static let labelBlockHeight: CGFloat = 28
+    /// Breathing room between the corner rings and the band's center content.
+    static let contentGap: CGFloat = 6
+
     let arrangement: Arrangement
-    let discRadius: CGFloat
+    let corner: CornerControlMetrics
+    let bottomSafeAreaInset: CGFloat
     /// Keeps the band at least as tall as the corner controls, so they never reach up
     /// over the newest caption.
     let minimumBandHeight: CGFloat
 
-    /// Horizontal room left for the status label beside the corner rings, stacked layout.
-    var labelInset: CGFloat { (discRadius * 0.62).rounded() }
-    /// The chip sits lower, where the rings reach further in.
-    var chipInset: CGFloat { (discRadius * 0.82).rounded() }
+    private var chipCenterHeight: CGFloat {
+        bottomSafeAreaInset + Self.chipBottomPadding + Self.chipHeight / 2
+    }
+
+    /// Stacked: horizontal inset for the chip, clear of the rings at its height.
+    var chipInset: CGFloat { (corner.reach(atHeight: chipCenterHeight) + Self.contentGap).rounded() }
+    /// Stacked: the label sits higher, where the rings curve away, so it gets more room.
+    var labelInset: CGFloat {
+        let height = chipCenterHeight + Self.chipHeight / 2 + Self.labelBlockHeight / 2
+        return (corner.reach(atHeight: height) + Self.contentGap).rounded()
+    }
+    /// Row: one inset for the label-and-chip row.
+    var rowInset: CGFloat { chipInset }
 
     static func resolved(for size: CGSize, bottomSafeAreaInset: CGFloat) -> Self {
         let isCompactHeight = size.height < 500 && size.width > size.height
-        let discRadius: CGFloat = isCompactHeight ? 84 : 108
-        let side = CornerControlMetrics.side(forRadius: discRadius)
+        // The circles' centers sit inside the screen and their radius reaches past both
+        // edges, so each reads as a round button tucked into the corner.
+        let corner =
+            isCompactHeight
+            ? CornerControlMetrics(radius: 48, center: CGPoint(x: 38, y: 34))
+            : CornerControlMetrics(radius: 60, center: CGPoint(x: 42, y: 44))
         return CaptureBandLayout(
             arrangement: size.width >= 600 ? .row : .stacked,
-            discRadius: discRadius,
-            minimumBandHeight: max(0, side - bottomSafeAreaInset)
+            corner: corner,
+            bottomSafeAreaInset: bottomSafeAreaInset,
+            minimumBandHeight: max(0, corner.frameSize.height - bottomSafeAreaInset)
         )
     }
 }

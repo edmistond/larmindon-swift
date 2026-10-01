@@ -1,65 +1,37 @@
 import SwiftUI
 
-// Start/Stop and Clear as quarter discs in the bottom corners of the screen, with the
+// Start/Stop and Clear as circles tucked into the bottom corners of the screen, with the
 // capture status drawn as a ring around Start/Stop. See the addendum to
 // status-indicator-brief.html for the design and the reasoning behind each choice.
 //
 // Nothing here animates continuously. The ring and label redraw only when
 // `CaptionSession.captureStatus` changes, which is the point of replacing the level meter.
 
-/// A quarter disc centered on one bottom corner of its frame.
+/// A circle anchored near one bottom corner of its frame, with its center `center.x` in
+/// from the side edge and `center.y` up from the bottom edge.
 ///
-/// The disc is drawn from the frame's corner rather than inset from the display's rounded
-/// corner: the radius is roughly twice any iPhone's corner radius, so the screen clips only
-/// the tip, and the view never needs the device's corner radius (which isn't public API).
-struct CornerDisc: Shape {
+/// The center sits inside the screen and the radius reaches past both edges, so the screen
+/// clips the circle into a corner button that is more than a quarter. The glyph goes at the
+/// circle's real center, which lets the eye find it as centered. The view never needs the
+/// display's corner radius (which isn't public API): the rounded corner only trims what's
+/// already past the edges.
+struct CornerCircle: Shape {
     var edge: HorizontalEdge
+    var center: CGPoint
     var radius: CGFloat
 
     func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let corner = rect.bottomCorner(edge)
-        path.move(to: corner)
-        path.addArc(
-            center: corner,
-            radius: radius,
-            startAngle: edge.arcStart,
-            endAngle: edge.arcEnd,
-            clockwise: false
+        let x = edge == .leading ? rect.minX + center.x : rect.maxX - center.x
+        let point = CGPoint(x: x, y: rect.maxY - center.y)
+        return Path(
+            ellipseIn: CGRect(
+                x: point.x - radius,
+                y: point.y - radius,
+                width: radius * 2,
+                height: radius * 2
+            )
         )
-        path.closeSubpath()
-        return path
     }
-}
-
-/// The curved edge of a `CornerDisc` alone, for strokes: the status ring, Clear's outline.
-struct CornerArc: Shape {
-    var edge: HorizontalEdge
-    var radius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.addArc(
-            center: rect.bottomCorner(edge),
-            radius: radius,
-            startAngle: edge.arcStart,
-            endAngle: edge.arcEnd,
-            clockwise: false
-        )
-        return path
-    }
-}
-
-extension CGRect {
-    fileprivate func bottomCorner(_ edge: HorizontalEdge) -> CGPoint {
-        CGPoint(x: edge == .leading ? minX : maxX, y: maxY)
-    }
-}
-
-extension HorizontalEdge {
-    // Angles run clockwise on screen (y points down): 270° is straight up.
-    fileprivate var arcStart: Angle { .degrees(self == .leading ? 270 : 180) }
-    fileprivate var arcEnd: Angle { .degrees(self == .leading ? 360 : 270) }
 }
 
 /// How a capture status draws. Each state differs in shape as well as color, so it reads
@@ -174,30 +146,38 @@ struct CornerButtonStyle: ButtonStyle {
 
 /// Geometry for the iOS corner controls, in points.
 struct CornerControlMetrics: Equatable {
-    /// Radius of the tappable disc.
+    /// Radius of the tappable circle.
     let radius: CGFloat
-    /// Height of the glyph's center above the screen's bottom edge. The band lines this up
-    /// with the input chip's center so the glyphs and chip read as one row; a quarter disc
-    /// has no center of its own for the eye to find.
-    let glyphHeight: CGFloat
-
-    init(radius: CGFloat, glyphHeight: CGFloat? = nil) {
-        self.radius = radius
-        self.glyphHeight = min(glyphHeight ?? (radius * 0.44).rounded(), radius * 0.8)
-    }
-    /// Gap between the disc and the status ring.
+    /// The circle's center: `x` in from the side edge, `y` up from the screen's bottom edge.
+    /// The band puts `y` on the input chip's center line, so glyphs and chip read as a row.
+    let center: CGPoint
+    /// Gap between the circle and the status ring.
     static let ringGap: CGFloat = 5
-    /// Room for the ring's stroke outside the disc.
+    /// Room for the ring's stroke outside the circle.
     static let ringAllowance: CGFloat = ringGap + 4
 
-    static func side(forRadius radius: CGFloat) -> CGFloat { radius + ringAllowance }
-
-    var frameSide: CGFloat { Self.side(forRadius: radius) }
     var ringRadius: CGFloat { radius + Self.ringGap }
-    /// Horizontal inset of the glyph's center: halfway between the screen edge and the
-    /// disc's curve at the glyph's height, so it sits centered across the disc there.
-    var glyphInset: CGFloat {
-        ((radius * radius - glyphHeight * glyphHeight).squareRoot() / 2).rounded()
+    /// The frame runs from the screen corner to just past the ring.
+    var frameSize: CGSize {
+        CGSize(
+            width: center.x + radius + Self.ringAllowance,
+            height: center.y + radius + Self.ringAllowance
+        )
+    }
+
+    /// Where the glyph goes, in a frame anchored to the given bottom corner.
+    func glyphPosition(_ edge: HorizontalEdge) -> CGPoint {
+        let size = frameSize
+        return CGPoint(x: edge == .leading ? center.x : size.width - center.x, y: size.height - center.y)
+    }
+
+    /// How far from the side edge the circle reaches at `height` above the screen's bottom,
+    /// including the ring. Content beside the controls insets by this much.
+    func reach(atHeight height: CGFloat) -> CGFloat {
+        let ring = radius + Self.ringAllowance
+        let dy = abs(height - center.y)
+        guard dy < ring else { return 0 }
+        return center.x + (ring * ring - dy * dy).squareRoot()
     }
 }
 
@@ -213,17 +193,18 @@ struct CornerStartStopButton: View {
         let status = session.captureStatus
         let appearance = CaptureStatusAppearance(status)
         let isRunning = session.store.isRunning
-        let side = metrics.frameSide
+        let size = metrics.frameSize
+        let glyph = metrics.glyphPosition(.leading)
 
         Button(action: action) {
             ZStack {
                 // Same colors as the Start/Stop button had before the redesign, in every
                 // theme: the theme's accent to start, red to stop.
-                CornerDisc(edge: .leading, radius: metrics.radius)
+                CornerCircle(edge: .leading, center: metrics.center, radius: metrics.radius)
                     .fill(isRunning ? Color.red : accent)
 
                 if appearance.ring != .none {
-                    CornerArc(edge: .leading, radius: metrics.ringRadius)
+                    CornerCircle(edge: .leading, center: metrics.center, radius: metrics.ringRadius)
                         .stroke(appearance.color(accent: accent), style: appearance.strokeStyle)
                 }
 
@@ -232,20 +213,20 @@ struct CornerStartStopButton: View {
                     .foregroundStyle(.white)
                     // A play triangle's visual weight sits left of its box; nudge it right.
                     .offset(x: isRunning ? 0 : 2)
-                    .position(x: metrics.glyphInset, y: side - metrics.glyphHeight)
+                    .position(glyph)
 
                 if appearance.showsBadge {
-                    // On the ring at 45°, where it can't collide with the glyph.
+                    // On the ring at 45°, up and to the right, clear of the glyph.
                     let offset = metrics.ringRadius * 0.7071
                     Image(systemName: "exclamationmark.circle.fill")
                         .font(.system(size: 17, weight: .bold))
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.black, .orange)
-                        .position(x: offset, y: side - offset)
+                        .position(x: glyph.x + offset, y: glyph.y - offset)
                 }
             }
-            .frame(width: side, height: side)
-            .contentShape(CornerDisc(edge: .leading, radius: metrics.ringRadius))
+            .frame(width: size.width, height: size.height)
+            .contentShape(CornerCircle(edge: .leading, center: metrics.center, radius: metrics.ringRadius))
             .animation(.easeOut(duration: 0.2), value: status)
         }
         .buttonStyle(CornerButtonStyle())
@@ -263,23 +244,23 @@ struct CornerClearButton: View {
 
     var body: some View {
         let isEmpty = session.store.finalizedChunks.isEmpty && session.store.volatileCaptions.isEmpty
-        let side = metrics.frameSide
+        let size = metrics.frameSize
 
         Button {
             session.clear()
         } label: {
             ZStack {
                 // Neutral, so it doesn't compete with Start/Stop or the status ring.
-                CornerDisc(edge: .trailing, radius: metrics.radius)
+                CornerCircle(edge: .trailing, center: metrics.center, radius: metrics.radius)
                     .fill(Color.primary.opacity(0.12))
 
                 Image(systemName: "trash")
                     .font(.system(size: 22, weight: .medium))
                     .foregroundStyle(.primary)
-                    .position(x: side - metrics.glyphInset, y: side - metrics.glyphHeight)
+                    .position(metrics.glyphPosition(.trailing))
             }
-            .frame(width: side, height: side)
-            .contentShape(CornerDisc(edge: .trailing, radius: metrics.radius))
+            .frame(width: size.width, height: size.height)
+            .contentShape(CornerCircle(edge: .trailing, center: metrics.center, radius: metrics.radius))
         }
         .buttonStyle(CornerButtonStyle())
         .disabled(isEmpty)
