@@ -42,6 +42,27 @@ final class SonioxRealtimeClientTests: XCTestCase {
         await client.cancel()
     }
 
+    /// A compressed stream's byte count says nothing about how much audio it carries, so
+    /// the processing lag has to come from the durations the sender reports.
+    func testCompressedAudioCountsReportedDurationNotBytes() async throws {
+        let transport = FakeWebSocketTransport()
+        let client = makeClient(transport: transport)
+        let stream = try await client.start()
+        var iterator = stream.makeAsyncIterator()
+
+        try await client.sendAudio(Data(repeating: 1, count: 47), audioDuration: .zero)
+        try await client.sendAudio(Data(repeating: 2, count: 5_000), audioDuration: .milliseconds(1_500))
+        await transport.enqueue(
+            .text(#"{"tokens":[],"final_audio_proc_ms":900,"total_audio_proc_ms":1200}"#)
+        )
+
+        let update = try transcriptUpdate(from: await iterator.next())
+        XCTAssertEqual(update.metrics.sentAudioMilliseconds, 1_500)
+        XCTAssertEqual(update.metrics.processingLagMilliseconds, 300)
+
+        await client.cancel()
+    }
+
     func testTokenEvolutionSeparatesStableAppendFromVolatileReplacement()
         async throws
     {

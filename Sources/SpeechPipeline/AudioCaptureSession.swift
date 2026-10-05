@@ -8,9 +8,13 @@ import CoreAudio
 
 public struct CapturedAudioFrame: @unchecked Sendable {
     public let buffer: AVAudioPCMBuffer
+    /// When the tap delivered the buffer: its last sample's capture time plus the device's
+    /// I/O latency. The origin for every age a provider measures from this audio.
+    public let capturedAt: ContinuousClock.Instant
 
-    public init(buffer: AVAudioPCMBuffer) {
+    public init(buffer: AVAudioPCMBuffer, capturedAt: ContinuousClock.Instant = .now) {
         self.buffer = buffer
+        self.capturedAt = capturedAt
     }
 }
 
@@ -246,6 +250,8 @@ private struct SharedAudioCaptureSink: @unchecked Sendable {
     let levelReporter: ServerAudioLevelReporter
 
     func handle(_ buffer: AVAudioPCMBuffer) {
+        // First, before any work on this thread can delay it.
+        let capturedAt = ContinuousClock.now
         // One measurement pass serves both the meter and telemetry; this runs on the
         // real-time audio thread, so the buffer is walked once.
         let measurement = AudioLevelMeter.measure(from: buffer)
@@ -265,7 +271,7 @@ private struct SharedAudioCaptureSink: @unchecked Sendable {
             return
         }
         let result = frameContinuation.yield(
-            CapturedAudioFrame(buffer: copied)
+            CapturedAudioFrame(buffer: copied, capturedAt: capturedAt)
         )
         if case .dropped = result {
             telemetry.record(

@@ -22,7 +22,9 @@ public actor SonioxRealtimeClient {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
-    private var sentAudioBytes = 0
+    /// Audio time sent, not bytes: for a compressed stream the two are unrelated, and the
+    /// processing lag compares this against Soniox's own millisecond watermarks.
+    private var sentAudioMicroseconds: Int64 = 0
     private var eventContinuation: AsyncThrowingStream<SonioxRealtimeEvent, any Error>.Continuation?
     private(set) var receiveTask: Task<Void, Never>?
     private var terminalError: SonioxRealtimeClientError?
@@ -107,7 +109,9 @@ public actor SonioxRealtimeClient {
         guard state == .connecting else { throw terminalError ?? .cancelled }
     }
 
-    public func sendAudio(_ pcmData: Data) async throws {
+    /// - Parameter audioDuration: how much audio `pcmData` carries. Needed for a compressed
+    ///   stream (zero for container headers); raw PCM derives it from the byte count.
+    public func sendAudio(_ pcmData: Data, audioDuration: Duration? = nil) async throws {
         guard state == .streaming else {
             throw SonioxRealtimeClientError.invalidState(
                 expected: State.streaming.rawValue,
@@ -120,7 +124,8 @@ public actor SonioxRealtimeClient {
 
         do {
             try await transport.sendBinary(pcmData)
-            sentAudioBytes += pcmData.count
+            sentAudioMicroseconds +=
+                audioDuration.map(\.wholeMicroseconds) ?? rawAudioMicroseconds(byteCount: pcmData.count)
         } catch {
             let clientError = mapError(error)
             await fail(with: clientError)
@@ -289,20 +294,17 @@ public actor SonioxRealtimeClient {
     private func processingMetrics(
         for response: SonioxWireResponse
     ) -> SonioxProcessingMetrics {
-        let bytesPerFrame = 2 * configuration.channelCount
-        let sentAudioMilliseconds: Int
-        if bytesPerFrame > 0 {
-            let sentFrames = sentAudioBytes / bytesPerFrame
-            sentAudioMilliseconds = sentFrames * 1_000 / configuration.sampleRate
-        } else {
-            sentAudioMilliseconds = 0
-        }
-
-        return SonioxProcessingMetrics(
-            sentAudioMilliseconds: sentAudioMilliseconds,
+        SonioxProcessingMetrics(
+            sentAudioMilliseconds: Int(sentAudioMicroseconds / 1_000),
             finalizedAudioMilliseconds: response.finalAudioProcessedMilliseconds,
             totalProcessedAudioMilliseconds: response.totalAudioProcessedMilliseconds
         )
+    }
+
+    private func rawAudioMicroseconds(byteCount: Int) -> Int64 {
+        let bytesPerSecond = 2 * configuration.channelCount * configuration.sampleRate
+        guard bytesPerSecond > 0 else { return 0 }
+        return Int64(byteCount) * 1_000_000 / Int64(bytesPerSecond)
     }
 
     private func fail(with error: SonioxRealtimeClientError) async {

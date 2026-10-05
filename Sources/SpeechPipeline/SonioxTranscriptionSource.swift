@@ -64,6 +64,30 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     /// Measured from the captured frames rather than the bytes they encode to, so it stays
     /// true for any wire encoding.
     private var audioDroppedWhileDisconnected: Duration = .zero
+
+    /// One per caption session, across reconnects. Every event this source records carries
+    /// it as `run_id`, so one session's evidence can be pulled out of a week of diagnostics.
+    public let runID = UUID()
+    /// Connections opened so far; the current one's number rides on each event as
+    /// `connection`.
+    private var connectionsOpened = 0
+    private var runStartedAt: ContinuousClock.Instant?
+    /// The current connection's audio, for turning Soniox's stream positions into ages.
+    private var timeline = SonioxStreamTimeline()
+    /// Fed to the encoder but not yet sent, because the encoder is holding a partial packet.
+    private var unsentAudioDuration: Duration = .zero
+    private var sendWindow = SonioxSendWindow()
+    private var sendWindowStartedAt = ContinuousClock.now
+    private var runSendTotals = SonioxSendWindow()
+    private var freshness = SonioxFreshness()
+    private var sourceFormat: String?
+    private var disconnectedSince: ContinuousClock.Instant?
+    private var disconnectedTotal: Duration = .zero
+    private var reconnects = 0
+    private var didReceiveFinished = false
+    /// Often enough to see a cellular uplink degrade within a session, rarely enough that a
+    /// three-hour meeting is about a thousand events.
+    static let sendWindowInterval: Duration = .seconds(10)
     private var sentenceAccumulator = SonioxSentenceAccumulator()
     /// Set while tearing down, so the cancellation we asked for is not reported as a
     /// provider failure. A cancellation arriving outside a stop is a real fault.
@@ -77,7 +101,6 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     private var stopStartedAt: ContinuousClock.Instant?
     var delay = AsyncDelay.continuous
     var reconnectPolicy = SonioxReconnectPolicy()
-    private static let audioSentReportInterval = 320_000
     private let gracefulShutdownTimeout: Duration
 
     /// Each connection gets a fresh transport from `makeTransport`. Reusing one across
@@ -158,6 +181,8 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         audioFrames: AsyncStream<CapturedAudioFrame>
     ) async throws {
         try await requireActiveStartup()
+        runStartedAt = .now
+        await record(category: "provider", name: "run_started", fields: runManifestFields())
         sentenceAccumulator = SonioxSentenceAccumulator()
         let client = makeClient()
         self.client = client
@@ -183,10 +208,46 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     /// Ogg headers for Opus, nothing for PCM. Runs before the connection accepts audio, so
     /// no encoded packet lands on a stream ahead of its header.
     private func openStream(on client: SonioxRealtimeClient) async throws {
+        connectionsOpened += 1
+        // Soniox times the new stream from zero.
+        timeline = SonioxStreamTimeline()
+        unsentAudioDuration = .zero
         let header = encoder.startStream()
         guard !header.isEmpty else { return }
-        try await client.sendAudio(header)
+        try await client.sendAudio(header, audioDuration: .zero)
         bytesSent += header.count
+        sendWindow.recordSend(bytes: header.count, send: .zero)
+    }
+
+    /// Stamps the run and connection on every event, so a reconnect's events can be told
+    /// from the connection before it.
+    private func record(
+        category: String,
+        name: String,
+        fields: [String: String] = [:]
+    ) async {
+        var fields = fields
+        fields["run_id"] = runID.uuidString
+        if connectionsOpened > 0 {
+            fields["connection"] = String(connectionsOpened)
+        }
+        await diagnostics.record(category: category, name: name, fields: fields)
+    }
+
+    /// Everything that decides what this run's numbers mean, recorded once up front.
+    private func runManifestFields() -> [String: String] {
+        encoder.diagnosticFields.merging([
+            "model": SonioxRealtimeConfiguration.defaultModel,
+            "encoding": encoder.encoding.rawValue,
+            "requested_encoding": requestedEncoding.rawValue,
+            "speaker_diarization": "true",
+            "endpoint_detection": "false",
+            "logging_mode": "operational",
+            "send_window_ms": String(Self.sendWindowInterval.wholeMicroseconds / 1_000),
+            "stale_threshold_ms": String(SonioxFreshness.staleThreshold.wholeMicroseconds / 1_000),
+            // What an age is measured from; see `SonioxStreamTimeline`.
+            "age_origin": "tap_delivery",
+        ]) { _, new in new }
     }
 
     private func recordConnected(reconnectAttempt: Int?) async {
@@ -200,7 +261,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         if let reconnectAttempt {
             fields["reconnect_attempt"] = String(reconnectAttempt)
         }
-        await diagnostics.record(category: "provider", name: "soniox_connected", fields: fields)
+        await record(category: "provider", name: "soniox_connected", fields: fields)
     }
 
     private func beginConnection(
@@ -227,6 +288,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 messagesOnConnection += 1
                 switch event {
                 case .transcript(let update):
+                    let freshnessFields = await observeFreshness(of: update)
                     let finalizedSegments =
                         sentenceAccumulator.consume(
                             finalizedTokens:
@@ -245,10 +307,12 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                             )
                         )
                     )
-                    await diagnostics.record(
+                    await record(
                         category: "transcript",
                         name: "soniox_update",
-                        fields: [
+                        fields: freshnessFields.merging([
+                            "sent_audio_ms":
+                                String(update.metrics.sentAudioMilliseconds),
                             "final_tokens":
                                 String(update.newlyFinalizedTokens.count),
                             "volatile_tokens":
@@ -270,9 +334,10 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                                 )
                                 .sorted()
                                 .joined(separator: ","),
-                        ]
+                        ]) { _, new in new }
                     )
                 case .finished(let completion):
+                    didReceiveFinished = true
                     let trailingSegments =
                         sentenceAccumulator.finish()
                     if !trailingSegments.isEmpty {
@@ -280,7 +345,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                             .finalizedSegments(trailingSegments)
                         )
                     }
-                    await diagnostics.record(
+                    await record(
                         category: "provider",
                         name: "soniox_finished",
                         fields: [
@@ -307,7 +372,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             }
         } catch {
             guard !isStopping else {
-                await diagnostics.record(
+                await record(
                     category: "provider",
                     name: "soniox_cancelled",
                     fields: ["message": error.localizedDescription]
@@ -324,14 +389,22 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     private func sendAudio(_ audioFrames: AsyncStream<CapturedAudioFrame>) async {
         for await frame in audioFrames {
             guard !Task.isCancelled else { break }
+            let dequeuedAt = ContinuousClock.now
+            if sourceFormat == nil {
+                sourceFormat =
+                    "\(Int(frame.buffer.format.sampleRate))Hz/\(frame.buffer.format.channelCount)ch"
+            }
             // Checked before encoding: an Opus packet encoded now would be dropped, leaving
             // a gap in the page sequence of the stream `openStream(on:)` restarts next.
             guard let client, reconnectTask == nil else {
                 audioDroppedWhileDisconnected += frame.duration
+                sendWindow.droppedDisconnected += frame.duration
+                await reportSendWindowIfDue()
                 continue
             }
             guard let data = encoder.encode(frame.buffer) else {
-                await diagnostics.record(
+                sendWindow.conversionFailures += 1
+                await record(
                     category: "audio",
                     name: "soniox_conversion_failed",
                     fields: [
@@ -343,26 +416,126 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 )
                 continue
             }
+            sendWindow.recordFrame(
+                audioDuration: frame.duration,
+                encode: dequeuedAt.duration(to: .now),
+                queueAge: frame.capturedAt.duration(to: dequeuedAt)
+            )
+            timeline.append(duration: frame.duration, capturedAt: frame.capturedAt)
+            unsentAudioDuration += frame.duration
             // The encoder is holding a partial packet.
             guard !data.isEmpty else { continue }
             do {
-                try await client.sendAudio(data)
-                let previous = bytesSent
+                let sendStartedAt = ContinuousClock.now
+                try await client.sendAudio(data, audioDuration: unsentAudioDuration)
+                unsentAudioDuration = .zero
                 bytesSent += data.count
-                // Crossing a boundary rather than landing on it: Opus pages vary in size.
-                if bytesSent / Self.audioSentReportInterval
-                    > previous / Self.audioSentReportInterval
-                {
-                    await diagnostics.record(
-                        category: "network",
-                        name: "soniox_audio_sent",
-                        fields: ["bytes": String(bytesSent)]
-                    )
-                }
+                sendWindow.recordSend(bytes: data.count, send: sendStartedAt.duration(to: .now))
             } catch {
                 guard !isStopping else { return }
                 audioDroppedWhileDisconnected += frame.duration
+                sendWindow.droppedDisconnected += frame.duration
             }
+            await reportSendWindowIfDue()
+        }
+    }
+
+    /// Logs the uplink's cost for the window just ended and folds it into the run's totals.
+    /// `force` closes a partial window at the end of a run.
+    private func reportSendWindowIfDue(force: Bool = false) async {
+        let now = ContinuousClock.now
+        let elapsed = sendWindowStartedAt.duration(to: now)
+        guard force || elapsed >= Self.sendWindowInterval else { return }
+        let window = sendWindow
+        sendWindow = SonioxSendWindow()
+        sendWindowStartedAt = now
+        runSendTotals.merge(window)
+        guard !window.isEmpty else { return }
+
+        var fields = window.fields()
+        fields["window_ms"] = String(elapsed.wholeMicroseconds / 1_000)
+        fields["bytes_total"] = String(bytesSent)
+        fields["source_format"] = sourceFormat ?? "unknown"
+        await record(category: "network", name: "audio_send_window", fields: fields)
+    }
+
+    /// Turns Soniox's stream positions into ages against capture time, and tracks stale
+    /// intervals. Returns the ages for this update's event.
+    ///
+    /// A position the timeline no longer holds reads "unavailable", never zero: a missing
+    /// measurement must not look like a perfect one.
+    private func observeFreshness(of update: SonioxTranscriptUpdate) async -> [String: String] {
+        let now = ContinuousClock.now
+        // The stop drain is not live captioning: audio has stopped, so every age grows until
+        // the stream closes. It is reported but kept out of the run's distributions.
+        let isLive = !isStopping
+        var fields: [String: String] = [:]
+        func age(at streamMilliseconds: Int?) -> Duration? {
+            streamMilliseconds
+                .flatMap { timeline.capturedAt(streamMilliseconds: $0) }
+                .map { $0.duration(to: now) }
+        }
+        func note(_ age: Duration?, as name: String, into histogram: inout LatencyHistogram) {
+            guard let age else {
+                fields[name] = "unavailable"
+                return
+            }
+            fields[name] = String(age.wholeMicroseconds / 1_000)
+            if isLive { histogram.record(age) }
+        }
+
+        let processedAge = age(at: update.metrics.totalProcessedAudioMilliseconds)
+        note(processedAge, as: "processed_age_ms", into: &freshness.processedAge)
+        note(
+            age(at: update.metrics.finalizedAudioMilliseconds),
+            as: "finalized_age_ms",
+            into: &freshness.finalizedAge
+        )
+        let visibleEnd = (update.newlyFinalizedTokens + update.nonFinalTokens)
+            .compactMap(\.endMilliseconds).max()
+        if visibleEnd != nil {
+            note(age(at: visibleEnd), as: "visible_token_age_ms", into: &freshness.visibleTokenAge)
+        }
+        let finalEnd = update.newlyFinalizedTokens.compactMap(\.endMilliseconds).max()
+        if finalEnd != nil {
+            note(age(at: finalEnd), as: "final_token_age_ms", into: &freshness.finalTokenAge)
+        }
+        // No later token can start before the finalized watermark.
+        timeline.discard(before: update.metrics.finalizedAudioMilliseconds)
+
+        if isLive, let processedAge,
+            let transition = freshness.observe(processedAge: processedAge, at: now)
+        {
+            await recordStale(transition, reason: "caught_up", currentAge: processedAge)
+        }
+        return fields
+    }
+
+    private func recordStale(
+        _ transition: SonioxFreshness.StaleTransition,
+        reason: String,
+        currentAge: Duration? = nil
+    ) async {
+        switch transition {
+        case .began:
+            await record(
+                category: "transcript",
+                name: "caption_stale_started",
+                fields: [
+                    "processed_age_ms": String((currentAge ?? .zero).wholeMicroseconds / 1_000),
+                    "threshold_ms": String(SonioxFreshness.staleThreshold.wholeMicroseconds / 1_000),
+                ]
+            )
+        case .ended(let duration, let worstAge):
+            await record(
+                category: "transcript",
+                name: "caption_stale_ended",
+                fields: [
+                    "duration_ms": String(duration.wholeMicroseconds / 1_000),
+                    "worst_age_ms": String(worstAge.wholeMicroseconds / 1_000),
+                    "reason": reason,
+                ]
+            )
         }
     }
 
@@ -374,7 +547,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 guard !Task.isCancelled else { return }
                 let started = clock.now
                 try await client.sendPing()
-                await diagnostics.record(
+                await record(
                     category: "network",
                     name: "websocket_ping",
                     fields: [
@@ -384,7 +557,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             } catch is CancellationError {
                 return
             } catch {
-                await diagnostics.record(
+                await record(
                     category: "network",
                     name: "websocket_ping_failed",
                     fields: [
@@ -448,7 +621,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
 
     private func reportFailure(_ error: any Error) async {
         publish(.failure(error.localizedDescription))
-        await diagnostics.record(
+        await record(
             category: "provider",
             name: "soniox_error",
             fields: [
@@ -495,6 +668,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         stallTask?.cancel()
         stallTask = nil
         audioDroppedWhileDisconnected = .zero
+        disconnectedSince = .now
         reconnectTask = Task { await reconnect() }
 
         // A new stream starts with no context, so words already final on this one would
@@ -506,7 +680,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         publish(.volatileSegments([]))
         publish(.connectionInterrupted(Self.connectionLostMessage))
 
-        await diagnostics.record(
+        await record(
             category: "provider",
             name: "soniox_connection_lost",
             fields: [
@@ -515,6 +689,10 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 "bytes_sent": String(bytesSent),
             ]
         )
+        // The outage is accounted as disconnected time from here, not as staleness.
+        if let transition = freshness.endStale(at: .now) {
+            await recordStale(transition, reason: "connection_lost")
+        }
         await lostClient?.cancel()
     }
 
@@ -534,7 +712,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 try await path.waitForSatisfiedPath()
                 attempt += 1
                 try await waitForBackoff(reconnectPolicy.backoff(beforeAttempt: attempt), path: path)
-                await diagnostics.record(
+                await record(
                     category: "provider",
                     name: "soniox_reconnect_attempt",
                     fields: ["attempt": String(attempt)]
@@ -549,7 +727,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                     await reportFailure(error)
                     return
                 }
-                await diagnostics.record(
+                await record(
                     category: "provider",
                     name: "soniox_reconnect_failed",
                     fields: [
@@ -610,13 +788,18 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
 
         sentenceAccumulator = SonioxSentenceAccumulator()
         beginConnection(client: client, events: events)
+        reconnects += 1
+        let outage = disconnectedSince.map { $0.duration(to: .now) } ?? .zero
+        disconnectedTotal += outage
+        disconnectedSince = nil
         await recordConnected(reconnectAttempt: attempt)
-        await diagnostics.record(
+        await record(
             category: "provider",
             name: "soniox_reconnected",
             fields: [
                 "attempt": String(attempt),
                 "dropped_audio_ms": String(audioDroppedWhileDisconnected.milliseconds),
+                "outage_ms": String(outage.milliseconds),
             ]
         )
     }
@@ -626,7 +809,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         reconnectTask.cancel()
         await client?.cancel()
         client = nil
-        await diagnostics.record(
+        await record(
             category: "provider",
             name: "soniox_reconnect_gave_up",
             fields: [
@@ -671,6 +854,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             await audioTask.value
         }
         audioTask = nil
+        await reportSendWindowIfDue(force: true)
         if let reconnectTask {
             await reconnectTask.value
         }
@@ -699,7 +883,46 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             await eventTask.value
         }
         eventTask = nil
+        await recordRunCompleted()
         delivery.finish()
+    }
+
+    /// The run's totals, so comparing encodings needs one event per session rather than a
+    /// replay of every window and update.
+    private func recordRunCompleted() async {
+        let now = ContinuousClock.now
+        if let transition = freshness.endStale(at: now) {
+            await recordStale(transition, reason: "stopped")
+        }
+        if let since = disconnectedSince {
+            disconnectedTotal += since.duration(to: now)
+            disconnectedSince = nil
+        }
+        let outcome: String
+        if didReceiveFinished {
+            outcome = "finished"
+        } else if didForceShutdown {
+            outcome = "finish_timeout"
+        } else {
+            outcome = "not_finished"
+        }
+
+        var fields = runSendTotals.fields()
+        fields.merge(freshness.fields()) { _, new in new }
+        fields.merge([
+            "duration_ms": String(
+                runStartedAt.map { $0.duration(to: now).milliseconds } ?? 0
+            ),
+            "encoding": encoder.encoding.rawValue,
+            "requested_encoding": requestedEncoding.rawValue,
+            "source_format": sourceFormat ?? "unknown",
+            "connections": String(connectionsOpened),
+            "reconnects": String(reconnects),
+            "disconnected_ms": String(disconnectedTotal.milliseconds),
+            "bytes_total": String(bytesSent),
+            "finish_outcome": outcome,
+        ]) { _, new in new }
+        await record(category: "provider", name: "run_completed", fields: fields)
     }
 
     /// Bounds the graceful shutdown.
@@ -720,7 +943,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             guard !Task.isCancelled else { return }
 
             didForceShutdown = true
-            await diagnostics.record(
+            await record(
                 category: "provider",
                 name: "soniox_finish_timeout",
                 fields: [
