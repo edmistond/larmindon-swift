@@ -111,8 +111,27 @@ public actor DiagnosticStore {
 
     private func migrate() throws {
         let version = try currentSchemaVersion()
-        guard version < 1 else { return }
+        if version < 1 {
+            try createVersion1()
+        }
+        if version < 2 {
+            // Older rows keep NULLs: their order is `id`, and they had no monotonic time.
+            // One transaction, so a kill partway can't leave some columns added and the
+            // version unbumped, which would fail every later launch on a duplicate column.
+            try execute(
+                """
+                BEGIN IMMEDIATE;
+                ALTER TABLE events ADD COLUMN seq INTEGER;
+                ALTER TABLE events ADD COLUMN mono_us INTEGER;
+                ALTER TABLE events ADD COLUMN schema_version INTEGER;
+                PRAGMA user_version = 2;
+                COMMIT;
+                """
+            )
+        }
+    }
 
+    private func createVersion1() throws {
         try execute(
             """
             CREATE TABLE IF NOT EXISTS sessions (
@@ -202,8 +221,9 @@ public actor DiagnosticStore {
         do {
             let statement = try prepare(
                 """
-                INSERT INTO events (ts, session_id, category, name, fields)
-                VALUES (?, ?, ?, ?, ?);
+                INSERT INTO events
+                    (ts, session_id, category, name, fields, seq, mono_us, schema_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
                 """
             )
             defer { sqlite3_finalize(statement) }
@@ -216,6 +236,9 @@ public actor DiagnosticStore {
                 bind(statement, 3, event.category)
                 bind(statement, 4, event.name)
                 bind(statement, 5, Self.encodeFields(event.fields))
+                sqlite3_bind_int64(statement, 6, Int64(event.sequence))
+                sqlite3_bind_int64(statement, 7, Int64(clamping: event.monotonicMicroseconds))
+                sqlite3_bind_int64(statement, 8, Int64(event.schemaVersion))
                 try step(statement)
             }
             try execute("COMMIT;")
@@ -284,7 +307,7 @@ public actor DiagnosticStore {
     public func recentEvents(limit: Int = 200) throws -> [DiagnosticEvent] {
         let statement = try prepare(
             """
-            SELECT ts, session_id, category, name, fields
+            SELECT ts, session_id, category, name, fields, seq, mono_us, schema_version
             FROM events ORDER BY id DESC LIMIT ?;
             """
         )
@@ -297,9 +320,15 @@ public actor DiagnosticStore {
                 DiagnosticEvent(
                     timestamp: Date(timeIntervalSince1970: sqlite3_column_double(statement, 0)),
                     sessionID: UUID(uuidString: text(statement, 1) ?? "") ?? UUID(),
+                    sequence: Int(sqlite3_column_int64(statement, 5)),
+                    monotonicMicroseconds: UInt64(
+                        clamping: sqlite3_column_int64(statement, 6)
+                    ),
                     category: text(statement, 2) ?? "",
                     name: text(statement, 3) ?? "",
-                    fields: Self.decodeFields(text(statement, 4))
+                    fields: Self.decodeFields(text(statement, 4)),
+                    // NULL reads as 0: a row written before versions were stored.
+                    schemaVersion: Int(sqlite3_column_int64(statement, 7))
                 )
             )
         }

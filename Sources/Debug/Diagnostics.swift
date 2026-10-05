@@ -7,8 +7,24 @@ import UIKit
 #endif
 
 public struct DiagnosticEvent: Codable, Equatable, Sendable {
+    /// Bumped when the envelope or a shared field's meaning changes, so a scorer reading
+    /// an old bundle knows which rules apply. 3 added `sequence` and
+    /// `monotonicMicroseconds`.
+    public static let currentSchemaVersion = 3
+
+    public let schemaVersion: Int
+    /// Wall-clock time, for lining events up with what a person remembers. Never subtract
+    /// two of these to measure a delay: the wall clock can step.
     public let timestamp: Date
+    /// One per app launch, not per caption session; a Soniox session's events carry their
+    /// own `run_id` field.
     public let sessionID: UUID
+    /// This process's order of recording, starting at 1. Gaps mean events were lost
+    /// between the recorder and the store. Ordering only within one process.
+    public let sequence: Int
+    /// Microseconds on the monotonic clock, which keeps counting while the device sleeps.
+    /// The value to subtract when measuring between events from the same launch.
+    public let monotonicMicroseconds: UInt64
     public let category: String
     public let name: String
     public let fields: [String: String]
@@ -16,15 +32,30 @@ public struct DiagnosticEvent: Codable, Equatable, Sendable {
     public init(
         timestamp: Date = Date(),
         sessionID: UUID,
+        sequence: Int = 0,
+        monotonicMicroseconds: UInt64 = DiagnosticClock.nowMicroseconds(),
         category: String,
         name: String,
-        fields: [String: String] = [:]
+        fields: [String: String] = [:],
+        schemaVersion: Int = DiagnosticEvent.currentSchemaVersion
     ) {
+        self.schemaVersion = schemaVersion
         self.timestamp = timestamp
         self.sessionID = sessionID
+        self.sequence = sequence
+        self.monotonicMicroseconds = monotonicMicroseconds
         self.category = category
         self.name = name
         self.fields = fields
+    }
+}
+
+/// The clock diagnostic durations are measured on.
+public enum DiagnosticClock {
+    /// `CLOCK_MONOTONIC_RAW` counts through sleep, so a delay that spans the phone locking
+    /// is measured in full, and unlike the wall clock it never steps.
+    public static func nowMicroseconds() -> UInt64 {
+        clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) / 1_000
     }
 }
 
@@ -46,6 +77,11 @@ public struct DiagnosticManifest: Codable, Equatable, Sendable {
     /// which counts only this session's in-memory ring buffer.
     public let storedEventCount: Int
     public let storedSessionCount: Int
+    /// Schema of each event line, so a bundle says which field rules it follows.
+    public let eventSchemaVersion: Int
+    /// Events this launch failed to write to the database. They are still in the
+    /// in-memory ring buffer if it hasn't wrapped, but missing from `diagnostics.sqlite`.
+    public let failedWriteEventCount: Int
 }
 
 public enum DiagnosticRedaction {
@@ -74,6 +110,10 @@ public actor DiagnosticRecorder {
     private var store: DiagnosticStore?
     private var pendingWrites: [DiagnosticEvent] = []
     private var flushTask: Task<Void, Never>?
+    private var nextSequence = 1
+    /// Counted outside the store so a store that keeps failing can still be reported: the
+    /// count rides on the next event that does get written, and in the export manifest.
+    private var failedWriteEventCount = 0
 
     /// One transaction per 50 events rather than per event: `soniox_update` alone fires
     /// about once a second, and a commit each time would be constant disk churn in the
@@ -94,10 +134,12 @@ public actor DiagnosticRecorder {
     ) {
         let event = DiagnosticEvent(
             sessionID: sessionID,
+            sequence: nextSequence,
             category: category,
             name: name,
             fields: fields
         )
+        nextSequence += 1
         events.append(event)
         if events.count > capacity {
             events.removeFirst(events.count - capacity)
@@ -224,9 +266,33 @@ public actor DiagnosticRecorder {
         do {
             try await store.append(batch)
         } catch {
+            failedWriteEventCount += batch.count
             logger.error(
                 "Diagnostics write failed: \(error.localizedDescription, privacy: .public)"
             )
+            // Recorded, not just logged, so the loss shows up in the database (once writes
+            // recover) and in the in-memory events of an export. Not flushed from here,
+            // which would retry in a loop against a store that is failing.
+            let event = DiagnosticEvent(
+                sessionID: sessionID,
+                sequence: nextSequence,
+                category: "diagnostics",
+                name: "events_dropped",
+                fields: [
+                    "reason": "store_write_failed",
+                    "dropped_events": String(batch.count),
+                    "dropped_events_total": String(failedWriteEventCount),
+                    "first_sequence": String(batch.first?.sequence ?? 0),
+                    "last_sequence": String(batch.last?.sequence ?? 0),
+                    "message": error.localizedDescription,
+                ]
+            )
+            nextSequence += 1
+            events.append(event)
+            if events.count > capacity {
+                events.removeFirst(events.count - capacity)
+            }
+            pendingWrites.append(event)
         }
     }
 
@@ -301,7 +367,7 @@ public actor DiagnosticRecorder {
         }
 
         let manifest = DiagnosticManifest(
-            formatVersion: 2,
+            formatVersion: 3,
             exportedAt: Date(),
             sessionID: sessionID,
             appVersion: Self.bundleValue("CFBundleShortVersionString"),
@@ -313,7 +379,9 @@ public actor DiagnosticRecorder {
             eventCount: snapshot.count,
             includesDatabase: includesDatabase,
             storedEventCount: storedEventCount,
-            storedSessionCount: storedSessionCount
+            storedSessionCount: storedSessionCount,
+            eventSchemaVersion: DiagnosticEvent.currentSchemaVersion,
+            failedWriteEventCount: failedWriteEventCount
         )
 
         let encoder = JSONEncoder()

@@ -1,3 +1,4 @@
+import SQLite3
 import XCTest
 @testable import LarmindonKit
 
@@ -61,6 +62,64 @@ final class DiagnosticStoreTests: XCTestCase {
         let count = try await reopened.eventCount()
         XCTAssertEqual(count, 2)
         XCTAssertEqual(events.map(\.name), ["second", "first"])
+    }
+
+    func testEnvelopeRoundTripsSequenceMonotonicTimeAndSchemaVersion() async throws {
+        let store = makeStore()
+        try await store.open()
+        try await store.append([
+            DiagnosticEvent(
+                sessionID: UUID(),
+                sequence: 42,
+                monotonicMicroseconds: 9_000_000_123,
+                category: "state",
+                name: "example"
+            )
+        ])
+
+        let events = try await store.recentEvents()
+        let stored = try XCTUnwrap(events.first)
+        XCTAssertEqual(stored.sequence, 42)
+        XCTAssertEqual(stored.monotonicMicroseconds, 9_000_000_123)
+        XCTAssertEqual(stored.schemaVersion, DiagnosticEvent.currentSchemaVersion)
+    }
+
+    /// A phone updated from a build with the version 1 schema keeps its week of events and
+    /// gains the envelope columns, rather than failing to open.
+    func testVersion1DatabaseMigratesAndKeepsItsRows() async throws {
+        let url = directory.appendingPathComponent("v1.sqlite")
+        var handle: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &handle), SQLITE_OK)
+        let v1 = """
+            CREATE TABLE sessions (session_id TEXT PRIMARY KEY, started_at REAL NOT NULL,
+                ended_at REAL, end_reason TEXT, app_version TEXT, app_build TEXT,
+                os_version TEXT, device_class TEXT);
+            CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,
+                session_id TEXT NOT NULL, category TEXT NOT NULL, name TEXT NOT NULL,
+                fields TEXT NOT NULL DEFAULT '{}');
+            INSERT INTO events (ts, session_id, category, name)
+                VALUES (\(Date().timeIntervalSince1970), '\(UUID().uuidString)', 'state', 'old');
+            PRAGMA user_version = 1;
+            """
+        XCTAssertEqual(sqlite3_exec(handle, v1, nil, nil, nil), SQLITE_OK)
+        sqlite3_close(handle)
+
+        let store = DiagnosticStore(url: url)
+        try await store.open()
+        try await store.append([
+            DiagnosticEvent(sessionID: UUID(), sequence: 1, category: "state", name: "new")
+        ])
+
+        let events = try await store.recentEvents()
+        XCTAssertEqual(events.map(\.name), ["new", "old"])
+        XCTAssertEqual(events.last?.schemaVersion, 0, "pre-migration rows have no version")
+        await store.close()
+
+        // Opening again must not try to add the columns a second time.
+        let reopened = DiagnosticStore(url: url)
+        try await reopened.open()
+        let count = try await reopened.eventCount()
+        XCTAssertEqual(count, 2)
     }
 
     func testFieldsRoundTripAsQueryableJSON() async throws {

@@ -27,6 +27,21 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertEqual(events.last?.fields["index"], "104")
     }
 
+    /// Sequence numbers are what let a scorer prove no event went missing between two it
+    /// has, and monotonic time is what it subtracts; neither may go backwards.
+    func testRecorderNumbersEventsAndStampsMonotonicTime() async {
+        let recorder = DiagnosticRecorder(capacity: 100)
+        for _ in 0..<3 {
+            await recorder.record(category: "test", name: "event")
+        }
+
+        let events = await recorder.snapshot()
+        XCTAssertEqual(events.map(\.sequence), [1, 2, 3])
+        XCTAssertEqual(events.map(\.monotonicMicroseconds), events.map(\.monotonicMicroseconds).sorted())
+        XCTAssertGreaterThan(events[0].monotonicMicroseconds, 0)
+        XCTAssertTrue(events.allSatisfy { $0.schemaVersion == DiagnosticEvent.currentSchemaVersion })
+    }
+
     func testExportOmitsTranscriptAndRawAudioByDefault() async throws {
         let recorder = DiagnosticRecorder(capacity: 100)
         await recorder.record(category: "test", name: "started")
