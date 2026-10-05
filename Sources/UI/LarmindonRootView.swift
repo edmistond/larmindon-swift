@@ -42,6 +42,8 @@ public struct LarmindonRootView: View {
     private var sonioxAudioEncodingRaw = SonioxAudioEncoding.defaultValue.rawValue
     @AppStorage(SonioxOpusBitRate.storageKey)
     private var sonioxOpusBitRateRaw = SonioxOpusBitRate.defaultValue.rawValue
+    @AppStorage(SonioxFLACSampleRate.storageKey)
+    private var sonioxFLACSampleRateRaw = SonioxFLACSampleRate.defaultValue.rawValue
 
     public init(session: CaptionSession) {
         ThemePreference.migrateLegacySettings()
@@ -318,7 +320,9 @@ public struct LarmindonRootView: View {
             sonioxAudioEncoding: SonioxAudioEncoding(rawValue: sonioxAudioEncodingRaw)
                 ?? SonioxAudioEncoding.defaultValue,
             sonioxOpusBitRate: SonioxOpusBitRate(rawValue: sonioxOpusBitRateRaw)
-                ?? SonioxOpusBitRate.defaultValue
+                ?? SonioxOpusBitRate.defaultValue,
+            sonioxFLACSampleRate: SonioxFLACSampleRate(rawValue: sonioxFLACSampleRateRaw)
+                ?? SonioxFLACSampleRate.defaultValue
         )
     }
 

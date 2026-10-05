@@ -121,12 +121,17 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         makePathObserver: @escaping @MainActor () -> any NetworkPathObserving = { NetworkPathMonitor() },
         gracefulShutdownTimeout: Duration = .seconds(5),
         audioEncoding: SonioxAudioEncoding = SonioxAudioEncoding.defaultValue,
-        opusBitRate: SonioxOpusBitRate = SonioxOpusBitRate.defaultValue
+        opusBitRate: SonioxOpusBitRate = SonioxOpusBitRate.defaultValue,
+        flacSampleRate: SonioxFLACSampleRate = SonioxFLACSampleRate.defaultValue
     ) {
         self.diagnostics = diagnostics
         self.gracefulShutdownTimeout = gracefulShutdownTimeout
         self.requestedEncoding = audioEncoding
-        let encoder = SonioxWireEncoders.make(for: audioEncoding, opusBitRate: opusBitRate)
+        let encoder = SonioxWireEncoders.make(
+            for: audioEncoding,
+            opusBitRate: opusBitRate,
+            flacSampleRate: flacSampleRate
+        )
         self.encoder = encoder
         // Every replacement connection reuses this, so it carries the encoder's format.
         self.configuration = SonioxRealtimeConfiguration(
@@ -151,7 +156,8 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         transport: (any WebSocketTransport)? = nil,
         gracefulShutdownTimeout: Duration = .seconds(5),
         audioEncoding: SonioxAudioEncoding = SonioxAudioEncoding.defaultValue,
-        opusBitRate: SonioxOpusBitRate = SonioxOpusBitRate.defaultValue
+        opusBitRate: SonioxOpusBitRate = SonioxOpusBitRate.defaultValue,
+        flacSampleRate: SonioxFLACSampleRate = SonioxFLACSampleRate.defaultValue
     ) {
         let makeTransport: @Sendable () -> any WebSocketTransport
         if let transport {
@@ -167,7 +173,8 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
             makeTransport: makeTransport,
             gracefulShutdownTimeout: gracefulShutdownTimeout,
             audioEncoding: audioEncoding,
-            opusBitRate: opusBitRate
+            opusBitRate: opusBitRate,
+            flacSampleRate: flacSampleRate
         )
     }
 
@@ -1185,15 +1192,21 @@ struct SonioxSpeakerSegmentFormatter {
 }
 
 final class SonioxPCMConverter: @unchecked Sendable {
-    private let outputFormat = AVAudioFormat(
-        commonFormat: .pcmFormatInt16,
-        sampleRate: 16_000,
-        channels: 1,
-        interleaved: false
-    )!
+    private let outputFormat: AVAudioFormat
     private let lock = NSLock()
     private var converter: AVAudioConverter?
     private var inputFormat: AVAudioFormat?
+
+    /// 16 kHz is what raw PCM is configured as; encoders that resample through this may
+    /// ask for another rate.
+    init(sampleRate: Double = 16_000) {
+        outputFormat = AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: sampleRate,
+            channels: 1,
+            interleaved: false
+        )!
+    }
 
     func convert(_ buffer: AVAudioPCMBuffer) -> Data? {
         guard let output = convertToBuffer(buffer),
@@ -1207,7 +1220,8 @@ final class SonioxPCMConverter: @unchecked Sendable {
         )
     }
 
-    /// Resamples to 16 kHz 16-bit mono without serializing, for encoders that consume PCM.
+    /// Resamples to 16-bit mono at the output rate without serializing, for encoders that
+    /// consume PCM.
     func convertToBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
         lock.lock()
         defer { lock.unlock() }
@@ -1256,7 +1270,11 @@ extension SonioxPCMConverter: SonioxWireEncoder {
     var audioFormat: SonioxAudioFormat { .pcmS16LittleEndian }
     var encoding: SonioxAudioEncoding { .pcm }
     var diagnosticFields: [String: String] {
-        ["audio_format": audioFormat.rawValue, "sample_rate": "16000", "channels": "1"]
+        [
+            "audio_format": audioFormat.rawValue,
+            "sample_rate": String(Int(outputFormat.sampleRate)),
+            "channels": "1",
+        ]
     }
 
     func startStream() -> Data {

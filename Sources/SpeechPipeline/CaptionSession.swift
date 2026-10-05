@@ -60,6 +60,7 @@ public final class CaptionSession {
     private var profanityFilterEnabled: Bool
     private var sonioxAudioEncoding: SonioxAudioEncoding
     private var sonioxOpusBitRate: SonioxOpusBitRate
+    private var sonioxFLACSampleRate: SonioxFLACSampleRate
     private var audioRouteRecoveryTask: Task<Void, Never>?
     /// Device the running capture was started against, so device-list churn can be told
     /// apart from the selected input actually changing.
@@ -124,6 +125,7 @@ public final class CaptionSession {
         profanityFilterEnabled: Bool = false,
         sonioxAudioEncoding: SonioxAudioEncoding = SonioxAudioEncoding.defaultValue,
         sonioxOpusBitRate: SonioxOpusBitRate = SonioxOpusBitRate.defaultValue,
+        sonioxFLACSampleRate: SonioxFLACSampleRate = SonioxFLACSampleRate.defaultValue,
         diagnostics: DiagnosticRecorder = .shared,
         credentialStore: any ProviderCredentialStore =
             KeychainProviderCredentialStore(),
@@ -150,6 +152,7 @@ public final class CaptionSession {
         self.profanityFilterEnabled = profanityFilterEnabled
         self.sonioxAudioEncoding = sonioxAudioEncoding
         self.sonioxOpusBitRate = sonioxOpusBitRate
+        self.sonioxFLACSampleRate = sonioxFLACSampleRate
 
         routeManager.onRouteChange = { [weak self] in
             guard let self else { return }
@@ -186,7 +189,8 @@ public final class CaptionSession {
         voiceProcessingEnabled: Bool? = nil,
         profanityFilterEnabled: Bool? = nil,
         sonioxAudioEncoding: SonioxAudioEncoding? = nil,
-        sonioxOpusBitRate: SonioxOpusBitRate? = nil
+        sonioxOpusBitRate: SonioxOpusBitRate? = nil,
+        sonioxFLACSampleRate: SonioxFLACSampleRate? = nil
     ) -> Bool {
         guard canStartIfIdle else { return false }
         start(
@@ -195,7 +199,8 @@ public final class CaptionSession {
             voiceProcessingEnabled: voiceProcessingEnabled,
             profanityFilterEnabled: profanityFilterEnabled,
             sonioxAudioEncoding: sonioxAudioEncoding,
-            sonioxOpusBitRate: sonioxOpusBitRate)
+            sonioxOpusBitRate: sonioxOpusBitRate,
+            sonioxFLACSampleRate: sonioxFLACSampleRate)
         return true
     }
 
@@ -207,7 +212,8 @@ public final class CaptionSession {
         voiceProcessingEnabled: Bool? = nil,
         profanityFilterEnabled: Bool? = nil,
         sonioxAudioEncoding: SonioxAudioEncoding? = nil,
-        sonioxOpusBitRate: SonioxOpusBitRate? = nil
+        sonioxOpusBitRate: SonioxOpusBitRate? = nil,
+        sonioxFLACSampleRate: SonioxFLACSampleRate? = nil
     ) {
         let sourceKind = kind ?? selectedSourceKind
         let requestedMode = mode ?? self.requestedMode
@@ -230,6 +236,9 @@ public final class CaptionSession {
         }
         if let sonioxOpusBitRate {
             self.sonioxOpusBitRate = sonioxOpusBitRate
+        }
+        if let sonioxFLACSampleRate {
+            self.sonioxFLACSampleRate = sonioxFLACSampleRate
         }
 
         #if os(iOS)
@@ -736,7 +745,8 @@ public final class CaptionSession {
                     apiKey: key,
                     diagnostics: diagnostics,
                     audioEncoding: sonioxAudioEncoding,
-                    opusBitRate: sonioxOpusBitRate
+                    opusBitRate: sonioxOpusBitRate,
+                    flacSampleRate: sonioxFLACSampleRate
                 )
             }
         }

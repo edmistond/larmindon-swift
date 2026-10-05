@@ -24,17 +24,20 @@ protocol SonioxWireEncoder: AnyObject, Sendable {
 }
 
 enum SonioxWireEncoders {
-    /// Falls back to PCM if the platform's Opus encoder can't be created, so a missing codec
+    /// Falls back to PCM if the platform's encoder can't be created, so a missing codec
     /// costs bandwidth rather than captions.
     static func make(
         for encoding: SonioxAudioEncoding,
-        opusBitRate: SonioxOpusBitRate = SonioxOpusBitRate.defaultValue
+        opusBitRate: SonioxOpusBitRate = SonioxOpusBitRate.defaultValue,
+        flacSampleRate: SonioxFLACSampleRate = SonioxFLACSampleRate.defaultValue
     ) -> any SonioxWireEncoder {
         switch encoding {
         case .pcm:
             return SonioxPCMConverter()
         case .opus:
             return SonioxOpusEncoder(bitRate: opusBitRate) ?? SonioxPCMConverter()
+        case .flac:
+            return SonioxFLACEncoder(sampleRate: flacSampleRate) ?? SonioxPCMConverter()
         }
     }
 }
@@ -193,6 +196,176 @@ final class SonioxOpusEncoder: SonioxWireEncoder, @unchecked Sendable {
             inputSampleRate: UInt32(sampleRate),
             preSkip: UInt16(clamping: leadingFrames)
         )
+    }
+}
+
+/// Lossless FLAC as a native FLAC stream: the `fLaC` marker and a STREAMINFO block once per
+/// connection, then each encoded frame as soon as it exists.
+///
+/// Every sample Soniox decodes is identical to what PCM would have sent at the same rate,
+/// so any difference in recognition comes from the sample rate or from the transport, never
+/// the codec. Apple's encoder at 20 ms blocks compressed synthesized speech to 0.60 of PCM
+/// at 16 kHz and 0.57 at 24 kHz, slightly better than libFLAC `-8` at the same block size;
+/// larger blocks saved under 2% more while adding latency. Real microphone audio with room
+/// noise compresses less, which `audio_send_window` reports.
+///
+/// The stream declares an unknown length and no MD5, which FLAC allows for streams and
+/// libFLAC decodes as is. Apple's encoder releases a block only once the next one has
+/// filled, so 20–40 ms of audio waits in it; 10 ms blocks would halve that for slightly
+/// worse compression. A stop discards what it still holds, as with Opus.
+final class SonioxFLACEncoder: SonioxWireEncoder, @unchecked Sendable {
+    /// 20 ms, matching Opus's packet length so the two arms add the same encoder delay.
+    private static let blockDuration = 0.020
+    private static let bitsPerSample: UInt8 = 16
+
+    let audioFormat = SonioxAudioFormat.auto
+    let encoding = SonioxAudioEncoding.flac
+    let sampleRate: SonioxFLACSampleRate
+
+    private let resampler: SonioxPCMConverter
+    private let pcmFormat: AVAudioFormat
+    private let flacFormat: AVAudioFormat
+    private let framesPerBlock: UInt32
+    private let lock = NSLock()
+    private var converter: AVAudioConverter
+
+    init?(sampleRate: SonioxFLACSampleRate = SonioxFLACSampleRate.defaultValue) {
+        self.sampleRate = sampleRate
+        let rate = Double(sampleRate.rawValue)
+        let framesPerBlock = UInt32(rate * Self.blockDuration)
+        var description = AudioStreamBasicDescription(
+            mSampleRate: rate,
+            mFormatID: kAudioFormatFLAC,
+            mFormatFlags: kAppleLosslessFormatFlag_16BitSourceData,
+            mBytesPerPacket: 0,
+            mFramesPerPacket: framesPerBlock,
+            mBytesPerFrame: 0,
+            mChannelsPerFrame: 1,
+            mBitsPerChannel: 0,
+            mReserved: 0
+        )
+        guard
+            let pcmFormat = AVAudioFormat(
+                commonFormat: .pcmFormatInt16,
+                sampleRate: rate,
+                channels: 1,
+                interleaved: false
+            ),
+            let flacFormat = AVAudioFormat(streamDescription: &description),
+            let converter = AVAudioConverter(from: pcmFormat, to: flacFormat)
+        else {
+            return nil
+        }
+        self.resampler = SonioxPCMConverter(sampleRate: rate)
+        self.pcmFormat = pcmFormat
+        self.flacFormat = flacFormat
+        self.framesPerBlock = framesPerBlock
+        self.converter = converter
+    }
+
+    var diagnosticFields: [String: String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return [
+            "audio_format": audioFormat.rawValue,
+            "codec": "flac",
+            "container": "native",
+            "sample_rate": String(sampleRate.rawValue),
+            "channels": "1",
+            "bits_per_sample": String(Self.bitsPerSample),
+            // What the converter settled on, not what was asked for.
+            "block_frames": String(converter.outputFormat.streamDescription.pointee.mFramesPerPacket),
+        ]
+    }
+
+    func startStream() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        // A fresh converter drops any partial block from the previous connection and
+        // restarts frame numbering, which a decoder expects to begin at zero.
+        if let fresh = AVAudioConverter(from: pcmFormat, to: flacFormat) {
+            converter = fresh
+        } else {
+            converter.reset()
+        }
+        return Self.streamHeader(
+            sampleRate: UInt32(sampleRate.rawValue),
+            channelCount: 1,
+            bitsPerSample: Self.bitsPerSample,
+            blockSize: UInt16(framesPerBlock)
+        )
+    }
+
+    func encode(_ buffer: AVAudioPCMBuffer) -> Data? {
+        guard let pcm = resampler.convertToBuffer(buffer) else { return nil }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        // A maximum-size capture buffer (2048 frames at 48 kHz) is about two blocks; the
+        // loop below drains anything beyond capacity regardless.
+        let inputProvider = SonioxOpusInputProvider(buffer: pcm)
+        var encoded = Data()
+        while true {
+            let output = AVAudioCompressedBuffer(
+                format: flacFormat,
+                packetCapacity: 8,
+                maximumPacketSize: max(converter.maximumOutputPacketSize, 1)
+            )
+            var conversionError: NSError?
+            let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
+                inputProvider.nextBuffer(inputStatus: inputStatus)
+            }
+            guard status != .error else { return nil }
+            if let descriptions = output.packetDescriptions {
+                for index in 0..<Int(output.packetCount) {
+                    let packet = descriptions[index]
+                    encoded.append(
+                        output.data.advanced(by: Int(packet.mStartOffset))
+                            .assumingMemoryBound(to: UInt8.self),
+                        count: Int(packet.mDataByteSize)
+                    )
+                }
+            }
+            // `.haveData` means the output filled before the input ran out.
+            guard status == .haveData else { break }
+        }
+        return encoded
+    }
+
+    /// `fLaC` and a STREAMINFO block marked as the last metadata block. Built here rather
+    /// than taken from the converter's magic cookie, whose layout (an MP4 `dfLa` box) is
+    /// Apple's to change.
+    static func streamHeader(
+        sampleRate: UInt32,
+        channelCount: UInt8,
+        bitsPerSample: UInt8,
+        blockSize: UInt16
+    ) -> Data {
+        var header = Data("fLaC".utf8)
+        // Last-metadata-block flag set, type 0 (STREAMINFO), 34-byte body.
+        header.append(contentsOf: [0x80, 0x00, 0x00, 0x22])
+        appendBigEndian(UInt64(blockSize), bytes: 2, to: &header)
+        appendBigEndian(UInt64(blockSize), bytes: 2, to: &header)
+        // Minimum and maximum frame size: 0, unknown.
+        appendBigEndian(0, bytes: 3, to: &header)
+        appendBigEndian(0, bytes: 3, to: &header)
+        // 20-bit sample rate, 3-bit channels - 1, 5-bit bits per sample - 1, 36-bit total
+        // samples (0, unknown for a live stream).
+        let packed =
+            UInt64(sampleRate) << 44
+            | UInt64(channelCount - 1) << 41
+            | UInt64(bitsPerSample - 1) << 36
+        appendBigEndian(packed, bytes: 8, to: &header)
+        // MD5 of the decoded audio: all zero means not computed.
+        header.append(Data(count: 16))
+        return header
+    }
+
+    private static func appendBigEndian(_ value: UInt64, bytes: Int, to data: inout Data) {
+        for index in stride(from: bytes - 1, through: 0, by: -1) {
+            data.append(UInt8(truncatingIfNeeded: value >> (8 * index)))
+        }
     }
 }
 

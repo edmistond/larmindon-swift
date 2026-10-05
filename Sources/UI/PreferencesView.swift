@@ -20,6 +20,8 @@ public struct PreferencesView: View {
     private var sonioxAudioEncodingRaw = SonioxAudioEncoding.defaultValue.rawValue
     @AppStorage(SonioxOpusBitRate.storageKey)
     private var sonioxOpusBitRateRaw = SonioxOpusBitRate.defaultValue.rawValue
+    @AppStorage(SonioxFLACSampleRate.storageKey)
+    private var sonioxFLACSampleRateRaw = SonioxFLACSampleRate.defaultValue.rawValue
     @AppStorage(TranscriptionPreference.activeServerProviderStorageKey)
     private var activeServerProviderRaw = ServerProviderID.soniox.rawValue
 
@@ -127,8 +129,15 @@ public struct PreferencesView: View {
                         }
                     }
                 }
+                if sonioxAudioEncodingRaw == SonioxAudioEncoding.flac.rawValue {
+                    Picker("FLAC sample rate", selection: $sonioxFLACSampleRateRaw) {
+                        ForEach(SonioxFLACSampleRate.allCases) { rate in
+                            Text(rate.title).tag(rate.rawValue)
+                        }
+                    }
+                }
                 Text(
-                    "Opus sends a fraction of the data, which matters on cellular. Higher quality keeps more speech detail if captions are less accurate. Takes effect the next time captioning starts."
+                    "Opus sends a fraction of the data, which matters on cellular. Higher quality keeps more speech detail if captions are less accurate. FLAC sends exactly the uncompressed audio in less data; 24 kHz keeps more high-pitched detail. Takes effect the next time captioning starts."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)

@@ -388,6 +388,9 @@ public enum SonioxAudioEncoding: String, CaseIterable, Identifiable, Sendable {
     case pcm
     /// Opus in an Ogg stream at `SonioxOpusBitRate`, about 4–11 KB/s including page framing.
     case opus
+    /// Lossless FLAC at `SonioxFLACSampleRate`: the same samples as PCM, in roughly 60% of
+    /// the bytes for speech (measured 0.6 at both rates; noise compresses worse).
+    case flac
 
     public static let storageKey = "sonioxAudioEncoding"
     public static let defaultValue = SonioxAudioEncoding.pcm
@@ -398,6 +401,29 @@ public enum SonioxAudioEncoding: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .pcm: return "Uncompressed (about 32 KB/s)"
         case .opus: return "Opus (compressed)"
+        case .flac: return "FLAC (lossless, about 60% of uncompressed)"
+        }
+    }
+}
+
+/// Sample rate for FLAC upload. 16 kHz carries exactly what uncompressed PCM does, so it
+/// isolates the effect of the smaller upload. 24 kHz keeps speech detail between 8 and 12
+/// kHz that 16 kHz discards, still in fewer bytes than 16 kHz PCM, to test whether that
+/// detail helps recognition. It adds nothing when the input itself runs at 16 kHz, such as
+/// a Bluetooth headset microphone; `run_started` records the capture format to check.
+public enum SonioxFLACSampleRate: Int, CaseIterable, Identifiable, Sendable {
+    case hz16000 = 16_000
+    case hz24000 = 24_000
+
+    public static let storageKey = "sonioxFLACSampleRate"
+    public static let defaultValue = SonioxFLACSampleRate.hz16000
+
+    public var id: Int { rawValue }
+
+    public var title: String {
+        switch self {
+        case .hz16000: return "16 kHz (about 19 KB/s)"
+        case .hz24000: return "24 kHz (about 28 KB/s)"
         }
     }
 }
