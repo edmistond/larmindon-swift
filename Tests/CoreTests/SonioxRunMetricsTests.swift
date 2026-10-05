@@ -61,10 +61,11 @@ final class SonioxRunMetricsTests: XCTestCase {
         }
 
         XCTAssertEqual(histogram.quantileMilliseconds(0.5), 20)
-        XCTAssertEqual(histogram.quantileMilliseconds(0.8), 50)
+        XCTAssertEqual(histogram.quantileMilliseconds(0.8), 40)
         XCTAssertEqual(histogram.quantileMilliseconds(1.0), 400, "clamped to the largest value seen")
         XCTAssertEqual(histogram.maximumMilliseconds, 400)
-        XCTAssertTrue(histogram.bucketDescription.hasPrefix("le10:1,le20:2,le50:1,"))
+        XCTAssertEqual(histogram.fields(prefix: "x")["x_mean_ms"], "95.0")
+        XCTAssertTrue(histogram.bucketDescription.hasPrefix("le5:1,le10:0,le20:2,le30:0,le40:1,"))
     }
 
     func testEmptyHistogramReportsACountRatherThanZeroLatency() {
@@ -177,6 +178,46 @@ final class SonioxRunInstrumentationTests: XCTestCase {
         XCTAssertEqual(completed.fields["bytes_total"], "320")
         XCTAssertEqual(completed.fields["visible_token_age_count"], "1")
         XCTAssertEqual(completed.fields["source_format"], "48000Hz/1ch")
+    }
+
+    /// The delay each encoding adds before audio leaves the phone, measured the same way for
+    /// all three: PCM none, Opus a packet plus lookahead, FLAC up to two blocks.
+    func testEncoderHoldIsReportedForEachEncoding() async throws {
+        var means: [SonioxAudioEncoding: Double] = [:]
+        for encoding in SonioxAudioEncoding.allCases {
+            let transport = FakeWebSocketTransport()
+            let diagnostics = DiagnosticRecorder(capacity: 200)
+            let source = SonioxTranscriptionSource(
+                apiKey: "test-key",
+                diagnostics: diagnostics,
+                transport: transport,
+                gracefulShutdownTimeout: .seconds(5),
+                audioEncoding: encoding
+            )
+            let (frames, frameContinuation) = AsyncStream<CapturedAudioFrame>.makeStream()
+            let consumer = Task { for await _ in source.results {} }
+            try await source.start(audioFrames: frames)
+            for _ in 0..<100 {
+                frameContinuation.yield(CapturedAudioFrame(buffer: try makeTenMillisecondBuffer()))
+            }
+            frameContinuation.finish()
+            // Answer the finish handshake, so every frame is encoded before the run ends.
+            let stop = Task { await source.stop() }
+            await transport.waitForTextMessageCount(2)
+            await transport.enqueue(.text("{\"tokens\":[],\"finished\":true}"))
+            await stop.value
+            consumer.cancel()
+
+            let events = await diagnostics.snapshot()
+            let completed = try XCTUnwrap(events.last { $0.name == "run_completed" })
+            XCTAssertEqual(completed.fields["encoder_hold_count"], "100", "\(encoding)")
+            means[encoding] = Double(try XCTUnwrap(completed.fields["encoder_hold_mean_ms"]))
+        }
+
+        XCTAssertEqual(try XCTUnwrap(means[.pcm]), 0, accuracy: 0.5)
+        // 10 ms buffers: Opus holds 6.5 + 0 or 10 ms, FLAC 20 or 30 ms after each.
+        XCTAssertEqual(try XCTUnwrap(means[.opus]), 11.5, accuracy: 1.5)
+        XCTAssertEqual(try XCTUnwrap(means[.flac]), 25, accuracy: 1.5)
     }
 
     private func waitForEvent(

@@ -21,6 +21,11 @@ protocol SonioxWireEncoder: AnyObject, Sendable {
     /// Bytes for one captured buffer. `nil` means conversion failed; empty `Data` means the
     /// encoder is holding the audio until it has a full packet.
     func encode(_ buffer: AVAudioPCMBuffer) -> Data?
+
+    /// Audio a decoder gets from everything `encode` has returned since `startStream()`,
+    /// after trimming any codec lookahead. Audio fed minus this is what the encoder is
+    /// holding, which delays every caption by that much.
+    var emittedDuration: Duration { get }
 }
 
 enum SonioxWireEncoders {
@@ -68,6 +73,7 @@ final class SonioxOpusEncoder: SonioxWireEncoder, @unchecked Sendable {
     private let lock = NSLock()
     private var converter: AVAudioConverter
     private var muxer: OggOpusMuxer
+    private var packetsEmitted = 0
     let bitRate: SonioxOpusBitRate
 
     init?(bitRate: SonioxOpusBitRate = SonioxOpusBitRate.defaultValue) {
@@ -115,12 +121,26 @@ final class SonioxOpusEncoder: SonioxWireEncoder, @unchecked Sendable {
             "bit_rate_strategy": converter.bitRateStrategy ?? "unset",
             "sample_rate": String(Int(Self.sampleRate)),
             "channels": "1",
+            "packet_frames": String(Self.framesPerPacket),
+            // Lookahead a decoder trims from the start: delay added to every caption.
+            "pre_skip_frames": String(converter.primeInfo.leadingFrames),
         ]
+    }
+
+    /// Packets times 20 ms, less the lookahead a decoder trims. Measured on Apple's encoder:
+    /// a packet is released as soon as 320 frames are in, so with the 104-frame lookahead
+    /// (6.5 ms) it holds 6.5–26.5 ms of audio.
+    var emittedDuration: Duration {
+        lock.lock()
+        defer { lock.unlock() }
+        let frames = packetsEmitted * Int(Self.framesPerPacket) - Int(converter.primeInfo.leadingFrames)
+        return .seconds(Double(max(0, frames)) / Self.sampleRate)
     }
 
     func startStream() -> Data {
         lock.lock()
         defer { lock.unlock() }
+        packetsEmitted = 0
         // A fresh converter drops any partial packet from the previous connection, and a
         // fresh muxer restarts page numbering and granule positions under a new serial.
         if let fresh = Self.makeConverter(from: pcmFormat, to: opusFormat, bitRate: bitRate) {
@@ -155,6 +175,7 @@ final class SonioxOpusEncoder: SonioxWireEncoder, @unchecked Sendable {
             return Data()
         }
 
+        packetsEmitted += Int(output.packetCount)
         var packets: [Data] = []
         packets.reserveCapacity(Int(output.packetCount))
         for index in 0..<Int(output.packetCount) {
@@ -228,6 +249,7 @@ final class SonioxFLACEncoder: SonioxWireEncoder, @unchecked Sendable {
     private let framesPerBlock: UInt32
     private let lock = NSLock()
     private var converter: AVAudioConverter
+    private var blocksEmitted = 0
 
     init?(sampleRate: SonioxFLACSampleRate = SonioxFLACSampleRate.defaultValue) {
         self.sampleRate = sampleRate
@@ -278,9 +300,17 @@ final class SonioxFLACEncoder: SonioxWireEncoder, @unchecked Sendable {
         ]
     }
 
+    /// FLAC has no lookahead, so this is whole blocks.
+    var emittedDuration: Duration {
+        lock.lock()
+        defer { lock.unlock() }
+        return .seconds(Double(blocksEmitted * Int(framesPerBlock)) / Double(sampleRate.rawValue))
+    }
+
     func startStream() -> Data {
         lock.lock()
         defer { lock.unlock() }
+        blocksEmitted = 0
         // A fresh converter drops any partial block from the previous connection and
         // restarts frame numbering, which a decoder expects to begin at zero.
         if let fresh = AVAudioConverter(from: pcmFormat, to: flacFormat) {
@@ -317,6 +347,7 @@ final class SonioxFLACEncoder: SonioxWireEncoder, @unchecked Sendable {
                 inputProvider.nextBuffer(inputStatus: inputStatus)
             }
             guard status != .error else { return nil }
+            blocksEmitted += Int(output.packetCount)
             if let descriptions = output.packetDescriptions {
                 for index in 0..<Int(output.packetCount) {
                     let packet = descriptions[index]

@@ -74,8 +74,8 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
     private var runStartedAt: ContinuousClock.Instant?
     /// The current connection's audio, for turning Soniox's stream positions into ages.
     private var timeline = SonioxStreamTimeline()
-    /// Fed to the encoder but not yet sent, because the encoder is holding a partial packet.
-    private var unsentAudioDuration: Duration = .zero
+    /// The encoder's emitted audio already reported to the client on this connection.
+    private var emittedAudioSent: Duration = .zero
     private var sendWindow = SonioxSendWindow()
     private var sendWindowStartedAt = ContinuousClock.now
     private var runSendTotals = SonioxSendWindow()
@@ -218,7 +218,7 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
         connectionsOpened += 1
         // Soniox times the new stream from zero.
         timeline = SonioxStreamTimeline()
-        unsentAudioDuration = .zero
+        emittedAudioSent = .zero
         let header = encoder.startStream()
         guard !header.isEmpty else { return }
         try await client.sendAudio(header, audioDuration: .zero)
@@ -423,19 +423,22 @@ public final class SonioxTranscriptionSource: BackgroundFinishingTranscriptionSo
                 )
                 continue
             }
+            let encodeDuration = dequeuedAt.duration(to: .now)
+            timeline.append(duration: frame.duration, capturedAt: frame.capturedAt)
+            let emitted = encoder.emittedDuration
             sendWindow.recordFrame(
                 audioDuration: frame.duration,
-                encode: dequeuedAt.duration(to: .now),
-                queueAge: frame.capturedAt.duration(to: dequeuedAt)
+                encode: encodeDuration,
+                queueAge: frame.capturedAt.duration(to: dequeuedAt),
+                // Audio fed but not yet out of the encoder: every caption waits this long.
+                encoderHold: .microseconds(timeline.fedMicroseconds) - emitted
             )
-            timeline.append(duration: frame.duration, capturedAt: frame.capturedAt)
-            unsentAudioDuration += frame.duration
             // The encoder is holding a partial packet.
             guard !data.isEmpty else { continue }
             do {
                 let sendStartedAt = ContinuousClock.now
-                try await client.sendAudio(data, audioDuration: unsentAudioDuration)
-                unsentAudioDuration = .zero
+                try await client.sendAudio(data, audioDuration: emitted - emittedAudioSent)
+                emittedAudioSent = emitted
                 bytesSent += data.count
                 sendWindow.recordSend(bytes: data.count, send: sendStartedAt.duration(to: .now))
             } catch {
@@ -1196,6 +1199,8 @@ final class SonioxPCMConverter: @unchecked Sendable {
     private let lock = NSLock()
     private var converter: AVAudioConverter?
     private var inputFormat: AVAudioFormat?
+    /// Frames `encode` has returned since `startStream`, for `emittedDuration`.
+    private var framesEmitted = 0
 
     /// 16 kHz is what raw PCM is configured as; encoders that resample through this may
     /// ask for another rate.
@@ -1278,11 +1283,26 @@ extension SonioxPCMConverter: SonioxWireEncoder {
     }
 
     func startStream() -> Data {
-        Data()
+        lock.lock()
+        framesEmitted = 0
+        lock.unlock()
+        return Data()
     }
 
     func encode(_ buffer: AVAudioPCMBuffer) -> Data? {
-        convert(buffer)
+        guard let data = convert(buffer) else { return nil }
+        lock.lock()
+        framesEmitted += data.count / MemoryLayout<Int16>.size
+        lock.unlock()
+        return data
+    }
+
+    /// The resampler releases output as input arrives (its filter delay of about 1 ms shifts
+    /// the samples rather than withholding them), so this tracks what was fed.
+    var emittedDuration: Duration {
+        lock.lock()
+        defer { lock.unlock() }
+        return .seconds(Double(framesEmitted) / outputFormat.sampleRate)
     }
 }
 

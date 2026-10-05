@@ -90,18 +90,30 @@ struct SonioxStreamTimeline {
 /// averaging percentiles. Quantiles are reported as the upper bound of the bucket they fall
 /// in, clamped to the largest value seen.
 struct LatencyHistogram: Equatable {
-    static let boundsMilliseconds = [10, 20, 50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 30_000]
+    /// Fine below 50 ms, where encoder holds (Opus 6.5–26.5 ms, FLAC 20–40 ms) differ.
+    static let boundsMilliseconds = [
+        5, 10, 20, 30, 40, 50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 30_000,
+    ]
 
     /// One more than the bounds: the last bucket holds everything above 30 s.
     private(set) var counts = [Int](repeating: 0, count: boundsMilliseconds.count + 1)
     private(set) var count = 0
     private(set) var maximumMilliseconds = 0
+    /// Exact, unlike the buckets, so a mean separates values within one bucket.
+    private(set) var totalMicroseconds: Int64 = 0
 
     mutating func record(_ duration: Duration) {
-        record(milliseconds: Int(max(0, duration.wholeMicroseconds) / 1_000))
+        let microseconds = max(0, duration.wholeMicroseconds)
+        totalMicroseconds += microseconds
+        recordBucket(milliseconds: Int(microseconds / 1_000))
     }
 
     mutating func record(milliseconds: Int) {
+        totalMicroseconds += Int64(max(0, milliseconds)) * 1_000
+        recordBucket(milliseconds: milliseconds)
+    }
+
+    private mutating func recordBucket(milliseconds: Int) {
         let value = max(0, milliseconds)
         let index =
             Self.boundsMilliseconds.firstIndex { value <= $0 } ?? Self.boundsMilliseconds.count
@@ -116,6 +128,7 @@ struct LatencyHistogram: Equatable {
         }
         count += other.count
         maximumMilliseconds = max(maximumMilliseconds, other.maximumMilliseconds)
+        totalMicroseconds += other.totalMicroseconds
     }
 
     func quantileMilliseconds(_ quantile: Double) -> Int? {
@@ -143,6 +156,7 @@ struct LatencyHistogram: Equatable {
         guard count > 0 else { return ["\(prefix)_count": "0"] }
         return [
             "\(prefix)_count": String(count),
+            "\(prefix)_mean_ms": String(format: "%.1f", Double(totalMicroseconds) / Double(count) / 1_000),
             "\(prefix)_p50_ms": String(quantileMilliseconds(0.5) ?? 0),
             "\(prefix)_p95_ms": String(quantileMilliseconds(0.95) ?? 0),
             "\(prefix)_p99_ms": String(quantileMilliseconds(0.99) ?? 0),
@@ -169,15 +183,25 @@ struct SonioxSendWindow {
     /// From the tap delivering a buffer to the sender picking it up: backlog in the
     /// capture-to-sender queue, which is where a slow uplink shows up first.
     var queueAge = LatencyHistogram()
+    /// Audio fed to the encoder but not yet emitted, sampled after each buffer: the delay
+    /// the encoding itself adds (0 for PCM, packet and lookahead for Opus, blocks for FLAC).
+    var encoderHold = LatencyHistogram()
     var droppedDisconnected: Duration = .zero
     var conversionFailures = 0
 
-    mutating func recordFrame(audioDuration: Duration, encode: Duration, queueAge: Duration) {
+    mutating func recordFrame(
+        audioDuration: Duration,
+        encode: Duration,
+        queueAge: Duration,
+        encoderHold: Duration = .zero
+    ) {
         frames += 1
         self.audioDuration += audioDuration
         encodeDuration += encode
         longestEncode = max(longestEncode, encode)
         self.queueAge.record(queueAge)
+        // Clamped by the histogram: resampler rounding can put it a fraction below zero.
+        self.encoderHold.record(encoderHold)
     }
 
     mutating func recordSend(bytes: Int, send: Duration) {
@@ -195,6 +219,7 @@ struct SonioxSendWindow {
         longestEncode = max(longestEncode, other.longestEncode)
         longestSend = max(longestSend, other.longestSend)
         queueAge.merge(other.queueAge)
+        encoderHold.merge(other.encoderHold)
         droppedDisconnected += other.droppedDisconnected
         conversionFailures += other.conversionFailures
     }
@@ -206,6 +231,7 @@ struct SonioxSendWindow {
     func fields() -> [String: String] {
         let audioMilliseconds = audioDuration.wholeMicroseconds / 1_000
         var fields = queueAge.fields(prefix: "queue_age")
+        fields.merge(encoderHold.fields(prefix: "encoder_hold")) { _, new in new }
         fields.merge([
             "frames": String(frames),
             "sends": String(sends),
