@@ -57,10 +57,16 @@ public enum WebSocketTransportError: LocalizedError, Equatable, Sendable {
 }
 
 public protocol WebSocketTransport: Sendable {
-    func connect() async throws
+    func connect(headers: [String: String]) async throws
     func sendText(_ text: String) async throws
     func sendBinary(_ data: Data) async throws
     func receive() async throws -> WebSocketMessage
     func sendPing() async throws
     func close(code: WebSocketCloseCode) async
+}
+
+extension WebSocketTransport {
+    public func connect() async throws {
+        try await connect(headers: [:])
+    }
 }

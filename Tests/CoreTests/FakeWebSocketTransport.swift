@@ -5,6 +5,7 @@ actor FakeWebSocketTransport: WebSocketTransport {
     private typealias CountWaiter = (count: Int, continuation: CheckedContinuation<Void, Never>)
 
     private(set) var connectCount = 0
+    private(set) var connectionHeaders: [String: String] = [:]
     private(set) var sentTextMessages: [String] = []
     private(set) var sentBinaryMessages: [Data] = []
     private(set) var pingCount = 0
@@ -38,8 +39,9 @@ actor FakeWebSocketTransport: WebSocketTransport {
         for waiter in waiters { waiter.resume(throwing: error) }
     }
 
-    func connect() async throws {
+    func connect(headers: [String: String]) async throws {
         connectCount += 1
+        connectionHeaders = headers
         await connectGate?.suspend()
         if let connectFailure { throw connectFailure }
         isConnected = true

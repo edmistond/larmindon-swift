@@ -24,10 +24,10 @@ final class URLSessionWebSocketConnection: WebSocketConnection, @unchecked Senda
     private let session: URLSession
     private let task: URLSessionWebSocketTask
 
-    init(endpoint: URL, onEvent: @escaping @Sendable (WebSocketConnectionEvent) async -> Void) {
+    init(request: URLRequest, onEvent: @escaping @Sendable (WebSocketConnectionEvent) async -> Void) {
         let delegate = WebSocketDelegate(onEvent: onEvent)
         session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-        task = session.webSocketTask(with: endpoint)
+        task = session.webSocketTask(with: request)
     }
 
     var closeDetails: WebSocketCloseDetails? {

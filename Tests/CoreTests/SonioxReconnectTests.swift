@@ -88,8 +88,15 @@ final class SonioxReconnectTests: XCTestCase {
         let restored = await next(&results, where: Self.isRestoredOrFailed)
         XCTAssertEqual(restored, .connectionRestored)
         XCTAssertEqual(transports.connectionsRequested, 2)
+        for index in 0..<2 {
+            let headers = await transports[index].connectionHeaders
+            XCTAssertEqual(headers, ["Authorization": "Bearer test-key"])
+        }
         let replacementConfiguration = await transports[1].sentTextMessages
         XCTAssertEqual(replacementConfiguration.count, 1, "the new stream must be configured")
+        let configurationData = try XCTUnwrap(replacementConfiguration.first?.data(using: .utf8))
+        let configurationJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: configurationData) as? [String: Any])
+        XCTAssertNil(configurationJSON["api_key"])
 
         // Capture was never interrupted; its frames now go to the new connection.
         frameContinuation.yield(CapturedAudioFrame(buffer: try makeTenMillisecondBuffer()))

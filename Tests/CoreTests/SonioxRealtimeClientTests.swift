@@ -3,7 +3,7 @@ import XCTest
 @testable import LarmindonKit
 
 final class SonioxRealtimeClientTests: XCTestCase {
-    func testStartConnectsAndSendsTypedConfigurationFirst() async throws {
+    func testStartAuthenticatesConnectionAndSendsTypedConfigurationFirst() async throws {
         let transport = FakeWebSocketTransport()
         let configuration = SonioxRealtimeConfiguration(
             apiKey: "test-api-key",
@@ -22,15 +22,18 @@ final class SonioxRealtimeClientTests: XCTestCase {
         defer { withExtendedLifetime(events) {} }
 
         let connectCount = await transport.connectCount
+        let headers = await transport.connectionHeaders
         let messages = await transport.sentTextMessages
         XCTAssertEqual(connectCount, 1)
+        XCTAssertEqual(headers, ["Authorization": "Bearer test-api-key"])
         XCTAssertEqual(messages.count, 1)
 
         let data = try XCTUnwrap(messages.first?.data(using: .utf8))
         let json = try XCTUnwrap(
             JSONSerialization.jsonObject(with: data) as? [String: Any]
         )
-        XCTAssertEqual(json["api_key"] as? String, "test-api-key")
+        XCTAssertNil(json["api_key"])
+        XCTAssertFalse(messages[0].contains("test-api-key"))
         XCTAssertEqual(json["model"] as? String, "stt-rt-v5")
         XCTAssertEqual(json["audio_format"] as? String, "pcm_s16le")
         XCTAssertEqual(json["sample_rate"] as? Int, 16_000)

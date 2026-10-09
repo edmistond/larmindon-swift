@@ -57,7 +57,7 @@ public actor SonioxRealtimeClient {
         state = .connecting
 
         do {
-            try await transport.connect()
+            try await transport.connect(headers: ["Authorization": "Bearer \(configuration.apiKey)"])
             try requireConnecting()
             let configurationData = try encoder.encode(configuration)
             guard

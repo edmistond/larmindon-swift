@@ -182,7 +182,7 @@ public struct PreferencesView: View {
                 }
 
                 Text(
-                    "The key is sent only in Soniox’s initial WebSocket configuration. It is not stored in UserDefaults or included in diagnostics."
+                    "The key is sent only in the authorization header when connecting to Soniox. It is not stored in UserDefaults or included in diagnostics."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)

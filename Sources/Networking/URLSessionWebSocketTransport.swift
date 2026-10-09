@@ -3,6 +3,7 @@ import Foundation
 public actor URLSessionWebSocketTransport: WebSocketTransport {
     typealias ConnectionFactory =
         @Sendable (
+            URLRequest,
             @escaping @Sendable (WebSocketConnectionEvent) async -> Void
         ) -> any WebSocketConnection
 
@@ -19,24 +20,31 @@ public actor URLSessionWebSocketTransport: WebSocketTransport {
         }
     }
 
+    private let endpoint: URL
     private let makeConnection: ConnectionFactory
     private var connection: Attempt?
 
     public init(endpoint: URL) {
-        makeConnection = { URLSessionWebSocketConnection(endpoint: endpoint, onEvent: $0) }
+        self.endpoint = endpoint
+        makeConnection = { URLSessionWebSocketConnection(request: $0, onEvent: $1) }
     }
 
-    init(makeConnection: @escaping ConnectionFactory) {
+    init(endpoint: URL, makeConnection: @escaping ConnectionFactory) {
+        self.endpoint = endpoint
         self.makeConnection = makeConnection
     }
 
-    public func connect() async throws {
+    public func connect(headers: [String: String]) async throws {
         guard connection == nil else {
             throw WebSocketTransportError.connectionFailed("A connection is already active.")
         }
         try Task.checkCancellation()
+        var request = URLRequest(url: endpoint)
+        for (field, value) in headers {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
         let id = UUID()
-        let driver = makeConnection { [weak self] event in
+        let driver = makeConnection(request) { [weak self] event in
             await self?.handle(event, id: id)
         }
         let attempt = Attempt(id: id, driver: driver)

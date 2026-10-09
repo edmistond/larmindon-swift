@@ -5,6 +5,7 @@ import XCTest
 final class URLSessionWebSocketTransportTests: XCTestCase {
     private final class Connection: WebSocketConnection, @unchecked Sendable {
         let operations = FakeWebSocketTransport()
+        let request: URLRequest
         let onEvent: @Sendable (WebSocketConnectionEvent) async -> Void
         private let lock = NSLock()
         private var invalidations = 0
@@ -12,7 +13,8 @@ final class URLSessionWebSocketTransportTests: XCTestCase {
         var invalidationCount: Int { lock.withLock { invalidations } }
         var closeDetails: WebSocketCloseDetails? { lock.withLock { details } }
 
-        init(onEvent: @escaping @Sendable (WebSocketConnectionEvent) async -> Void) {
+        init(request: URLRequest, onEvent: @escaping @Sendable (WebSocketConnectionEvent) async -> Void) {
+            self.request = request
             self.onEvent = onEvent
         }
         func resume() {}
@@ -42,12 +44,44 @@ final class URLSessionWebSocketTransportTests: XCTestCase {
         init() {
             let (connections, continuation) = AsyncStream<Connection>.makeStream()
             self.connections = connections
-            transport = URLSessionWebSocketTransport { onEvent in
-                let connection = Connection(onEvent: onEvent)
+            transport = URLSessionWebSocketTransport(endpoint: SonioxRealtimeClient.endpoint) { request, onEvent in
+                let connection = Connection(request: request, onEvent: onEvent)
                 continuation.yield(connection)
                 return connection
             }
         }
+    }
+
+    func testSonioxAuthenticatesUpgradeAndReceivesImmediateAuthenticationError() async throws {
+        let fixture = Fixture()
+        let client = SonioxRealtimeClient(
+            configuration: SonioxRealtimeConfiguration(apiKey: "test-key"),
+            transport: fixture.transport
+        )
+        var connections = fixture.connections.makeAsyncIterator()
+        let start = Task { try await client.start() }
+        let value = await connections.next()
+        let connection = try XCTUnwrap(value)
+        XCTAssertEqual(connection.request.url, SonioxRealtimeClient.endpoint)
+        XCTAssertEqual(connection.request.value(forHTTPHeaderField: "Authorization"), "Bearer test-key")
+        XCTAssertNil(connection.request.value(forHTTPHeaderField: "Sec-WebSocket-Protocol"))
+        try await connection.emit(.opened)
+        // Soniox accepts the handshake, then sends authentication failures as error frames.
+        await connection.operations.enqueue(
+            .text(#"{"error_code":401,"error_type":"unauthenticated","error_message":"Invalid API key."}"#)
+        )
+        let stream = try await start.value
+        var events = stream.makeAsyncIterator()
+        do {
+            _ = try await events.next()
+            XCTFail("Authentication failure must terminate the stream")
+        } catch let SonioxRealtimeClientError.provider(error) {
+            XCTAssertEqual(error.code, 401)
+            XCTAssertEqual(error.type, "unauthenticated")
+            XCTAssertEqual(error.retryDisposition, .doNotRetry)
+        }
+        let state = await client.state
+        XCTAssertEqual(state, .failed)
     }
 
     func testCloseDuringHandshakeResumesConnectAndAllowsReplacement() async throws {

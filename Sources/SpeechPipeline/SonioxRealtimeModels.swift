@@ -5,6 +5,7 @@ public struct SonioxRealtimeConfiguration: Encodable, Equatable, Sendable,
 {
     public static let defaultModel = "stt-rt-v5"
 
+    /// Sent with the WebSocket upgrade request, never encoded in the start message.
     public let apiKey: String
     public var model: String
     public var audioFormat: SonioxAudioFormat
@@ -82,7 +83,6 @@ public struct SonioxRealtimeConfiguration: Encodable, Equatable, Sendable,
     }
 
     private enum CodingKeys: String, CodingKey {
-        case apiKey = "api_key"
         case model
         case audioFormat = "audio_format"
         case sampleRate = "sample_rate"
@@ -98,7 +98,6 @@ public struct SonioxRealtimeConfiguration: Encodable, Equatable, Sendable,
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(apiKey, forKey: .apiKey)
         try container.encode(model, forKey: .model)
         try container.encode(audioFormat, forKey: .audioFormat)
         // Only raw formats need these; a container format describes itself.
