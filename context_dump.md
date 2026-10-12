@@ -1,6 +1,7 @@
 # Larmindon: context for a coding agent
 
-Last grounded against the checkout on **2026-10-12**, starting at `3f7d107`.
+Last grounded against the checkout on **2026-10-12**, starting at `3f7d107`;
+extended the same day at `4331033` from further sessions.
 This is a topic reference assembled from earlier development/debugging sessions
 and checked against current source and tests. It is intentionally separate from
 `AGENTS.md`: read the sections relevant to the task, then open the linked code.
@@ -22,13 +23,44 @@ Example instruction to another agent:
 | Missing audio, wrong microphone, VP, hearing aids | [Capture and routing](#capture-and-routing) |
 | Server errors, reconnection, missing words | [Soniox transport and delivery](#soniox-transport-and-delivery) |
 | Upload bandwidth, codecs, delayed captions | [Wire encoding and timing](#wire-encoding-and-timing) |
-| Scroll jitter, scrollback, Clear, sharing | [Caption presentation](#caption-presentation) |
+| Which repo docs are current, author-specific tooling | [Repository map and conventions](#repository-map-and-conventions) |
+| Scroll jitter, scrollback, Clear, sharing, main-screen controls | [Caption presentation](#caption-presentation) |
+| Theme colors, adding a theme, day/night pairing | [Appearance and themes](#appearance-and-themes) |
 | Status indicators that disagree with the microphone | [Capture status and watchdogs](#capture-status-and-watchdogs) |
 | Background stops, interruptions, widget launches | [iOS lifecycle and launching](#ios-lifecycle-and-launching) |
 | Diagnostic ZIPs, SQLite, privacy | [Diagnostics and SQLite](#diagnostics-and-sqlite) |
 | Battery/CPU problems | [Performance investigations](#performance-investigations) |
 | New providers, shared capture, custom DSP | [Provider boundary and future DSP](#provider-boundary-and-future-dsp) |
 | Why a seemingly odd workaround exists | [Historical regression anchors](#historical-regression-anchors) |
+
+## Repository map and conventions
+
+Tracked planning documents, roughly in order of how current they are. Each records
+rationale alongside its items; treat unbuilt items as proposals.
+
+| Document | What it is |
+| --- | --- |
+| [`input-picker-hfp-brief.md`](input-picker-hfp-brief.md) | Open bug: the iOS input picker puts a hearing aid into streaming mode. Parked, not fixed |
+| [`status-indicator-brief.html`](status-indicator-brief.html) | Capture-status and corner-controls design; mostly implemented (see [Caption presentation](#caption-presentation)) |
+| [`maintenance-and-modularization-plan.html`](maintenance-and-modularization-plan.html) | Phased cleanup plan; phases 01/02 landed |
+| [`background-captions-plan.md`](background-captions-plan.md) | 2026-08-15 feasibility review: background capture, Picture-in-Picture, test gates |
+| [`eval-plan.md`](eval-plan.md) | Evaluation proposal. Defers to `larmindon-core/eval-plan.md`, a separate repository not in this checkout |
+| [`worklist.md`](worklist.md) | 2026-08-01 UI design review. Older; check items against code before acting |
+
+A QUIC relay brief (`larmindon-quic-relay-brief.html`) was discussed in sessions but
+never committed; see [Provider boundary](#provider-boundary-and-future-dsp).
+
+Author-specific tooling: `AGENTS.md` imports `@/Users/edmistond/.codex/RTK.md`, an
+absolute path on the author's machine, and `AGENTS.md`/`CLAUDE.md` assume the `rtk`
+proxy, the `blinken` guess ledger, and a commit after every agent turn. Those are the
+author's workflow; another contributor's agent can ignore missing `rtk`/`blinken` and
+follow its own commit conventions. The gate (`./scripts/check.sh`) is the part that
+matters for everyone.
+
+Git refs: `working` is a tag the author moves by hand to a known-good rollback commit.
+Do not move or delete it, and do not create a `working` branch (the refname becomes
+ambiguous). Unpacked `larmindon-diagnostics-<launch UUID>/` bundles and `*.trace`
+files in the repo root are gitignored local evidence.
 
 ## Build and validation
 
@@ -57,6 +89,14 @@ checking. Do not infer a tool upgrade from the runtime deployment floor.
 - The lint baseline has three reviewed complexity exemptions. Recorded scores
   describe the baseline, not a fresh measurement; read the unfiltered metrics
   report when changing those functions. Never regenerate the baseline to hide debt.
+- The Release test step is **macOS SwiftPM only** (`swift test -c release
+  -Xswiftc -enable-testing` in [`check.py`](scripts/check.py)). iOS hosted tests and
+  app builds are Debug, so an iOS-only optimizer problem still needs an on-device
+  `redeploy-device.sh --release` run.
+- Tuist resolves source globs at generation time. A new source or test file is
+  invisible to ad-hoc `xcodebuild` until `tuist generate` runs again; the gate
+  regenerates on its own. A fresh git worktree has no `.build/check-tools`; run
+  `./scripts/check.sh setup` there.
 
 Signing is separate from this gate. `Project.swift` still contains the author's
 team; a contributor needs their own signing configuration for device/Xcode runs.
@@ -71,6 +111,22 @@ dSYMs for profiling. [`show-ios-profile.sh`](scripts/show-ios-profile.sh) has no
 device-selector interface and inspects the Debug product only.
 [`deploy-macos-release.sh`](scripts/deploy-macos-release.sh) installs a signed
 local Release app at `~/Larmindon_macOS.app`; it does not publish or notarize it.
+It also does not quit or relaunch the app: a copy that was already running keeps the
+old code until it is quit, and Spotlight/LaunchServices may list stale builds from
+DerivedData or `.build`. Launch the deployed copy explicitly.
+
+Device discovery: `redeploy-device.sh` finds devices through `xcodebuild
+-showdestinations` and installs with `devicectl`. Wireless pairing uses
+local-network Bonjour, so a phone that is reachable over Tailscale (ping works) can
+still be invisible; client-isolating Wi-Fi does the same. If `xcrun devicectl list
+devices` shows it unavailable, use USB.
+
+Crash evidence when a launch has no end marker: list crash reports with `xcrun
+devicectl device info files --device <UDID> --domain-type systemCrashLogs` (older
+ones are under `Retired/`), copy them off with `devicectl device copy from`, and
+symbolicate with `atos` against the matching `LarmindonKit.framework.dSYM` from
+the Release device build. The diagnostics database lost the final events before
+both crashes investigated in 2026-09, so do not expect it to contain the crash.
 
 ## Session lifecycle
 
@@ -153,6 +209,12 @@ Routing facts to preserve:
   Session activation can put hearing aids into streaming mode. See the historical
   [input-picker/HFP brief](input-picker-hfp-brief.md); its battery discussion is an
   investigation lead, not a universal hardware measurement.
+  Mechanics: `AudioRouteManager.configureForInputSelection` activates
+  `.playAndRecord`/`.voiceChat` with `.allowBluetoothHFP` *before* applying the
+  preferred input. The main picker releases that session on dismiss only while
+  captions are stopped; during a run it stays active until the next Start. Closing
+  the Microphone panel calls `releaseMicrophoneControls`, which likewise releases
+  only when idle. The brief says this should be fixed, not worked around.
 - On Mac, system-default input uses `AVAudioEngine`; explicitly selected
   non-default inputs use direct Core Audio IOProc capture, including physical,
   virtual, and aggregate inputs. Selection uses stable UIDs and does not change
@@ -200,6 +262,17 @@ and connection seams permit offline testing.
   There is no replay backlog or resumable Soniox stream. A send failure is also
   counted as dropped audio. Final pending words can be flushed at connection loss;
   non-final preview words are discarded. Recovery cannot reconstruct missing audio.
+- Capture-queue overflow is a **separate** loss. When the sender falls behind, the
+  newest-32 frame stream discards the oldest frames; that is counted only as a
+  cumulative `dropped_buffers` in `capture_aggregate` (written every 100 callbacks),
+  with no time ranges, and is not part of `dropped_disconnected_ms`.
+- Whether Stop drained is recorded in `run_completed.finish_outcome`
+  (`finished`/`finish_timeout`/`not_finished`) and `soniox_finish_timeout` events.
+  Before `20cb890`, roughly 82 of 99 stops in one week's bundle timed out.
+- Soniox streams continuously, including silence, on purpose. Billing is by stream
+  duration, so a VAD gate saves only bytes, and would need keepalives (the server
+  closes after ~20 s without audio), an explicit finalize at each gate close, a
+  pre-roll buffer, and new lag math. No keepalive or finalize exists in the code.
 - `SonioxSentenceAccumulator` groups final tokens into sentences/speaker segments
   and combines the unfinished sentence with the mutable preview. A token marked
   final is not necessarily already a visible finalized UI chunk.
@@ -225,23 +298,32 @@ enums in [`UserPreferences`](Sources/Core/UserPreferences.swift) define:
 | Opus | Apple encoder, Ogg container, 16 kHz input, 20 ms packets; VBR targets 24/32/50/80 kbps, default 32 |
 | FLAC | Apple encoder, native FLAC header/STREAMINFO; 16 or 24 kHz mono, default 16; 20 ms blocks |
 
-If a compressed encoder cannot initialize, the factory falls back to PCM. Compare
-requested versus active encoding in run diagnostics. Container headers must be
+If a compressed encoder cannot initialize, the factory falls back to PCM. The UI
+does not show this; the only signal is `encoding` ≠ `requested_encoding` on
+`run_started`, `soniox_connected`, and `run_completed`. Container headers must be
 resent on every connection. Compressed formats use `audio_format: auto`; unlike
 raw PCM, sample rate/channel count are carried in the container rather than JSON.
+Opus writes one packet per Ogg page so nothing waits on batching; the page header
+makes 24 kbps about 4.3 KB/s on the wire. The bitrate steps skip 48 and 64 kbps
+because Apple's encoder does not offer them, and VBR is requested but not
+guaranteed: compare `bit_rate`/`bit_rate_strategy` with `bit_rate_requested`.
 
 The encoder interface reports emitted audio duration. Dividing compressed byte
 counts by PCM bytes/second gives incorrect provider lag. Partial packets/blocks
 can remain buffered; current Stop does not flush all encoder-held audio. Include
-this tail-loss risk when evaluating missing final words. Local comments/tests
-describe Opus lookahead/packet buffering and FLAC's block buffering; measure the
-active encoder rather than treating those estimates as all latency in the system.
+this tail-loss risk when evaluating missing final words. That buffering is measured
+as `encoder_hold_*` (`8cecf37`): audio fed in minus the encoder's emitted duration,
+sampled after every captured buffer. With 10 ms buffers, expect means of about 0 ms
+for PCM, ~11.5 ms for Opus (20 ms packets plus a 104-frame lookahead, logged as
+`pre_skip_frames`), and ~25 ms for FLAC (Apple releases a block only after the
+next fills). Histogram buckets are 5 ms apart below 50 ms so these separate.
 
 [`SonioxRunMetrics`](Sources/SpeechPipeline/SonioxRunMetrics.swift) and the source
 record one `run_id` per caption session and a `connection` number within it.
-`run_started`, `audio_send_window`, `soniox_update`, stale transitions, and
-`run_summary` expose conversion/send costs, upload volume, encoder hold, drops,
-provider progress, and capture-to-token ages. Windows are normally ten seconds.
+`run_started`, `audio_send_window`, `soniox_update`, `caption_stale_started` /
+`caption_stale_ended`, and `run_completed` expose conversion/send costs, upload
+volume, encoder hold, drops, provider progress, and capture-to-token ages. Windows
+are normally ten seconds.
 
 Important interpretation rules:
 
@@ -250,14 +332,24 @@ Important interpretation rules:
   through a bounded per-connection timeline.
 - Capture age starts at callback delivery, not at acoustic arrival. It excludes
   earlier hardware latency and does not measure when SwiftUI paints the words.
-- Missing mappings report `unavailable`, not zero. Histogram quantiles are bucket
-  bounds, not exact per-sample quantiles. Stop-drain ages are excluded from live
+- Missing mappings are never reported as zero: `kbps` uses the string
+  `unavailable`, and an empty histogram emits only `<prefix>_count: "0"` with its
+  quantile fields omitted. Treat a missing field as unmeasured. Histogram
+  quantiles are bucket bounds, not exact per-sample quantiles.
+- `queue_age_*` is tap delivery to the sender loop picking the buffer up, where a
+  slow uplink shows first. `send_max_ms` is URLSession accepting the message, not
+  server receipt. `kbps` is over audio time, not wall time. `source_format`
+  (capture rate/channels) is on `audio_send_window`/`run_completed`; `run_started`
+  carries the encoder's output `sample_rate`. Stop-drain ages are excluded from live
   distributions; disconnected periods are separately accounted.
 - A three-second processed-age stale threshold in metrics differs from the
   user-facing capture-status stall threshold and network no-message timeout.
 - FLAC preserves the PCM it encodes; it cannot restore information lost earlier
   to routing, resampling, or microphone processing. 24 kHz versus 16 kHz changes
   the input bandwidth as well as encoding, so it does not isolate codec effects.
+  An informal impression that 16 kHz FLAC beat PCM therefore points at delivery
+  (FLAC's smaller upload falls behind less), provider decoding, or run variation;
+  check `dropped_buffers`, `queue_age_max_ms`, and stale time per run first.
 - Earlier real-use reports of degraded atypical-speech recognition with low-rate
   Opus motivated selectable bitrates and retaining PCM as default. They are not a
   controlled current accuracy benchmark. Compression ratios vary with noise.
@@ -285,6 +377,37 @@ The main-screen controls now live in an iOS bottom capture band and a Mac toolba
 full meters remain in the Microphone panel. Older designs/screenshots showing the
 main level bar or a large labeled mode picker are historical.
 
+Main-screen invariants. These are user requirements for reading captions live, not
+styling preferences:
+
+- The input chip always names the current input (`showsCurrentInputName: true`);
+  other apps can take over a Bluetooth input and show theirs only briefly. The
+  on-device/Soniox switch stays one tap away; Settings and the Microphone panel stay
+  reachable.
+- Clear removes a misheard or profane phrase before others read it. It stays on
+  screen (iOS bottom-right corner; Mac toolbar beside Start/Stop, never in a menu),
+  one tap, no confirmation; it dims when there is nothing to clear but never hides.
+  The Undo toast never repeats the cleared text and has no countdown bar or ring.
+- No continuous animation (battery): the status ring and label change only when
+  `captureStatus` changes, with a 0.2 s ease, and `CaptionSession` writes
+  `captureStatus` only when its value differs. Avoid `repeatForever`, symbol
+  effects, or meter-driven visuals on the main screen.
+- Status never relies on color alone: Stopped has no ring, Starting/No audio a
+  dashed ring, Listening a thin ring, Captioning a thick accent ring, No captions a
+  thick orange ring with a `!` badge. A text label always accompanies it, and
+  Start/Stop exposes it as its accessibility value. The mode switch is icon-only
+  (`iphone.gen3`/`macbook.gen2` versus `cloud`), so the label names the provider.
+- Corner buttons are full circles whose centers sit inside the screen, clipped by
+  both edges, with the glyph at the circle's true center. A quarter disc on the
+  corner has no visual center and was reverted (`6af5d54` → `ce3a4dc`). The band
+  ignores bottom/horizontal safe areas to reach the corners, then pads content
+  above the home indicator; `minimumBandHeight` keeps controls off the newest
+  caption. Widths ≥ 600 pt use the row arrangement.
+- Start/Stop keeps the pre-redesign colors in every theme (accent to start, red
+  while running); Clear is a neutral gray `trash`. Toolbar space freed by the icon
+  mode switch is reserved for a future `sparkles.2` control (speaker ID/naming);
+  nothing occupies it yet.
+
 [`CaptionDisplayView`](Sources/UI/CaptionDisplayView.swift) and
 [`CaptionScrollState`](Sources/UI/CaptionScrollState.swift) encode hard-won scroll
 behavior:
@@ -307,12 +430,55 @@ finalized text with original IDs. It does not restore the old volatile preview.
 [`TranscriptExport`](Sources/Core/TranscriptExport.swift) snapshots value arrays
 for `Transferable`. Avoid making the share-sheet representation await the main
 actor: the iOS share UI can block that actor while requesting the representation.
+The `.txt` renders lazily in `FileRepresentation` through `nonisolated
+CaptionStore.transcript(for:)`. Keep the explicit `SharePreview` icon: without it
+the sheet thumbnails the file, loading it before appearing. Both together fixed a
+multi-second iOS freeze sharing even a two-line transcript (`d9b7f17`). Exports are
+named `Larmindon Transcript yyyy-MM-dd HH.mm.txt` in a per-export UUID temp folder;
+the Mac "Copy Full Transcript to Clipboard" command uses the same renderer.
+
+The Microphone panel's Levels and Transcript sections are separate leaf views so
+per-buffer writes do not re-render the polar-pattern `Canvas`.
 
 Tests: `CaptionScrollStateTests`, `CaptionDisplayLayoutTests`,
 `CaptureBandLayoutTests`, `CaptionSessionClearUndoTests`, `CaptionStoreTests`, and
 `TranscriptExportTests` under [`Tests/CoreTests`](Tests/CoreTests). Hosted layout
 tests are useful evidence; gesture feel, font/device variations, and physical
 screen rendering still need manual validation.
+
+## Appearance and themes
+
+All theme data is in [`UserPreferences.swift`](Sources/Core/UserPreferences.swift).
+`AppTheme` is the identity and storage key; its `palette` returns one `ThemePalette`
+literal per theme (title, color scheme, tint, background, control background, text,
+six speaker accents) as hex via `Color(hex:)`. Adding a theme is one enum case plus
+one literal and a redeploy. There is deliberately no asset catalog (`LarmindonKit`
+has no resource bundle, and these are named palettes rather than light/dark
+variants) and no JSON (deferred until user-importable themes are actually planned).
+
+- A `nil` surface means "defer to the platform". Light and Dark keep the system
+  accent, window background, label color, and `.thinMaterial` capture band; do not
+  fill those nils with concrete colors.
+- Case raw values are what `@AppStorage` persists, read back as
+  `AppTheme(rawValue:) ?? default`. Renaming a case silently resets a user's saved
+  theme; titles can change freely.
+- `ThemeSelection` is `.fixed(theme)`, which forces that theme's scheme, or
+  `.followSystem(light:dark:)`. The Light/Dark pickers list `themes(for:)` filtered
+  by palette color scheme, so a new theme lands in the right picker automatically.
+  A legacy `appearancePreference` key is migrated once.
+- Speaker colors cycle through `speakerAccents` (numeric ID N uses index
+  (N−1) % count; other IDs a stable hash). Leave red out of accents: it means
+  error/Stop. Volatile caption text uses 0.9 opacity rather than `.secondary`
+  because dimmed newest text was unreadable in sunlight.
+- Palettes follow the upstream specs cited in comments (Rosé Pine, Dracula).
+  Alucard's control band deliberately uses the warm line-highlight `#E2DECA` rather
+  than the cool Selection gray, which looked wrong on its cream background.
+- Theme choice is also a power variable on OLED: light palettes cost more.
+
+Tests: `UserPreferencesTests` iterates `allCases` for accent count, unique titles,
+platform deferral in Light/Dark, and custom backgrounds elsewhere; its exact
+`themes(for:)` ordering assertion is the one a new theme forces you to edit. No test
+checks contrast; legibility is judged by eye on a device.
 
 ## Capture status and watchdogs
 
@@ -326,6 +492,19 @@ Any ordinary Soniox result can prove the connection is alive, including an empty
 periodic update. Only word-bearing Apple results count as recognizer activity;
 Apple silence must not imply a dead recognizer. Reconnection/interruption is
 stalled, and a restored server connection needs fresh results to prove recovery.
+
+- The No-audio and stall clocks start at `captureDidStart`, after the source has
+  finished starting, so a slow model load or Soniox connect reads Starting.
+- There is no true digital-silence signal here: a buffer is silent when the
+  smoothed `rawInputLevel` is below `silenceLevel` = 0.001 (about −78 dBFS RMS). A
+  real but very quiet input could read No audio. `status-indicator-brief.html`
+  says `isDigitalSilence` is used; the code does not do that.
+- No audio outranks Captioning, so Soniox's empty updates cannot make a dead input
+  look alive. The two-second dwell is skipped when leaving Starting/Stopped, going
+  to Stopped, or stalling for reconnect/interruption. On-device never enters No
+  captions from silence alone.
+- Each change logs `state/capture_status_changed` (from, to, requested_mode). A
+  one-second ticker evaluates thresholds that elapse without any input event.
 
 This differs from the three-second **no callback** startup watchdog in
 `CaptionSession`. Every received level snapshot, even an unchanged zero snapshot,
@@ -386,6 +565,21 @@ formats/callbacks/drops/levels, provider errors/reconnects/pings, token counts a
 progress, network path, and thermal/battery/charging/low-power/resource context.
 On iOS resource context also includes app state, available memory, and brightness.
 
+Resource and energy fields (`resources/sample` every 30 s while captioning, plus
+lifecycle events):
+
+- Cumulative `cpu_user_ms`, `cpu_system_ms`, `wakeups` (interrupt + platform-idle)
+  and, on arm64, `task_energy`. Difference consecutive samples. `task_energy` is a
+  raw kernel counter whose unit has not been checked on a device: compare it
+  relatively. Bluetooth/radio energy is likely not billed to it.
+- `battery_percent` and `battery_state` (`unplugged`/`charging`/`full`/
+  `plugged_in`/`unknown`); iOS also logs `battery_state_changed`. iOS reports the
+  level in 5% steps. A falling percent while `charging` means draw exceeded the
+  charger or heat throttled charging; check `thermal_state`. `plugged_in` is macOS
+  holding charge below 100%. A Mac without a battery emits no battery fields.
+- Samples run only between session start and stop. A gap between runs is by
+  design; it does not show the app was suspended.
+
 Version/identity distinctions matter:
 
 - `DiagnosticEvent.sessionID` is **one app launch**, not one caption run.
@@ -441,7 +635,11 @@ baseline. Current main-screen status controls and wire encodings also postdate
 that measurement.
 
 The meter measures every sample before publication throttling; a slow UI update
-rate does not itself reduce metering computation. Graph stacks suggest where to
+rate does not itself reduce metering computation. (Level-only UI writes are capped
+at 20/s against ~60 snapshots/s at the default 768 frames; speech/VAD/callback-size
+changes publish immediately.) An unoptimized build shows up as innermost samples in
+generic stdlib helpers (`Range.formIndex(after:)`, `abs<A>`, `IndexingIterator.next()`)
+under `AudioLevelMeter.measure`. Graph stacks suggest where to
 look but do not prove redundant rendering, bad scrolling, or a battery bug.
 Whole-device power spikes with no matching app execution remained unexplained;
 do not assign them to the app solely because it was foregrounded. An illuminated
@@ -454,6 +652,8 @@ Release runs with identical input, route/VP, brightness/theme, and network; excl
 30–60 seconds of startup. Test transcription-off idle separately from a connected
 server receiving microphone silence, and check that capture/network activity ends
 after Stop. Separate measured behavior, source explanation, and hypotheses.
+Record theme and `screen_brightness` with any power comparison: light palettes
+(Light, Rosé Pine Dawn, Alucard) cost more on OLED than near-black dark themes.
 
 ## Provider boundary and future DSP
 
@@ -474,6 +674,20 @@ and a single live-capture pipeline are **not implemented here**. Earlier session
 explored them as experiments, not product requirements. Current UI events discard
 many provider audio-range/confidence/revision details; diagnostics are not an
 evaluation recording format.
+
+The relay idea, for context: iOS → Network.framework QUIC (20 ms PCM datagrams
+plus reliable control/result streams) → an Elixir relay on Fly.io with a bounded
+reorder/playout buffer that zero-fills gaps → the Soniox WebSocket. Its purpose was
+to separate an acoustic hypothesis (lossy codecs remove speech cues) from a
+transport hypothesis (cellular stalls plus queues turn PCM into lag). "Phase 0" was
+to instrument the direct path and compare PCM, Opus, and FLAC first; that phase is
+what landed (FLAC, per-run metrics, encoder hold). Relay-side events (QUIC, gap
+ledger, clock probes) have no producer, and the brief is not in the repository.
+
+Also discussed but not built: automatic codec switching by network type (would
+need a mid-session reconnect), a debug mode sending each buffer as both PCM and
+FLAC (doubles provider cost), log levels or a per-frame benchmark mode
+(`logging_mode` is always `operational`), render-time caption ages, and a WER scorer.
 
 The proposed direction was one capture owner, explicit frame timing/ownership and
 loss accounting, bounded recorder fan-out, a bypassable processing worker, then
@@ -509,6 +723,9 @@ Use them to understand a change's reason; current tests/code define present beha
 | `2436641`, `20554d3` | Release-only Soniox start crash workaround and optimized tests in the gate |
 | `42ec9f3` | WebSocket ping continuation can be resumed only once |
 | `147d4a0`, `6bcda6b` | Five-second Clear Undo and low-update capture status |
+| `6af5d54`, `ce3a4dc` | Corner glyph alignment attempt, then full circles tucked into the corners |
+| `268d72e`, `d9b7f17` | Debug panel merged into Microphone panel; share export off the main actor |
+| `b7422dd`, `9d6e1e5` | One `ThemePalette` per theme; Alucard warm control-band fallback |
 | `948634f`, `f76de2d`, `8cecf37` | Event ordering/monotonic schema, per-run caption age/uplink evidence, encoder-hold measurement |
 | `706369b` | Lossless FLAC upload option alongside PCM and Opus |
 | `1d75e74` | Bearer header on initial/reconnect WebSockets; no credential in startup JSON |
@@ -516,7 +733,10 @@ Use them to understand a change's reason; current tests/code define present beha
 In particular, preserve `@inline(never)` on the internal Soniox source initializer
 until an optimized reproducer demonstrates that the compiler issue is gone. The
 historical failure occurred on the first retain after inlining into source
-construction; Debug and sanitizer success did not rule it out.
+construction; Debug and sanitizer success did not rule it out. Its signature was
+`swift_unknownObjectRetain` → `objc_msgSend` on a null class immediately after
+`makeSource` returned. It appeared only once the reconnect and Opus merges were
+both on main (each branch alone was fine), so unrelated edits could reintroduce it.
 [`SonioxLaunchTests`](Tests/CoreTests/SonioxLaunchTests.swift) exercises the real
 source-factory route, and the gate runs it in Release. The same suite checks the
 single-resumption guard used for WebSocket ping completion/cancellation races.
