@@ -6,9 +6,14 @@ using Apple's on-device speech recognition or Soniox server transcription.
 Open it, choose a transcription mode, and start captions. The active audio input
 stays visible while finalized text remains stable and in-progress captions update.
 
+Licensed under [Apache 2.0](LICENSE). For code navigation, prior debugging context,
+and regression contracts, see [context_dump.md](context_dump.md). That document is
+organized by topic so you can give an agent only the sections relevant to its task.
+
 ## Requirements
 
-- The reproducible local checks use Xcode 27.0 (27A266a), including Swift 6.4.
+- Development requires macOS with Xcode. The reproducible local checks use
+  Xcode 27.0 (27A266a), including Swift 6.4; the runner requires those exact pins.
 - iOS 26 or macOS 26. Larmindon is built around Apple's SpeechAnalyzer APIs and does not support older operating systems.
 - Tuist 4.200.1. Install that version explicitly using the official release or a tool manager such as `mise`.
 - Python 3.9+ for the local check runner (standard library only).
@@ -23,6 +28,18 @@ mise install tuist@4.200.1
 mise exec tuist@4.200.1 -- tuist generate
 open Larmindon.xcworkspace
 ```
+
+Use the `Larmindon` scheme for iPhone/iPad, `Larmindon-macOS` for Mac, and
+`CoreTests` for Xcode tests. Generated projects/workspaces are ignored; change
+[`Project.swift`](Project.swift), then regenerate. `Package.swift` builds the
+shared library and macOS tests, not an installable app.
+
+For a physical device or a signed Mac build, use your own Apple Development
+certificate/team. `Project.swift` currently contains the author's team ID; change
+`DEVELOPMENT_TEAM` there for Xcode runs. You may also need your own bundle IDs for
+the app and widget. The deployment scripts accept a `DEVELOPMENT_TEAM` environment
+override, or infer the team when exactly one Apple Development identity is
+available. The unsigned local quality gate does not need a signing team.
 
 ## Local Quality Checks
 
@@ -132,7 +149,7 @@ fails the gate. Complexity above 20 is an error and calls for decomposition.
 The reviewed [baseline](.swiftlint-baseline.json) contains only these existing
 complexity exceptions. No correctness-rule exceptions were needed:
 
-| Existing function | Score | Planned work |
+| Existing function | Recorded baseline score | Planned work |
 | --- | --- | --- |
 | `AudioRouteManager.apply` | 11 | Separate configuration resolution from application |
 | `CaptionSession.performStart` | 20 | Separate provider creation and lifecycle coordination |
@@ -161,9 +178,12 @@ Do not approve all findings simply to make checks pass. The gate's own tests use
 disposable copies to verify that new violations fail and the baseline remains
 portable across checkout paths.
 
-See the [maintenance plan](maintenance-and-modularization-plan.html#phase-2) for
-the remaining work. **01A–01C and 02A–02C** are implemented locally; CI and
-release/distribution automation are deferred. Passing local tests/builds does not validate physical-device audio,
+See the [maintenance plan](maintenance-and-modularization-plan.html#phase-2) and
+[current architecture context](context_dump.md#provider-boundary-and-future-dsp)
+for the remaining work. **01A–01C and 02A–02C** are implemented locally; CI and
+distribution automation are deferred. Local deployment scripts exist, but they
+do not publish releases or perform App Store distribution.
+Passing local tests/builds does not validate physical-device audio,
 SpeechAnalyzer operation, live provider services, or speech quality in noise.
 
 Phase 02 keeps all lifecycle tests offline. Capture acquisition, transport startup,
@@ -194,8 +214,9 @@ installed.
 
 ## Redeploy to a Connected iPhone or iPad
 
-With one iOS device connected and trusted, rebuild, install, and launch a
-freshly signed development copy from the command line:
+Generate the workspace first. With one iOS device connected, paired, trusted,
+and ready for development, rebuild, install, and launch a freshly signed
+development copy from the command line:
 
 ```bash
 ./scripts/redeploy-device.sh
@@ -205,6 +226,12 @@ If more than one physical iOS device is connected, pass its name or UDID:
 
 ```bash
 ./scripts/redeploy-device.sh "My iPad"
+```
+
+If signing identity detection is ambiguous, specify your team explicitly:
+
+```bash
+DEVELOPMENT_TEAM=YOURTEAMID ./scripts/redeploy-device.sh "My iPad"
 ```
 
 The script builds Debug by default. For an optimized Release build, including
@@ -229,36 +256,57 @@ build with automatic provisioning:
 ```
 
 Profile refresh requires an Apple account to be signed in under Xcode Settings
-> Accounts so `xcodebuild` can request the replacement from Apple. If issuance
-or the build fails, the script restores the previous cached profile.
+> Accounts so `xcodebuild` can request the replacement from Apple. If the build
+fails, the script restores the previous cached profiles. Installation or launch
+failure after a successful build does not trigger that restoration.
 
-Inspect the current cached profile and compare it with the profile embedded in
-the most recent device build:
+Inspect cached profiles and compare them with the profile embedded in the
+**Debug** device build:
 
 ```bash
 ./scripts/show-ios-profile.sh
 ```
 
+This script does not accept a device selector or inspect Release products. It
+uses the bundle ID currently configured in the script. If you change bundle IDs,
+update the corresponding deployment/profile script values too.
+
 ## Install a macOS Release Build
 
-Build the macOS app in Release configuration and replace the copy installed at
-`~/Larmindon_macOS.app`:
+Generate the workspace first, then build the macOS app in Release configuration
+and replace the copy installed at `~/Larmindon_macOS.app`:
 
 ```bash
 ./scripts/deploy-macos-release.sh
 ```
 
-Builds are signed with the personal-team Apple Development certificate (set in
-`Project.swift`; the script also derives the team from the certificate). This matters
+The script uses your Apple Development certificate and either `DEVELOPMENT_TEAM`
+or the team derived from a single installed development identity. Set
+`DEVELOPMENT_TEAM=YOURTEAMID` before the command if you have multiple identities.
+This matters
 for more than tidiness: an ad-hoc signature's designated requirement is the build's
 code hash, so macOS treats every rebuild as a new app and asks for microphone access
-again. A certificate-backed signature keeps the grant across rebuilds.
+again. A stable certificate-backed signature lets the grant persist across
+rebuilds. This is a local development install; the script does not launch,
+notarize, or publish the app.
 
 ## Transcription Modes
 
-The main screen offers **On-device** and **Soniox**. On-device is the initial
-default; the app remembers your selection. Press **Start Captions** to use the
-selected mode and saved capture settings.
+The main screen has an icon-based **Transcription mode** switch for **On-device**
+and **Soniox**. On-device is the initial default; the app remembers your selection.
+Use **Start Captions** to use the selected mode and saved capture settings.
+Switching mode during capture restarts captions with the selected provider.
+
+On iPhone/iPad, Start/Stop and Clear sit in the bottom capture band beside the
+input and status. On Mac, controls live in the window toolbar. The main screen
+shows **Stopped**, **Starting**, **No audio**, **Listening**, **Captioning**, or
+**No captions**; detailed audio levels remain in **Microphone**. These status
+labels describe capture/provider activity, not recognition accuracy.
+
+**Clear** removes the visible transcript immediately without stopping capture.
+If it removed finalized text, **Undo** is available for five seconds and restores
+that text ahead of new captions. The toolbar's **Share Transcript** action exports
+a `.txt` snapshot, including the current preview and speaker labels when present.
 
 On-device uses Apple's `SpeechAnalyzer`, `SpeechTranscriber`, and `SpeechDetector`.
 It requires compatible speech assets and a physical device for live validation;
@@ -267,8 +315,16 @@ Startup errors appear on the caption screen, with session details in **Microphon
 
 Soniox captures audio locally and streams it to Soniox. Save your own API key in
 **Settings → Server Transcription** before starting. The key is stored in Keychain;
-it is validated when the first connection is made. Soniox is currently the only
-implemented server provider.
+it is sent in the WebSocket's `Authorization: Bearer …` upgrade header on every
+connection, and the service checks it when you connect. Soniox is currently the
+only implemented server provider. The app requests strict English hints and
+speaker diarization; server language selection is not exposed in Settings.
+
+During a recoverable network outage, capture keeps running and the app attempts
+to reconnect for up to ten minutes. Audio received while disconnected is dropped
+and counted, rather than replayed later; gaps can mean missing captions. A rejected
+key or non-retryable provider error ends the session. Starting a new session does
+not wait for the retired connection's five-second graceful shutdown deadline.
 
 ## Fake Transcription Mode
 
@@ -290,6 +346,13 @@ The settings surface includes:
   capture next starts. Requested and active state are shown in **Microphone**.
   Voice processing remains disabled on macOS because of audio-device constraints.
 - Server provider selection and Soniox credential storage/removal.
+- Soniox **Audio upload**: uncompressed PCM (default), Opus, or lossless FLAC.
+  PCM is 16 kHz, 16-bit mono. Opus offers 24/32/50/80 kbps targets (32 kbps
+  default); FLAC offers 16 or 24 kHz (16 kHz default). Upload estimates shown in
+  Settings are approximate; actual compression varies with input. Compressed
+  encoder initialization can fall back to PCM, with the active encoding recorded
+  in diagnostics. Encoding affects upload volume and buffering; recognition
+  quality still needs comparison on representative speech.
 
 Capture and recognition setting changes take effect when the relevant session
 next starts. Font size and theme choices update the presentation directly.
@@ -303,9 +366,20 @@ details, and the latest transcript state. Supported iOS inputs also expose
 microphone-position, pickup-pattern, and stereo-orientation controls; applying
 them during capture restarts captions.
 
-The panel can prepare and share/save a diagnostic bundle. Transcript text is
-excluded by default and can be included explicitly. Developer actions provide
-the fake source and a route-information dump.
+Diagnostics run automatically in local SQLite storage, including across app
+launches. The panel's **Diagnostics Export → Prepare Diagnostic Bundle** action
+creates a ZIP for sharing/saving, with a retained database snapshot, `manifest.json`,
+and the current launch's recent `events.jsonl`. Transcript text is excluded by
+default; opting in adds a separate `transcript.txt`. Raw audio and credentials
+are not included by the normal export path. Developer actions provide the fake
+source and a route-information dump.
+
+The database is `Application Support/Larmindon/diagnostics.sqlite` in the app's
+storage. Events older than seven days are pruned at launch. Lifecycle, audio,
+network/provider, and resource events help diagnose lost captions; a launch with
+no clean-exit marker does not by itself prove a crash or memory kill. See
+[diagnostic context](context_dump.md#diagnostics-and-sqlite) for schema, timing,
+privacy, and query examples.
 
 ## Live Speech Paths
 
